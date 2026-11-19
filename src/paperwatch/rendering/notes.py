@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from paperwatch.rendering.markdown_safety import build_trusted_source_url, escape_untrusted_inline_text
+from paperwatch.review_store import SCORE_SCALE_RATING_0_TO_4, TopicAssessment
 
 
 @dataclass(frozen=True)
@@ -23,8 +24,13 @@ class SelectedReview:
     review_row: sqlite3.Row
     review_content: dict[str, Any]
     paper_aliases: list[tuple[str, str]]
-    best_topic_rating: int | None
-    best_topic_id: str | None
+    topic_assessments: list[TopicAssessment]  # newest per topic, stored apart from the reading
+
+    @property
+    def best_topic_assessment(self) -> TopicAssessment | None:
+        """Highest score; ties go to the lowest topic id so ordering is deterministic."""
+        return min(self.topic_assessments, key=lambda assessment: (-assessment.topic_score, assessment.topic_id),
+                   default=None)
 
     @property
     def note_relative_path_from_daily_dir(self) -> str:
@@ -69,11 +75,11 @@ def render_paper_note(selected_review: SelectedReview) -> str:
         "## Relevance to research topics",
         "",
     ]
-    if review_content["topic_relevance"]:
-        for topic_assessment in review_content["topic_relevance"]:
-            note_lines.append(f"- **{escape_untrusted_inline_text(topic_assessment['topic_id'])}**: "
-                              f"{topic_assessment['relevance_rating']}/4. "
-                              f"{escape_untrusted_inline_text(topic_assessment['rationale'])}")
+    if selected_review.topic_assessments:
+        for topic_assessment in selected_review.topic_assessments:
+            note_lines.append(f"- **{escape_untrusted_inline_text(topic_assessment.topic_id)}**: "
+                              f"{_format_topic_score(topic_assessment)}. "
+                              f"{escape_untrusted_inline_text(topic_assessment.rationale)}")
     else:
         note_lines.append("- No topic assessments.")
     if review_content["insufficient_evidence"]:
@@ -103,9 +109,10 @@ def render_daily_report(*, report_date: str, timezone_name: str, cutoff_at: str,
                              else " Quiet day."))
     for selected_review in selected_reviews:
         paper_row, review_content = selected_review.paper_row, selected_review.review_content
-        relevance_label = (f"relevance {selected_review.best_topic_rating}/4 for "
-                           f"{escape_untrusted_inline_text(selected_review.best_topic_id)}"
-                           if selected_review.best_topic_rating is not None else "relevance not rated")
+        best_assessment = selected_review.best_topic_assessment
+        relevance_label = (f"relevance {_format_topic_score(best_assessment)} for "
+                           f"{escape_untrusted_inline_text(best_assessment.topic_id)}"
+                           if best_assessment is not None else "relevance not rated")
         published_label = escape_untrusted_inline_text(paper_row["first_published_date"]) or "date unknown"
         report_lines += [
             f"### {selected_review.rank}. {escape_untrusted_inline_text(paper_row['title'])}",
@@ -120,6 +127,12 @@ def render_daily_report(*, report_date: str, timezone_name: str, cutoff_at: str,
             "",
         ]
     return "\n".join(report_lines).rstrip() + "\n"
+
+
+def _format_topic_score(topic_assessment: TopicAssessment) -> str:
+    if topic_assessment.score_scale == SCORE_SCALE_RATING_0_TO_4:
+        return f"{topic_assessment.topic_score}/4"
+    return f"{topic_assessment.topic_score} ({topic_assessment.score_scale})"
 
 
 def _render_bullet_list(untrusted_items: list[str]) -> list[str]:

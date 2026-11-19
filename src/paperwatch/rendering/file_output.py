@@ -9,7 +9,8 @@ from pathlib import Path
 from paperwatch.errors import OutputWriteError
 
 
-def write_bytes_atomically(destination_path: Path, file_bytes: bytes) -> None:
+def write_bytes_atomically(destination_path: Path, file_bytes: bytes, *, file_mode: int | None = None) -> None:
+    """`file_mode` (e.g. 0o640) is applied before the rename; by default the file keeps mkstemp's private 0600."""
     try:
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_fd, temporary_path = tempfile.mkstemp(dir=destination_path.parent,
@@ -19,6 +20,8 @@ def write_bytes_atomically(destination_path: Path, file_bytes: bytes) -> None:
                 temporary_file.write(file_bytes)
                 temporary_file.flush()
                 os.fsync(temporary_file.fileno())
+            if file_mode is not None:
+                os.chmod(temporary_path, file_mode)
             os.replace(temporary_path, destination_path)
         except BaseException:
             Path(temporary_path).unlink(missing_ok=True)

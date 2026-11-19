@@ -2,6 +2,8 @@
 
 State lives in the `service_state` table so every process (worker, report writer, doctor) sees the same pause.
 While paused, no job is claimed and no inference request is sent; queued papers simply wait.
+The same pause records serve paper providers (service name 'provider:<name>', see paperwatch.network), which also
+honour a provider's own Retry-After as the minimum pause.
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Protocol
 
 from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp, utc_now, utc_now_timestamp
 from paperwatch.config import ModelSettings
@@ -16,6 +19,13 @@ from paperwatch.errors import ModelServerUnavailable
 from paperwatch.llm.types import ModelClient
 
 MODEL_SERVICE_NAME = "model-server"
+
+
+class OutageBackoffSettings(Protocol):
+    """Anything with these two fields: ModelSettings for the model server, ProviderAccessRules for providers."""
+
+    outage_backoff_initial_seconds: int
+    outage_backoff_max_seconds: int
 
 
 @dataclass(frozen=True)
@@ -45,12 +55,16 @@ def read_service_health_state(connection: sqlite3.Connection, service: str) -> S
 
 
 def record_service_outage(connection: sqlite3.Connection, service: str, error_message: str,
-                          model_settings: ModelSettings) -> datetime:
-    """Count one more consecutive failure and pause the service with exponential back-off. Returns paused_until."""
+                          backoff_settings: OutageBackoffSettings, *, minimum_pause_seconds: float = 0.0) -> datetime:
+    """Count one more consecutive failure and pause the service with exponential back-off. Returns paused_until.
+
+    `minimum_pause_seconds` lets a provider's Retry-After lengthen (never shorten) the back-off.
+    """
     previous_state = read_service_health_state(connection, service)
     consecutive_failures = previous_state.consecutive_failures + 1
-    backoff_seconds = min(model_settings.outage_backoff_max_seconds,
-                          model_settings.outage_backoff_initial_seconds * 2 ** (consecutive_failures - 1))
+    backoff_seconds = min(backoff_settings.outage_backoff_max_seconds,
+                          backoff_settings.outage_backoff_initial_seconds * 2 ** (consecutive_failures - 1))
+    backoff_seconds = max(backoff_seconds, minimum_pause_seconds)
     paused_until = utc_now() + timedelta(seconds=backoff_seconds)
     connection.execute(
         """INSERT INTO service_state (service, paused_until, consecutive_failures, last_error, last_failure_at)

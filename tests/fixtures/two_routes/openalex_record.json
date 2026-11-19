@@ -1,0 +1,19 @@
+[
+  {
+    "provider": "openalex",
+    "provider_paper_id": "https://openalex.org/W4400000001",
+    "title": "Exit-aware runtime assurance for multi-robot plans (synthetic fixture)",
+    "authors": ["C. Synthetic", "D. Fixture"],
+    "abstract": "SYNTHETIC TEST RECORD, not a real paper.  A runtime assurance layer checks joint multi-robot plans against marked human exits before dispatch. In 120 simulated episodes it rejected every exit-blocking plan.",
+    "first_published_date": "2026-11-10",
+    "linked_identifiers": ["doi:https://doi.org/10.48550/arXiv.2411.01234"]
+  },
+  {
+    "provider": "openalex",
+    "provider_paper_id": "W4400000002",
+    "title": "Exit-Aware Runtime Assurance for Multi-Robot Plans (synthetic fixture)",
+    "authors": ["E. Different"],
+    "abstract": "SYNTHETIC TEST RECORD, not a real paper. An unrelated workshop note that happens to share the title and has no identifier link.",
+    "first_published_date": "2026-11-12"
+  }
+]

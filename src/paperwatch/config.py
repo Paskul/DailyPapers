@@ -15,7 +15,9 @@ Unknown keys are rejected so a typo cannot silently fall back to a default.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import ipaddress
+import json
 import re
 import tomllib
 import typing
@@ -36,6 +38,13 @@ SUPPORTED_MODEL_BACKENDS = ("llama_cpp", "fake")
 REASONING_EFFORT_SERVER_DEFAULT = "server-default"
 TOPIC_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 CLOCK_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+# Public search terms are the only topic text that may leave the machine (plan part 3), so their shape is checked.
+MAXIMUM_PUBLIC_QUERY_CHARACTERS = 200
+ARXIV_CATEGORY_PATTERN = re.compile(r"^[a-z][a-z-]*(\.[A-Za-z][A-Za-z-]*)?$")  # cs.RO, math.OC, hep-th, q-bio.NC
+ZOTERO_COLLECTION_KEY_PATTERN = re.compile(r"^[A-Z0-9]{8}$")
+# The extractor image must be pinned: "name@sha256:<64 hex>" or a full 64-hex image id (content-addressed, and stable
+# across `podman save | podman load` into the collector account's storage).
+PINNED_IMAGE_REFERENCE_PATTERN = re.compile(r"^([a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}|[0-9a-f]{64})$")
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -82,7 +91,8 @@ class WorkerSettings:
     max_attempts_per_job: int = 3  # for paper-specific transient errors; outages never consume attempts
     retry_delay_seconds: int = 600  # multiplied by the attempt number
     idle_poll_seconds: int = 60  # upper bound on sleep when no job is due (zero inference calls while idle)
-    lease_margin_seconds: int = 120  # added on top of role timeout + lock wait when leasing a job
+    lease_seconds: int = 300  # a claimed job is reclaimable this long after its worker stops renewing
+    lease_renewal_interval_seconds: int = 60  # a live worker renews its lease this often during long calls
 
 
 @dataclass(frozen=True)
@@ -98,6 +108,42 @@ class ScheduleSettings:
 
 
 @dataclass(frozen=True)
+class CollectorSettings:
+    """Settings of the only component that may contact paper providers (plan part 3).
+
+    Host, path, budget, and response-size rules are NOT here: they live in the read-only provider rules that ship
+    with the package (paperwatch/network/provider_rules.toml), so editing config.toml cannot widen network access.
+    """
+
+    credentials_file: str = "credentials/collector.toml"  # collector-only; mode 0600, never readable by the worker
+    user_agent: str = "paperwatch/0.1 (local research monitor)"  # generic: no name, e-mail, or host details
+
+
+@dataclass(frozen=True)
+class ExtractorSettings:
+    """The PDF/XML text extractor runs in rootless Podman: no network, read-only root, one read-only input."""
+
+    container_runtime: str = "podman"  # executable name or absolute path
+    image: str = ""  # pinned image id printed by deploy/build_extractor_image.sh; empty = not set up yet
+    timeout_seconds: float = 120.0
+    max_input_megabytes: int = 60
+    max_output_megabytes: int = 20
+    memory_megabytes: int = 1024
+    temporary_space_megabytes: int = 64
+    cpu_limit: float = 1.0
+
+
+@dataclass(frozen=True)
+class AccessSettings:
+    """Linux accounts the deploy scripts create; `paperwatch access-check` verifies the rules from each one."""
+
+    collector_account: str = "paperwatch-collector"
+    worker_account: str = "paperwatch-worker"  # runs `work` and `report`
+    shared_state_group: str = "paperwatch-state"  # group owning state/ (SQLite + WAL files)
+    model_server_account: str = ""  # empty: llama-server still runs as a desktop user (owner decision, part 3)
+
+
+@dataclass(frozen=True)
 class TopicDefinition:
     """One research question. `question` is private and never leaves the machine; `public_queries` may."""
 
@@ -106,6 +152,16 @@ class TopicDefinition:
     public_queries: tuple[str, ...] = ()
     arxiv_categories: tuple[str, ...] = ()
     zotero_collections: tuple[str, ...] = ()
+
+    def compute_profile_sha256(self) -> str:
+        """Fingerprint of what a topic assessment depends on: the topic id and its question (part 4 adds seeds).
+
+        Stored with every assessment, so a changed question is visible as a stale assessment, while the reading
+        itself is reused.
+        """
+        profile_text = json.dumps({"topic_id": self.topic_id, "question": " ".join(self.question.split())},
+                                  ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(profile_text.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -117,6 +173,9 @@ class AppConfig:
     worker: WorkerSettings
     report: ReportSettings
     schedule: ScheduleSettings
+    collector: CollectorSettings
+    extractor: ExtractorSettings
+    access: AccessSettings
     topics: tuple[TopicDefinition, ...]
 
     # ---- Derived paths --------------------------------------------------------------------------------------------
@@ -135,6 +194,10 @@ class AppConfig:
     @property
     def source_cache_dir(self) -> Path:
         return self.state_dir / "cache"
+
+    @property
+    def collector_credentials_path(self) -> Path:
+        return _resolve_against_home(self.home_dir, self.collector.credentials_file)
 
     @property
     def inference_lock_path(self) -> Path:
@@ -169,7 +232,7 @@ def load_app_config(home_dir: Path) -> AppConfig:
     raw_config = _read_toml_file(home_dir / CONFIG_FILE_NAME)
     raw_topics = _read_toml_file(home_dir / TOPICS_FILE_NAME)
 
-    known_sections = {"paths", "model", "roles", "worker", "report", "schedule"}
+    known_sections = {"paths", "model", "roles", "worker", "report", "schedule", "collector", "extractor", "access"}
     unknown_sections = set(raw_config) - known_sections
     if unknown_sections:
         raise ConfigurationError(f"unknown section(s) {sorted(unknown_sections)} in {CONFIG_FILE_NAME}")
@@ -182,6 +245,9 @@ def load_app_config(home_dir: Path) -> AppConfig:
         worker=_build_settings_section(WorkerSettings, raw_config.get("worker", {}), "worker"),
         report=_build_settings_section(ReportSettings, raw_config.get("report", {}), "report"),
         schedule=_build_settings_section(ScheduleSettings, raw_config.get("schedule", {}), "schedule"),
+        collector=_build_settings_section(CollectorSettings, raw_config.get("collector", {}), "collector"),
+        extractor=_build_settings_section(ExtractorSettings, raw_config.get("extractor", {}), "extractor"),
+        access=_build_settings_section(AccessSettings, raw_config.get("access", {}), "access"),
         topics=_build_topics(raw_topics),
     )
     _validate_cross_field_rules(app_config)
@@ -189,12 +255,20 @@ def load_app_config(home_dir: Path) -> AppConfig:
 
 
 def _read_toml_file(file_path: Path) -> dict[str, Any]:
-    if not file_path.is_file():
-        raise ConfigurationError(f"{file_path} does not exist",
-                                 operator_hint=f"run `paperwatch --home {file_path.parent} init` first")
     try:
         with file_path.open("rb") as toml_file:
             return tomllib.load(toml_file)
+    except PermissionError:
+        # Under the service-account layout (plan part 3) only members of the shared state group may read the home.
+        raise ConfigurationError(f"{file_path} is not readable by this account",
+                                 operator_hint="run as a paperwatch service account, or as a member of the shared "
+                                               "state group (after adding yourself, log out and in, or use "
+                                               "`sg paperwatch-state -c '...'`)") from None
+    except FileNotFoundError:
+        raise ConfigurationError(f"{file_path} does not exist",
+                                 operator_hint=f"run `paperwatch --home {file_path.parent} init` first") from None
+    except IsADirectoryError:
+        raise ConfigurationError(f"{file_path} is a directory, not a TOML file") from None
     except tomllib.TOMLDecodeError as decode_error:
         raise ConfigurationError(f"{file_path} is not valid TOML: {decode_error}") from decode_error
 
@@ -236,9 +310,29 @@ def _build_topics(raw_topics_file: dict[str, Any]) -> tuple[TopicDefinition, ...
             raise ConfigurationError(f"duplicate topic id '{topic.topic_id}' in {TOPICS_FILE_NAME}")
         if not topic.question.strip():
             raise ConfigurationError(f"topic '{topic.topic_id}' has an empty question")
+        _validate_public_topic_terms(topic)
         seen_topic_ids.add(topic.topic_id)
         topics.append(topic)
     return tuple(topics)
+
+
+def _validate_public_topic_terms(topic: TopicDefinition) -> None:
+    """Check the terms the collector may send to providers. The private question is never checked here: it never
+    leaves the machine, so it may contain anything."""
+    for public_query in topic.public_queries:
+        if not public_query.strip() or len(public_query) > MAXIMUM_PUBLIC_QUERY_CHARACTERS or \
+                any(not character.isprintable() for character in public_query):
+            raise ConfigurationError(
+                f"topic '{topic.topic_id}': public query {public_query!r} must be 1-{MAXIMUM_PUBLIC_QUERY_CHARACTERS} "
+                "printable characters on one line")
+    for arxiv_category in topic.arxiv_categories:
+        if not ARXIV_CATEGORY_PATTERN.match(arxiv_category):
+            raise ConfigurationError(f"topic '{topic.topic_id}': '{arxiv_category}' is not an arXiv category "
+                                     "such as cs.RO or hep-th")
+    for collection_key in topic.zotero_collections:
+        if not ZOTERO_COLLECTION_KEY_PATTERN.match(collection_key):
+            raise ConfigurationError(f"topic '{topic.topic_id}': '{collection_key}' is not a Zotero collection key "
+                                     "(8 characters A-Z / 0-9, e.g. from the collection URL)")
 
 
 def _build_settings_section(settings_class: type, raw_section: Any, section_label: str):
@@ -308,8 +402,33 @@ def _validate_cross_field_rules(app_config: AppConfig) -> None:
             raise ConfigurationError(f"time '{clock_time}' must be in 24-hour HH:MM form")
     if app_config.report.max_papers_per_report <= 0:
         raise ConfigurationError("report.max_papers_per_report must be positive")
-    if app_config.worker.max_attempts_per_job <= 0:
+    _validate_extractor_settings(app_config.extractor)
+    worker_settings = app_config.worker
+    if worker_settings.max_attempts_per_job <= 0:
         raise ConfigurationError("worker.max_attempts_per_job must be positive")
+    if worker_settings.lease_renewal_interval_seconds <= 0 or \
+            worker_settings.lease_seconds < 2 * worker_settings.lease_renewal_interval_seconds:
+        raise ConfigurationError(
+            "worker.lease_seconds must be at least twice worker.lease_renewal_interval_seconds (and both positive), "
+            "so one missed renewal does not let another worker reclaim a live job")
+
+
+def _validate_extractor_settings(extractor_settings: ExtractorSettings) -> None:
+    if extractor_settings.image and not PINNED_IMAGE_REFERENCE_PATTERN.match(extractor_settings.image):
+        raise ConfigurationError(
+            f"extractor.image '{extractor_settings.image}' is not pinned (a tag such as ':latest' can change)",
+            operator_hint="use the 64-hex image id printed by deploy/build_extractor_image.sh, or name@sha256:<digest>")
+    numeric_limits = {"timeout_seconds": extractor_settings.timeout_seconds,
+                      "max_input_megabytes": extractor_settings.max_input_megabytes,
+                      "max_output_megabytes": extractor_settings.max_output_megabytes,
+                      "memory_megabytes": extractor_settings.memory_megabytes,
+                      "temporary_space_megabytes": extractor_settings.temporary_space_megabytes,
+                      "cpu_limit": extractor_settings.cpu_limit}
+    for limit_name, limit_value in numeric_limits.items():
+        if limit_value <= 0:
+            raise ConfigurationError(f"extractor.{limit_name} must be positive")
+    if not extractor_settings.container_runtime.strip():
+        raise ConfigurationError("extractor.container_runtime must name an executable, e.g. \"podman\"")
 
 
 def _is_loopback_host(hostname: str) -> bool:

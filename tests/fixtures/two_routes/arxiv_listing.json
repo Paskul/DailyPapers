@@ -1,0 +1,11 @@
+[
+  {
+    "provider": "arxiv",
+    "provider_paper_id": "arXiv:2411.01234v1",
+    "title": "Exit-Aware Runtime Assurance for Multi-Robot Plans (synthetic fixture)",
+    "authors": ["C. Synthetic", "D. Fixture"],
+    "abstract": "SYNTHETIC TEST RECORD, not a real paper. A runtime assurance layer checks joint multi-robot plans against marked human exits before dispatch. In 120 simulated episodes it rejected every exit-blocking plan.",
+    "first_published_date": "2026-11-10",
+    "latest_revision_date": null
+  }
+]

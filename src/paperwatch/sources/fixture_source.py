@@ -2,7 +2,11 @@
 
 File format: one object or a list of objects with these keys (only provider, provider_paper_id and title required):
     {"provider": "fixture", "provider_paper_id": "demo-0001", "title": "...", "authors": ["..."],
-     "abstract": "...", "first_published_date": "2026-11-17", "latest_revision_date": null, "source_version": "v1"}
+     "abstract": "...", "first_published_date": "2026-11-17", "latest_revision_date": null, "source_version": "v1",
+     "linked_identifiers": ["doi:10.1109/example.2026.1", "arxiv:2411.01234"]}
+
+`linked_identifiers` are "scheme:value" strings (split at the first colon) that the recorded provider stated for the
+same work. The discovery route of every record is "fixture:<file name>", so two files are two discovery routes.
 """
 
 from __future__ import annotations
@@ -12,10 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from paperwatch.errors import SourceInputError
-from paperwatch.sources.types import CollectedPaperRecord
+from paperwatch.sources.types import CollectedPaperRecord, RawIdentifier
 
 REQUIRED_FIXTURE_KEYS = ("provider", "provider_paper_id", "title")
-OPTIONAL_FIXTURE_KEYS = ("authors", "abstract", "first_published_date", "latest_revision_date", "source_version")
+OPTIONAL_FIXTURE_KEYS = ("authors", "abstract", "first_published_date", "latest_revision_date", "source_version",
+                         "linked_identifiers")
 
 
 class RecordedFixtureSource:
@@ -56,4 +61,17 @@ class RecordedFixtureSource:
             latest_revision_date=raw_entry.get("latest_revision_date"),
             source_version=raw_entry.get("source_version"),
             discovery_route=self.source_name,
+            linked_identifiers=_parse_linked_identifiers(entry_label, raw_entry.get("linked_identifiers", [])),
         )
+
+
+def _parse_linked_identifiers(entry_label: str, raw_linked_identifiers: Any) -> tuple[RawIdentifier, ...]:
+    if not isinstance(raw_linked_identifiers, list):
+        raise SourceInputError(f"{entry_label}: 'linked_identifiers' must be a list of \"scheme:value\" strings")
+    parsed_identifiers = []
+    for raw_identifier in raw_linked_identifiers:
+        if not isinstance(raw_identifier, str) or ":" not in raw_identifier:
+            raise SourceInputError(f"{entry_label}: linked identifier {raw_identifier!r} is not \"scheme:value\"")
+        scheme, _, value = raw_identifier.partition(":")
+        parsed_identifiers.append(RawIdentifier(scheme=scheme, value=value))
+    return tuple(parsed_identifiers)

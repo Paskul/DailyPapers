@@ -8,6 +8,7 @@ to exercise validation and failure paths through the real role pipeline.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from paperwatch.llm.types import ModelServerDescription, StructuredChatRequest, StructuredChatResponse
@@ -18,8 +19,10 @@ FAKE_CONTEXT_TOKENS_PER_SLOT = 262144
 
 
 class FakeModelClient:
-    def __init__(self, canned_final_answers_by_role: dict[str, str] | None = None) -> None:
+    def __init__(self, canned_final_answers_by_role: dict[str, str] | None = None, *,
+                 response_delay_seconds: float = 0.0) -> None:
         self._canned_final_answers_by_role = dict(canned_final_answers_by_role or {})
+        self._response_delay_seconds = response_delay_seconds  # simulates a slow model in crash/lease tests
         self.received_requests: list[StructuredChatRequest] = []  # lets tests count inference calls
 
     def check_health(self) -> None:
@@ -29,10 +32,13 @@ class FakeModelClient:
         return ModelServerDescription(
             served_model_names=("qwen-local",), server_build=FAKE_SERVER_BUILD, model_file_name="fake.gguf",
             context_tokens_per_slot=FAKE_CONTEXT_TOKENS_PER_SLOT, parallel_slots=1,
-            supported_reasoning_effort_levels=("low", "medium", "xhigh"))
+            supported_reasoning_effort_levels=("low", "medium", "xhigh"), mcp_proxy_enabled=False,
+            server_tools_enabled=False)
 
     def request_structured_completion(self, request: StructuredChatRequest) -> StructuredChatResponse:
         self.received_requests.append(request)
+        if self._response_delay_seconds > 0:
+            time.sleep(self._response_delay_seconds)
         if request.role_name in self._canned_final_answers_by_role:
             final_answer_text = self._canned_final_answers_by_role[request.role_name]
         else:

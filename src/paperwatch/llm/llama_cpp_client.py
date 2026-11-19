@@ -19,6 +19,9 @@ from paperwatch.llm.reasoning import separate_reasoning_from_final_answer
 from paperwatch.llm.types import ModelServerDescription, StructuredChatRequest, StructuredChatResponse
 
 METADATA_REQUEST_TIMEOUT_SECONDS = 10.0
+# Request fields that would give the model tools or let it call functions. paperwatch never sends them: the model
+# receives plain data and has zero tools (plan part 3). build_chat_completion_payload asserts their absence.
+TOOL_REQUEST_FIELDS = frozenset({"tools", "tool_choice", "functions", "function_call", "parallel_tool_calls"})
 MAX_ERROR_BODY_CHARACTERS = 300
 UNKNOWN_VALUE = "unknown"
 
@@ -49,6 +52,9 @@ class LlamaCppModelClient:
             served_model_names.extend(model_entry.get("aliases", []) or [])
 
         properties_payload = self._get_json(f"{self._server_root_url}/props")
+        # /tools lists built-in server tools when llama-server runs with --tools or --agent; otherwise it refuses.
+        tools_response = self._send("GET", f"{self._server_root_url}/tools",
+                                    read_timeout_seconds=METADATA_REQUEST_TIMEOUT_SECONDS)
         generation_defaults = properties_payload.get("default_generation_settings", {}) or {}
         template_capabilities = properties_payload.get("chat_template_caps", {}) or {}
         model_file_name = PurePath(properties_payload.get("model_path", UNKNOWN_VALUE)).name
@@ -60,25 +66,12 @@ class LlamaCppModelClient:
             context_tokens_per_slot=generation_defaults.get("n_ctx"),
             parallel_slots=properties_payload.get("total_slots"),
             supported_reasoning_effort_levels=tuple(template_capabilities.get("reasoning_effort_levels", []) or []),
+            mcp_proxy_enabled=properties_payload.get("cors_proxy_enabled"),
+            server_tools_enabled=_server_tools_are_listed(tools_response),
         )
 
     def request_structured_completion(self, request: StructuredChatRequest) -> StructuredChatResponse:
-        request_payload: dict[str, Any] = {
-            "model": self._model_settings.model_alias,
-            "messages": [  # a fresh context for every job: no conversation history is ever carried over
-                {"role": "system", "content": request.system_prompt},
-                {"role": "user", "content": request.user_message},
-            ],
-            "max_tokens": request.max_output_tokens,
-            "stream": False,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": request.output_schema_name, "strict": True, "schema": request.output_schema},
-            },
-        }
-        if request.reasoning_effort != REASONING_EFFORT_SERVER_DEFAULT:
-            request_payload["reasoning_effort"] = request.reasoning_effort
-
+        request_payload = build_chat_completion_payload(request, self._model_settings.model_alias)
         request_started = time.monotonic()
         completion_response = self._send("POST", f"{self._openai_api_base_url}/chat/completions",
                                          read_timeout_seconds=request.timeout_seconds, json_body=request_payload,
@@ -165,6 +158,43 @@ class LlamaCppModelClient:
                 ) from read_timeout
             except httpx.HTTPError as other_http_error:
                 raise ModelServerUnavailable(f"{method} {url} failed: {other_http_error!r}") from other_http_error
+
+
+def build_chat_completion_payload(request: StructuredChatRequest, model_alias: str) -> dict[str, Any]:
+    """The exact JSON body sent to /v1/chat/completions: two fresh messages, a schema, limits. Never any tools."""
+    request_payload: dict[str, Any] = {
+        "model": model_alias,
+        "messages": [  # a fresh context for every job: no conversation history is ever carried over
+            {"role": "system", "content": request.system_prompt},
+            {"role": "user", "content": request.user_message},
+        ],
+        "max_tokens": request.max_output_tokens,
+        "stream": False,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": request.output_schema_name, "strict": True, "schema": request.output_schema},
+        },
+    }
+    if request.reasoning_effort != REASONING_EFFORT_SERVER_DEFAULT:
+        request_payload["reasoning_effort"] = request.reasoning_effort
+    if TOOL_REQUEST_FIELDS & request_payload.keys():  # explicit check: survives `python -O`
+        raise RuntimeError("model requests must never carry tools")
+    return request_payload
+
+
+def _server_tools_are_listed(tools_response: httpx.Response) -> bool | None:
+    """True if /tools lists at least one tool, False if refused/absent/empty, None if the answer is unreadable."""
+    if tools_response.status_code in (401, 403, 404, 405, 501):
+        return False
+    if tools_response.status_code != 200:
+        return None
+    try:
+        tools_payload = tools_response.json()
+    except ValueError:
+        return None
+    listed_tools = tools_payload.get("data", tools_payload.get("tools", [])) if isinstance(tools_payload, dict) \
+        else tools_payload
+    return bool(listed_tools)
 
 
 def _shorten(text: str) -> str:

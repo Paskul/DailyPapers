@@ -32,7 +32,8 @@ reasoning_effort = "server-default"
 max_attempts_per_job = 3      # paper-specific failures only; outages never consume attempts
 retry_delay_seconds = 600     # multiplied by the attempt number
 idle_poll_seconds = 60        # no inference calls happen while idle
-lease_margin_seconds = 120
+lease_seconds = 300                  # a crashed worker's job is reclaimable after this long
+lease_renewal_interval_seconds = 60  # a live worker renews its lease this often during long model calls
 
 [report]
 timezone = "America/New_York"
@@ -41,3 +42,28 @@ max_papers_per_report = 15
 
 [schedule]
 collect_times = ["00:30", "06:30", "12:30", "18:30"]
+
+# The collector is the ONLY component that contacts paper providers. Which hosts, paths, and parameters it may use,
+# its request budgets and its response bounds are fixed in the read-only provider rules shipped with the package
+# (paperwatch/network/provider_rules.toml), not here.
+[collector]
+credentials_file = "credentials/collector.toml"   # API keys (Zotero, OpenAlex). Collector account only, mode 0600.
+user_agent = "paperwatch/0.1 (local research monitor)"
+
+# PDF/XML text extraction runs in rootless Podman with no network, a read-only root, and one read-only input.
+[extractor]
+container_runtime = "podman"
+image = ""                       # set to the 64-hex image id printed by deploy/build_extractor_image.sh
+timeout_seconds = 120.0
+max_input_megabytes = 60
+max_output_megabytes = 20
+memory_megabytes = 1024
+temporary_space_megabytes = 64
+cpu_limit = 1.0
+
+# Linux accounts created by deploy/setup_service_accounts.sh. `paperwatch access-check` verifies them.
+[access]
+collector_account = "paperwatch-collector"
+worker_account = "paperwatch-worker"      # runs `work` and `report`
+shared_state_group = "paperwatch-state"   # owns state/ so both accounts can use SQLite and its WAL files
+model_server_account = ""                 # empty: llama-server still runs as a desktop user (not isolated yet)

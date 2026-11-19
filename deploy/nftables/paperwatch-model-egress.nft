@@ -1,0 +1,20 @@
+#!/usr/sbin/nft -f
+# OPTIONAL model-server egress rule (plan part 3). Loaded by deploy/apply_egress_rules.sh only with
+# --with-model-account, once llama-server runs under its own account. @MODEL_ACCOUNT@ is replaced when rendered.
+#
+# The model server may answer local clients (replies belong to established connections) but may not open any new
+# outbound connection, on IPv4 or IPv6.
+#
+# NOT loaded by default: by owner decision (2026-11-19) llama-server still runs as a desktop user, and matching that
+# UID would cut the whole desktop session off from the network.
+
+table inet paperwatch_model_egress
+delete table inet paperwatch_model_egress
+
+table inet paperwatch_model_egress {
+    chain output {
+        type filter hook output priority filter; policy accept;
+        meta skuid "@MODEL_ACCOUNT@" ct state established,related accept
+        meta skuid "@MODEL_ACCOUNT@" counter drop comment "model server: no new outbound connections"
+    }
+}

@@ -5,8 +5,10 @@ Job life cycle: queued -> running -> done, with delayed retries (back to queued)
   * Expired leases (a crashed worker) are reclaimable by the same claim query.
   * Finish: the result writes and `status = done` commit in ONE transaction, and only if the lease token still
     matches, so a stale worker can never overwrite a newer result.
+  * Leases are short; a worker renews its lease while a long call runs (paperwatch.lease_keeper), so a crashed
+    worker's job is reclaimable within one lease period instead of after the slowest possible call.
   * A service outage releases the job without charging an attempt; a paper-specific failure charges one.
-Part 2 of the plan adds lease renewal during long calls; part 6 adds the full priority classes and ordering.
+Part 6 adds the full priority classes and the ordering within each class.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ REVIEW_PAPER_JOB_KIND = "review_paper"
 class JobPriorityClass(IntEnum):
     """Worker priority classes from plan part 6 (lower number = claimed first)."""
 
+    OPERATOR_REQUEST = 0  # explicit operator reread; not in the plan's table, so it goes ahead of every class
     NEW_RELEASE = 1
     HISTORICAL_SEARCH = 2
     IMPORTANT_REFERENCE = 3
@@ -114,30 +117,57 @@ def finish_job_with_writes(connection: sqlite3.Connection, claimed_job: ClaimedJ
     return True
 
 
+def renew_job_lease(connection: sqlite3.Connection, job_id: str, lease_token: str, lease_duration_seconds: float,
+                    ) -> bool:
+    """Push the lease expiry forward if we still hold the lease. False means another worker reclaimed the job."""
+    now = utc_now()
+    renew_cursor = connection.execute(
+        """UPDATE jobs SET lease_expires_at = ?, updated_at = ?
+           WHERE job_id = ? AND lease_token = ? AND status = 'running'""",
+        (format_utc_timestamp(now + timedelta(seconds=lease_duration_seconds)), format_utc_timestamp(now),
+         job_id, lease_token))
+    return renew_cursor.rowcount == 1
+
+
 def release_job_without_charging_attempt(connection: sqlite3.Connection, claimed_job: ClaimedJob,
-                                         failure: PaperwatchError) -> None:
-    """Put the job back exactly as it was (minus the lease) because the failure was not the job's fault."""
-    connection.execute(
+                                         failure: PaperwatchError) -> bool:
+    """Put the job back exactly as it was (minus the lease) because the failure was not the job's fault.
+
+    Returns False if our lease was already gone (another worker owns the job now); nothing is changed then.
+    """
+    release_cursor = connection.execute(
         """UPDATE jobs SET status = 'queued', attempts = MAX(attempts - 1, 0), lease_token = NULL,
                lease_expires_at = NULL, last_error_component = ?, last_error = ?, updated_at = ?
-           WHERE job_id = ? AND lease_token = ?""",
+           WHERE job_id = ? AND lease_token = ? AND status = 'running'""",
         (failure.failed_component, str(failure), utc_now_timestamp(), claimed_job.job_id, claimed_job.lease_token))
+    return release_cursor.rowcount == 1
+
+
+ATTEMPT_SETTLEMENT_RETRY_SCHEDULED = "retry_scheduled"
+ATTEMPT_SETTLEMENT_FAILED_PERMANENTLY = "failed_permanently"
+ATTEMPT_SETTLEMENT_LEASE_LOST = "lease_lost"
 
 
 def record_job_attempt_failure(connection: sqlite3.Connection, claimed_job: ClaimedJob, failure: PaperwatchError,
                                retry_delay_seconds: int) -> str:
-    """Charge the failed attempt. Returns 'retry_scheduled' or 'failed_permanently'."""
+    """Charge the failed attempt. Returns one of the ATTEMPT_SETTLEMENT_* values.
+
+    'lease_lost' means another worker reclaimed the job meanwhile; nothing is changed, so a stale worker's failure
+    never overwrites a newer worker's state.
+    """
     out_of_attempts = claimed_job.attempts_including_this_one >= claimed_job.max_attempts
     new_status = "failed" if out_of_attempts else "queued"
     retry_due_at = format_utc_timestamp(
         utc_now() + timedelta(seconds=retry_delay_seconds * claimed_job.attempts_including_this_one))
-    connection.execute(
+    settle_cursor = connection.execute(
         """UPDATE jobs SET status = ?, due_at = ?, lease_token = NULL, lease_expires_at = NULL,
                last_error_component = ?, last_error = ?, updated_at = ?
-           WHERE job_id = ? AND lease_token = ?""",
+           WHERE job_id = ? AND lease_token = ? AND status = 'running'""",
         (new_status, retry_due_at, failure.failed_component, str(failure), utc_now_timestamp(),
          claimed_job.job_id, claimed_job.lease_token))
-    return "failed_permanently" if out_of_attempts else "retry_scheduled"
+    if settle_cursor.rowcount != 1:
+        return ATTEMPT_SETTLEMENT_LEASE_LOST
+    return ATTEMPT_SETTLEMENT_FAILED_PERMANENTLY if out_of_attempts else ATTEMPT_SETTLEMENT_RETRY_SCHEDULED
 
 
 def find_next_job_due_time(connection: sqlite3.Connection) -> datetime | None:

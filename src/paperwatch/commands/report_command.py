@@ -6,8 +6,8 @@ Publication order (so a crash at any point is recoverable and a rerun produces t
   3. write the notes, then the report, each via temp file + atomic rename,
   4. mark the report `published`.
 A rerun for a `pending` date republishes the saved bytes; a rerun for a `published` date changes nothing.
-Step-1 selection: newest completed review per unreported paper, ordered by best topic rating. Plan part 9 adds the
-reading-priority floor, the writer role, and the scheduled cutoff.
+Step-1 selection: newest completed review per unreported paper, ordered by its best topic assessment. Plan part 9
+adds the reading-priority floor, the writer role, and the scheduled cutoff.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from paperwatch.errors import ConfigurationError
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, read_service_health_state
 from paperwatch.rendering.file_output import write_bytes_atomically
 from paperwatch.rendering.notes import SelectedReview, render_daily_report, render_paper_note
+from paperwatch.review_store import load_latest_topic_assessments
 
 
 def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
@@ -86,7 +87,7 @@ def _select_reviews_for_report(app: AppContext, cutoff_at: str) -> list[Selected
         (cutoff_at,)).fetchall()
     unranked_reviews = [_build_selected_review(app.connection, rank=0, review_row=row) for row in candidate_rows]
     unranked_reviews.sort(key=lambda candidate: (
-        -(candidate.best_topic_rating if candidate.best_topic_rating is not None else -1),
+        -(candidate.best_topic_assessment.topic_score if candidate.best_topic_assessment is not None else -1),
         candidate.paper_row["paper_id"]))
     chosen_reviews = unranked_reviews[:app.config.report.max_papers_per_report]
     return [_build_selected_review(app.connection, rank=position + 1, review_row=chosen.review_row)
@@ -101,17 +102,13 @@ def _load_frozen_selection(connection: sqlite3.Connection, report_date: str) -> 
 
 
 def _build_selected_review(connection: sqlite3.Connection, *, rank: int, review_row: sqlite3.Row) -> SelectedReview:
-    review_content = json.loads(review_row["review_json"])
-    topic_assessments = review_content.get("topic_relevance", [])
-    best_assessment = max(topic_assessments, key=lambda assessment: assessment["relevance_rating"], default=None)
     return SelectedReview(
         rank=rank,
         paper_row=connection.execute("SELECT * FROM papers WHERE paper_id = ?", (review_row["paper_id"],)).fetchone(),
         review_row=review_row,
-        review_content=review_content,
+        review_content=json.loads(review_row["review_json"]),
         paper_aliases=load_paper_aliases(connection, review_row["paper_id"]),
-        best_topic_rating=best_assessment["relevance_rating"] if best_assessment else None,
-        best_topic_id=best_assessment["topic_id"] if best_assessment else None)
+        topic_assessments=load_latest_topic_assessments(connection, review_row["review_id"]))
 
 
 def _collect_report_statistics(app: AppContext) -> dict:

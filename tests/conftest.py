@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import socket
 import sqlite3
 import subprocess
@@ -13,6 +14,9 @@ import pytest
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 RECORDED_PAPER_FIXTURE = FIXTURES_DIR / "recorded_paper.json"
+ARXIV_ROUTE_FIXTURE = FIXTURES_DIR / "two_routes" / "arxiv_listing.json"
+OPENALEX_ROUTE_FIXTURE = FIXTURES_DIR / "two_routes" / "openalex_record.json"
+PROMPT_INJECTION_FIXTURE = FIXTURES_DIR / "prompt_injection_papers.json"
 
 EXAMPLE_TOPIC_TOML = """
 [[topics]]
@@ -37,9 +41,22 @@ class PaperwatchHome:
         self.home_dir = home_dir
 
     def run_cli(self, *cli_arguments: str) -> CliResult:
-        completed = subprocess.run([sys.executable, "-m", "paperwatch", "--home", str(self.home_dir), *cli_arguments],
-                                   capture_output=True, text=True, timeout=120)
+        completed = subprocess.run(self.cli_command(*cli_arguments), capture_output=True, text=True, timeout=120)
         return CliResult(completed.returncode, completed.stdout, completed.stderr)
+
+    def cli_command(self, *cli_arguments: str) -> list[str]:
+        return [sys.executable, "-m", "paperwatch", "--home", str(self.home_dir), *cli_arguments]
+
+    def start_cli(self, *cli_arguments: str, environment_overrides: dict[str, str] | None = None
+                  ) -> subprocess.Popen:
+        """Start the CLI without waiting, e.g. a worker the test will kill or race."""
+        return subprocess.Popen(self.cli_command(*cli_arguments), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, env={**os.environ, **(environment_overrides or {})})
+
+    def use_short_leases(self, lease_seconds: int = 2, renewal_interval_seconds: int = 1) -> None:
+        self.replace_in_config("lease_seconds = 300", f"lease_seconds = {lease_seconds}")
+        self.replace_in_config("lease_renewal_interval_seconds = 60",
+                               f"lease_renewal_interval_seconds = {renewal_interval_seconds}")
 
     def replace_in_config(self, old_text: str, new_text: str) -> None:
         config_path = self.home_dir / "config.toml"
@@ -64,6 +81,30 @@ class PaperwatchHome:
             return connection.execute(sql, parameters).fetchall()
         finally:
             connection.close()
+
+
+def build_in_process_app(home_dir: Path, *, topics_toml: str = EXAMPLE_TOPIC_TOML,
+                         config_replacements: dict[str, str] | None = None, model_client=None,
+                         use_configured_model_backend: bool = False):
+    """Init a home in this process, write topics and config edits, and load an AppContext.
+
+    The model is a FakeModelClient unless `model_client` is given, or `use_configured_model_backend` asks for the
+    client config.toml describes (e.g. the real llama.cpp client pointed at a FakeLlamaServer)."""
+    from paperwatch.app_context import AppContext
+    from paperwatch.commands.init_command import run_init_command
+    from paperwatch.llm.fake_client import FakeModelClient
+
+    run_init_command(home_dir, None)
+    (home_dir / "topics.toml").write_text(topics_toml)
+    config_path = home_dir / "config.toml"
+    config_text = config_path.read_text()
+    for old_text, new_text in (config_replacements or {}).items():
+        assert old_text in config_text, f"{old_text!r} not found in config.toml"
+        config_text = config_text.replace(old_text, new_text)
+    config_path.write_text(config_text)
+    if use_configured_model_backend:
+        return AppContext.load(home_dir)
+    return AppContext.load(home_dir, model_client=model_client if model_client is not None else FakeModelClient())
 
 
 def find_unused_local_port() -> int:

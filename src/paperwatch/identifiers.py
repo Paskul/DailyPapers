@@ -8,6 +8,9 @@ PAPER_ID_PREFIX = "p"
 JOB_ID_PREFIX = "j"
 REVIEW_ID_PREFIX = "r"
 MODEL_CALL_ID_PREFIX = "c"
+EDITION_ID_PREFIX = "e"
+READING_GENERATION_ID_PREFIX = "g"  # explicit operator rereads
+COMPARISON_ID_PREFIX = "k"
 
 
 def new_internal_id(prefix: str) -> str:

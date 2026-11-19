@@ -1,0 +1,44 @@
+#!/usr/sbin/nft -f
+# paperwatch egress rules (plan part 3). Rendered and loaded by deploy/apply_egress_rules.sh.
+#
+# Matches locally generated packets by the UID that owns the socket (meta skuid) in the output hook, so only the
+# paperwatch service accounts are affected; every other account's traffic passes through untouched.
+# @MODEL_PORT@ is replaced by the llama.cpp server port when the file is rendered (default 8080).
+#
+#   paperwatch-worker     (work + report)  TCP to 127.0.0.1:@MODEL_PORT@ only; all other IPv4 and IPv6 dropped.
+#   paperwatch-collector  (collect)        DNS to the local stub resolver, then HTTPS (443) to PUBLIC addresses
+#                                          only; private, loopback, link-local, and reserved ranges dropped.
+# Unix sockets (SQLite does not use any) are not affected by nftables.
+
+# Idempotent reload: create the table if missing, delete it, then define it fresh.
+table inet paperwatch_egress
+delete table inet paperwatch_egress
+
+table inet paperwatch_egress {
+    set collector_forbidden_ipv4 {
+        type ipv4_addr; flags interval
+        elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
+                     192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24,
+                     203.0.113.0/24, 224.0.0.0/3 }
+    }
+    set collector_forbidden_ipv6 {
+        type ipv6_addr; flags interval
+        elements = { ::/127, ::ffff:0:0/96, 64:ff9b::/96, 100::/64, 2001:db8::/32, fc00::/7, fe80::/10, ff00::/8 }
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+
+        # ---- worker and report writer: only the local llama.cpp server ----------------------------------------
+        meta skuid "paperwatch-worker" ip daddr 127.0.0.1 tcp dport @MODEL_PORT@ accept
+        meta skuid "paperwatch-worker" counter drop comment "paperwatch-worker: all other IPv4 and IPv6"
+
+        # ---- collector: DNS via the systemd-resolved stub, then HTTPS to public addresses -----------------------
+        meta skuid "paperwatch-collector" ip daddr 127.0.0.53 udp dport 53 accept
+        meta skuid "paperwatch-collector" ip daddr 127.0.0.53 tcp dport 53 accept
+        meta skuid "paperwatch-collector" ip daddr @collector_forbidden_ipv4 counter drop
+        meta skuid "paperwatch-collector" ip6 daddr @collector_forbidden_ipv6 counter drop
+        meta skuid "paperwatch-collector" tcp dport 443 accept
+        meta skuid "paperwatch-collector" counter drop comment "paperwatch-collector: anything but HTTPS"
+    }
+}

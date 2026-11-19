@@ -1,0 +1,24 @@
+# paperwatch text extractor (plan part 3). Built by deploy/build_extractor_image.sh with BASE_IMAGE pinned by digest.
+#
+# Run ONLY through paperwatch/sandboxed_extractor.py, which adds --network=none, --read-only, --cap-drop=all,
+# no-new-privileges, memory/CPU/process/tmpfs limits, a timeout, and exactly one read-only input at /input/source.
+# The entrypoint is fixed: nothing on the command line or in the input can choose a different program.
+#
+# The process runs as root INSIDE a rootless user namespace (it maps to the unprivileged collector account on the
+# host) with every capability dropped; that is what lets it read the collector's 0640 cache file and nothing more.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends poppler-utils python3 \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /opt/paperwatch-extractor \
+ && dpkg-query --show --showformat='${Package} ${Version}\n' poppler-utils python3 \
+      > /opt/paperwatch-extractor/PACKAGE_VERSIONS
+
+COPY extract_text.py /opt/paperwatch-extractor/extract_text.py
+RUN chmod 0444 /opt/paperwatch-extractor/extract_text.py
+
+ENV LANG=C.UTF-8
+# -I: isolated mode (no user site, no environment variables, script directory not on sys.path).
+ENTRYPOINT ["/usr/bin/python3", "-I", "/opt/paperwatch-extractor/extract_text.py"]

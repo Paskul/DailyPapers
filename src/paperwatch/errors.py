@@ -82,6 +82,55 @@ class SourceInputError(PaperwatchError):
     process_exit_code = 7
 
 
+class SourceRecordNotFound(SourceInputError):
+    """The provider answered 404/410 for this specific record. Paper-specific, so it is charged to the job."""
+
+
+class SourceResponseRejected(SourceInputError):
+    """A provider response broke a bound: too large, too slow, wrong content type, or bad compression."""
+
+
+class ProviderUnavailable(PaperwatchError):
+    """A whole provider is down, rate-limiting us, or refusing our credentials. Collection from it pauses."""
+
+    failed_component = "source"
+    process_exit_code = 7
+    is_service_outage = True
+
+    def __init__(self, message: str, *, provider_name: str, retry_after_seconds: float | None = None,
+                 operator_hint: str | None = None) -> None:
+        super().__init__(message, operator_hint=operator_hint)
+        self.provider_name = provider_name
+        self.retry_after_seconds = retry_after_seconds  # the provider's own Retry-After, honoured as a minimum pause
+
+
+class SourceAccessDenied(PaperwatchError):
+    """A request was refused by paperwatch's own access rules (plan part 3), before or during the network call.
+
+    Examples: a host, path, or parameter outside the read-only provider rules; a redirect to an unlisted host; a
+    connection target in a private, loopback, link-local, or reserved range; an id that is not a known source record.
+    These are never retried automatically: the same request would be refused again.
+    """
+
+    failed_component = "source-access"
+    process_exit_code = 10
+
+
+class SourceRequestBudgetExhausted(SourceAccessDenied):
+    """The provider's daily request budget is used up. Collection from it resumes the next UTC day."""
+
+
+class ExtractionError(PaperwatchError):
+    """The sandboxed PDF/XML extractor failed, returned too much output, or is not set up."""
+
+    failed_component = "extractor"
+    process_exit_code = 11
+
+
+class ExtractionTimedOut(ExtractionError):
+    """The extractor exceeded its time limit; the container was killed. Charged to that one source file."""
+
+
 class OutputWriteError(PaperwatchError):
     failed_component = "output"
     process_exit_code = 8
