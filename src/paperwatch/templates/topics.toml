@@ -1,0 +1,18 @@
+# Research topics. The question is the unit of relevance.
+# Add one [[topics]] block per research interest. All topics are active and every one is considered in each run.
+# Write each question as a full sentence: the local model judges relevance against it.
+#
+#   question         PRIVATE. Given to the local model only; never sent to any paper provider.
+#   public_queries   Search terms the collector MAY send to arXiv / OpenAlex.
+#   arxiv_categories Public subject categories to watch.
+#   zotero_collections Optional Zotero collection keys used as seed papers.
+#
+# Uncomment and edit the example, or add your own [[topics]] blocks.
+
+# [[topics]]
+# id = "team-safety"
+# question = "Can a runtime monitor reject a joint robot plan before it blocks a human exit?"
+# public_queries = ["multi-robot runtime assurance", "multi-agent plan monitoring",
+#                   "runtime verification mobile robots"]
+# arxiv_categories = ["cs.RO", "cs.MA", "cs.LO"]
+# zotero_collections = []

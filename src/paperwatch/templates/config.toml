@@ -1,0 +1,43 @@
+# paperwatch configuration. Relative paths resolve against the directory holding this file.
+# Every value below is the built-in default; delete a line to keep the default.
+
+[paths]
+state_dir = "state"     # SQLite database + source cache. Keep OUTSIDE any synced notes folder.
+output_dir = "output"   # Markdown notes (papers/) and daily reports (daily/). Local for now; later an Obsidian vault.
+
+[model]
+backend = "llama_cpp"                    # "llama_cpp" (real local server) or "fake" (offline tests)
+base_url = "http://127.0.0.1:8080/v1"    # must be a loopback address; there is never a hosted fallback
+model_alias = "qwen-local"
+connect_timeout_seconds = 5.0
+required_context_tokens = 32768          # `doctor` fails if the per-slot context is smaller
+allow_non_loopback_host = false
+outage_backoff_initial_seconds = 30      # model jobs pause together on an outage; health checks back off
+outage_backoff_max_seconds = 1800
+inference_lock_wait_seconds = 3600       # one inference request at a time across all roles
+
+# Hard limits per model role. Reasoning tokens count toward max_output_tokens.
+# reasoning_effort: "server-default" or a level the server supports (this server: low, medium, xhigh).
+[roles.healthcheck]
+max_output_tokens = 2048
+timeout_seconds = 120
+reasoning_effort = "low"
+
+[roles.reviewer]
+max_output_tokens = 16384
+timeout_seconds = 1800
+reasoning_effort = "server-default"
+
+[worker]
+max_attempts_per_job = 3      # paper-specific failures only; outages never consume attempts
+retry_delay_seconds = 600     # multiplied by the attempt number
+idle_poll_seconds = 60        # no inference calls happen while idle
+lease_margin_seconds = 120
+
+[report]
+timezone = "America/New_York"
+publish_time = "07:00"
+max_papers_per_report = 15
+
+[schedule]
+collect_times = ["00:30", "06:30", "12:30", "18:30"]

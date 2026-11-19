@@ -1,0 +1,15 @@
+# Python / tooling
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Runtime data created by `paperwatch init` when the repo itself is used as the home directory.
+# config.toml and topics.toml hold private research questions, so they are not committed.
+/config.toml
+/topics.toml
+/state/
+/output/

@@ -1,0 +1,28 @@
+[project]
+name = "paperwatch"
+version = "0.1.0"
+description = "Local, autonomous daily paper monitor: collect, screen, review with a local llama.cpp model, and publish one Markdown report per day."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",       # small HTTP client with explicit timeouts (model server now, providers later)
+    "jsonschema>=4.22",  # validates every model answer against its role's output schema
+]
+
+[project.scripts]
+paperwatch = "paperwatch.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/paperwatch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live_model: talks to the real local llama.cpp server (set PAPERWATCH_LIVE_MODEL=1)"]

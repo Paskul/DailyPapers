@@ -1,0 +1,12 @@
+[
+  {
+    "provider": "fixture",
+    "provider_paper_id": "synthetic-0001",
+    "title": "Runtime Monitoring of Joint Multi-Robot Plans for Human Egress Safety (synthetic fixture)",
+    "authors": ["A. Example", "B. Placeholder"],
+    "abstract": "SYNTHETIC TEST RECORD, not a real paper. We present a runtime monitor that checks a joint multi-robot plan before dispatch and rejects plans whose predicted robot positions would block a marked human exit. The monitor assumes bounded travel time between waypoints. In 200 simulated warehouse episodes the monitor rejected all 37 plans that blocked an exit, with a median check time of 12 ms. We discuss limitations under noisy localization.",
+    "first_published_date": "2026-11-17",
+    "latest_revision_date": null,
+    "source_version": "v1"
+  }
+]
