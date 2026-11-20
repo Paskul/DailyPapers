@@ -427,6 +427,63 @@ CREATE INDEX edition_source_texts_by_acquisition ON edition_source_texts(acquire
 """
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# Migration 6 (plan part 6): cheap CPU screening and ordered dispatch.
+#   text_embeddings         cache of sentence embeddings, keyed by the pinned model's identity and the text's hash
+#   candidate_topic_scores  the screening score of one candidate for one topic, with its component signals; rows of
+#                           unpromoted candidates are rescored whenever the topic profile or the paper's text changes
+#   paper_promotions        which papers screening chose for a reading, why, and when (the daily promotion limit)
+#   jobs                    two descending within-class order values and the end of a new release's fresh window
+# --------------------------------------------------------------------------------------------------------------------
+MIGRATION_0006_SCREENING_AND_DISPATCH_ORDER = """
+ALTER TABLE jobs ADD COLUMN within_class_order_primary REAL NOT NULL DEFAULT 0;    -- higher is claimed first
+ALTER TABLE jobs ADD COLUMN within_class_order_secondary REAL NOT NULL DEFAULT 0;  -- tie-breaker, higher first
+ALTER TABLE jobs ADD COLUMN new_release_fresh_until TEXT;  -- class 1 only: after this it is claimed as class 2
+CREATE INDEX jobs_by_status_and_priority ON jobs(status, priority, within_class_order_primary DESC, created_at);
+
+CREATE TABLE text_embeddings (                                 -- one vector per (pinned model, exact model input)
+    embedding_model_identity TEXT NOT NULL,                    -- e.g. 'onnx:bge-base-en-v1.5@<revision>:<file hash>'
+    text_sha256              TEXT NOT NULL,                    -- of the exact model input, query instruction included
+    dimensions               INTEGER NOT NULL,
+    vector_float32           BLOB NOT NULL,                    -- little-endian float32, L2-normalized
+    created_at               TEXT NOT NULL,
+    PRIMARY KEY (embedding_model_identity, text_sha256)
+);
+
+CREATE TABLE candidate_topic_scores (                          -- screening score of one candidate for one topic
+    paper_id                TEXT NOT NULL REFERENCES papers(paper_id),
+    topic_id                TEXT NOT NULL,
+    edition_id              TEXT NOT NULL REFERENCES paper_editions(edition_id),  -- the text that was scored
+    unnormalized_score      REAL NOT NULL,                     -- raw weighted mean; promotion ranks each signal
+                                                               -- within the topic's pool first (not stored)
+    question_similarity     REAL,                              -- NULL when the signal is unavailable for the topic
+    seed_similarity         REAL,                              -- mean of the closest seeds (up to 3)
+    phrase_match_fraction   REAL,                              -- fraction of the topic's approved phrases found
+    closest_seed_ids_json   TEXT NOT NULL DEFAULT '[]',
+    matched_phrases_json    TEXT NOT NULL DEFAULT '[]',
+    title_only              INTEGER NOT NULL DEFAULT 0,        -- 1: the candidate had no abstract (a limitation)
+    screening_input_sha256  TEXT NOT NULL,                     -- text + topic profile + scoring settings + model
+    scored_at               TEXT NOT NULL,
+    PRIMARY KEY (paper_id, topic_id)
+);
+CREATE INDEX candidate_topic_scores_by_topic ON candidate_topic_scores(topic_id, unnormalized_score DESC);
+
+CREATE TABLE paper_promotions (                                -- this paper was chosen for a reading
+    paper_id          TEXT PRIMARY KEY REFERENCES papers(paper_id),
+    promotion_reason  TEXT NOT NULL                            -- 'direct': an operator tool or test, not screening;
+        CHECK (promotion_reason IN ('topic_share', 'spare_slot', 'near_cutoff', 'direct')),  -- not in the limit
+    topic_id          TEXT,                                    -- the topic whose share or score selected it
+    best_topic_id     TEXT,
+    screening_score   REAL,                                    -- pool-normalized best-topic score (NULL if direct)
+    unnormalized_score       REAL,                             -- the same topic's raw weighted mean
+    normalization_pool_size  INTEGER,                          -- candidates the percentiles were taken over
+    priority_class    INTEGER NOT NULL,                        -- class the reading was queued in
+    promoted_at       TEXT NOT NULL
+);
+CREATE INDEX paper_promotions_by_time ON paper_promotions(promoted_at);
+"""
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("initial schema (plan part 1)", MIGRATION_0001_INITIAL_SCHEMA),
     SchemaMigration("paper identity, editions, reading identity and part-2 records",
@@ -437,4 +494,6 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("seed cache for Zotero and CSL JSON seeds (plan part 4)", MIGRATION_0004_SEED_CACHE),
     SchemaMigration("route reports, withdrawals, and acquired source text (plan part 5)",
                     MIGRATION_0005_COLLECTION_ROUTES_WITHDRAWALS_AND_SOURCE_TEXT),
+    SchemaMigration("screening scores, embedding cache, promotions, and dispatch order (plan part 6)",
+                    MIGRATION_0006_SCREENING_AND_DISPATCH_ORDER),
 )

@@ -13,7 +13,7 @@ from paperwatch.app_context import AppContext
 from paperwatch.catalog import set_paper_status
 from paperwatch.db import write_transaction
 from paperwatch.errors import ConfigurationError
-from paperwatch.jobs import JobPriorityClass
+from paperwatch.dispatch_order import dispatch_order_for_operator_request
 from paperwatch.readings import ReadingEnqueueOutcome, enqueue_reading_if_needed, new_reading_generation_id
 
 INTERNAL_PAPER_ID_PATTERN = re.compile(r"^p_[0-9a-f]{16}$")
@@ -32,7 +32,7 @@ def run_reread_command(app: AppContext, arguments: argparse.Namespace) -> int:
     reading_generation = new_reading_generation_id()
     with write_transaction(app.connection):
         enqueue_outcome, review_packet = enqueue_reading_if_needed(
-            app.connection, paper_id, priority=JobPriorityClass.OPERATOR_REQUEST,
+            app.connection, paper_id, dispatch_order=dispatch_order_for_operator_request(),
             max_attempts=app.config.worker.max_attempts_per_job, reading_generation=reading_generation,
             operator_reason=operator_reason)
         if enqueue_outcome == ReadingEnqueueOutcome.QUEUED:

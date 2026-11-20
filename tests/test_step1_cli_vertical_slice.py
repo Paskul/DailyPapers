@@ -17,7 +17,7 @@ def test_recorded_paper_flows_through_cli_with_fake_model(initialized_home: Pape
 
     collect_result = initialized_home.run_cli("collect", "--fixture", str(RECORDED_PAPER_FIXTURE))
     assert collect_result.exit_code == 0, collect_result.stderr
-    assert "1 new" in collect_result.stdout and "1 review job(s) queued" in collect_result.stdout
+    assert "1 new" in collect_result.stdout and "Promotion: 1 paper(s) queued for review now" in collect_result.stdout
 
     work_result = initialized_home.run_cli("work", "--once")
     assert work_result.exit_code == 0, work_result.stderr
@@ -42,7 +42,8 @@ def test_recorded_paper_flows_through_cli_with_fake_model(initialized_home: Pape
 
     # Re-collecting the same paper must not create a second paper or a second reading.
     recollect_result = initialized_home.run_cli("collect", "--fixture", str(RECORDED_PAPER_FIXTURE))
-    assert "0 new, 1 already known, 0 review job(s) queued" in recollect_result.stdout
+    assert "0 new, 1 already known, 0 new reading(s) of promoted papers queued" in recollect_result.stdout
+    assert "Promotion: 0 paper(s) queued for review now" in recollect_result.stdout
     assert len(initialized_home.query("SELECT * FROM jobs")) == 1
 
     # Re-running the report for the same date changes nothing.
@@ -57,6 +58,7 @@ def test_recorded_paper_flows_through_cli_with_fake_model(initialized_home: Pape
 
 def test_unavailable_model_endpoint_names_component_and_preserves_input(initialized_home: PaperwatchHome) -> None:
     initialized_home.use_unreachable_model_endpoint()
+    initialized_home.use_hashing_test_embedder()
     initialized_home.add_example_topic()
 
     doctor_result = initialized_home.run_cli("doctor")

@@ -243,13 +243,13 @@ def test_real_podman_sandbox_extracts_text(tmp_path):
 
 def test_worker_rechecks_a_queued_edition_against_the_catalog_before_reading(tmp_path):
     from paperwatch.catalog import record_collected_paper
-    from paperwatch.collection.review_promotion import queue_review_if_promoted
+    from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
     from paperwatch.sources.fixture_source import RecordedFixtureSource
 
     app = build_in_process_app(tmp_path / "home")
     paper_id = record_collected_paper(app.connection, RecordedFixtureSource(RECORDED_PAPER_FIXTURE)
                                       .fetch_records()[0]).paper_id
-    queue_review_if_promoted(app.connection, paper_id, max_attempts=3)
+    promote_paper_directly_and_queue_review(app.connection, paper_id, max_attempts=3)
     app.connection.execute("UPDATE jobs SET input_json = json_set(input_json, '$.edition_id', 'e_ffffffffffffffff')")
     cycle_report = run_single_work_cycle(app, probe_paused_model_now=False)
     assert cycle_report.outcome == WorkCycleOutcome.JOB_RETRY_SCHEDULED

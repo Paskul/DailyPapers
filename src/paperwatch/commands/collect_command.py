@@ -10,18 +10,23 @@ Stages of one run:
      missed during downtime, recent OpenAlex windows), then each topic's finite historical search, all within the
      daily budget of new metadata candidates. `--fixture FILE` replaces these live searches with recorded records
      (a replay); `--skip-searches` skips them.
-  3. Source text: for papers queued for review, a local file, else (live runs only) a capped download; then text
+  3. Screening (plan part 6, paperwatch.screening): score every candidate for every topic on the CPU with the pinned
+     local embedding model plus the phrase signal, then promote up to the daily limit (slots divided across topics
+     first) and queue each reading in its priority class. Nothing leaves the machine and no model call is made.
+  4. Source text: for papers queued for review, a local file, else (live runs only) a capped download; then text
      extraction in the sandbox when the extractor image is configured.
-  4. Research profile: print each topic's input mode (keywords, seeds, or both) and anything missing.
+  5. Research profile: print each topic's input mode (keywords, seeds, or both) and anything missing.
 
 Re-collecting is always safe: the catalog resolves each record to its canonical paper, every page commits with its
-checkpoint, and a reading is queued only when the paper's preferred edition has text that was never read.
-The CPU screening score of part 6 replaces the placeholder promotion in paperwatch.collection.review_promotion.
+checkpoint, and a reading is queued only for a promoted paper whose preferred edition has text that was never read.
+If the embedding model is unavailable, every other stage still runs, candidates wait unscored, and the command ends
+with the screening failure (exit code 12) so the problem is visible.
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Callable
 
 from paperwatch.app_context import AppContext
@@ -30,9 +35,11 @@ from paperwatch.collection.current_releases import collect_current_releases
 from paperwatch.collection.historical_search import run_historical_searches
 from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
 from paperwatch.collection.source_text import acquire_source_texts
+from paperwatch.errors import describe_failure_for_operator
 from paperwatch.network.provider_gateway import ProviderGateway
 from paperwatch.research_profile import (build_research_profiles, explain_empty_research_profile,
                                          load_active_seed_library_paper_ids)
+from paperwatch.screening.screening_stage import run_screening_and_promotion
 from paperwatch.seeds.seed_store import seed_sources_of_all_topics
 from paperwatch.seeds.seed_sync import synchronize_all_seed_sources
 from paperwatch.sources.fixture_source import RecordedFixtureSource
@@ -65,8 +72,15 @@ def run_collect_command(app: AppContext, arguments: argparse.Namespace, *,
         print(f"Candidates: {collection_context.candidate_budget.describe()}")
     else:
         print("Papers: live arXiv / OpenAlex searches skipped (--skip-searches)")
+    screening_result = run_screening_and_promotion(app.connection, app.config,
+                                                   active_seed_paper_ids=collection_context.active_seed_paper_ids,
+                                                   moment=collection_context.started_at)
+    _print_lines(screening_result.report_lines)
     _print_lines(acquire_source_texts(collection_context, allow_network=run_live_searches))
     _print_research_profile_summary(app)
+    if screening_result.embedder_failure is not None:
+        print(describe_failure_for_operator(screening_result.embedder_failure), file=sys.stderr)
+        return screening_result.embedder_failure.process_exit_code
     return 0
 
 
@@ -79,7 +93,7 @@ def _synchronize_seed_sources(app: AppContext, build_gateway: Callable[[], Provi
 
 
 def _import_recorded_fixtures(collection_context: CollectionContext, fixture_paths: list) -> None:
-    """A replay: recorded records go through the same catalog, promotion, and queueing as live pages."""
+    """A replay: recorded records go through the same catalog, screening, promotion, and queueing as live pages."""
     for fixture_path in fixture_paths:
         paper_source = RecordedFixtureSource(fixture_path)
         page_result = ingest_records_with_checkpoints(

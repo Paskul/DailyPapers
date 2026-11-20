@@ -35,6 +35,9 @@ DATABASE_FILE_NAME = "paperwatch.sqlite3"
 INFERENCE_LOCK_FILE_NAME = "inference.lock"
 
 SUPPORTED_MODEL_BACKENDS = ("llama_cpp", "fake")
+# "onnx" runs the pinned sentence-embedding model in-process on the CPU; "hashing" is a deterministic word-hashing
+# stand-in for offline tests (like model.backend = "fake"), never for real screening.
+SUPPORTED_EMBEDDING_BACKENDS = ("onnx", "hashing")
 REASONING_EFFORT_SERVER_DEFAULT = "server-default"
 TOPIC_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 CLOCK_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -150,6 +153,35 @@ class CollectionSettings:
 
 
 @dataclass(frozen=True)
+class ScreeningSettings:
+    """Cheap CPU screening of every candidate and the daily promotion of the best ones to a reading (plan part 6).
+
+    Screening score per topic (0-1) = weighted mean of the AVAILABLE signals (an unavailable one is omitted and the
+    weights of the rest are renormalized):
+        question similarity   max(0, cosine) between the paper and the topic's question (or its phrases)
+        seed similarity       mean max(0, cosine) to the `closest_seed_count` most similar active seeds
+        phrase match          fraction of the topic's approved public phrases found verbatim in title + abstract
+    Before combining, promotion replaces each signal by its percentile within the topic's pool of unpromoted
+    candidates (paperwatch.screening.signal_normalization), so signals and topics share one scale. A paper's screening
+    score is its best topic's score; `minimum_screening_score` is therefore a relative position (0.8 = top fifth of the
+    topic's pool). Starting values; calibrate in part 10.
+    """
+
+    embedding_backend: str = "onnx"
+    embedding_model: str = "bge-base-en-v1.5"  # a name from paperwatch/screening/embedding_model_registry.py
+    embedding_model_dir: str = "models/bge-base-en-v1.5"  # installed by deploy/install_embedding_model.sh
+    embedding_threads: int = 16  # CPU threads per batch (measured: 425 abstracts take 30 s at 16, 60 s at 8)
+    embedding_batch_size: int = 32
+    question_similarity_weight: float = 0.5
+    seed_similarity_weight: float = 0.3
+    phrase_match_weight: float = 0.2
+    closest_seed_count: int = 3
+    daily_promotion_limit: int = 30  # readings promoted per UTC day, across all topics, near-cutoff picks included
+    near_cutoff_promotions: int = 3  # of those, the best candidates just below the cutoff (tests what it misses)
+    minimum_screening_score: float = 0.0  # pool percentile, 0-1; 0 = rank only, until part 10 calibrates it
+
+
+@dataclass(frozen=True)
 class ExtractorSettings:
     """The PDF/XML text extractor runs in rootless Podman: no network, read-only root, one read-only input."""
 
@@ -239,6 +271,7 @@ class AppConfig:
     schedule: ScheduleSettings
     collector: CollectorSettings
     collection: CollectionSettings
+    screening: ScreeningSettings
     extractor: ExtractorSettings
     access: AccessSettings
     topics: tuple[TopicDefinition, ...]
@@ -267,6 +300,10 @@ class AppConfig:
     @property
     def local_sources_dir(self) -> Path:
         return _resolve_against_home(self.home_dir, self.collection.local_sources_dir)
+
+    @property
+    def embedding_model_dir(self) -> Path:
+        return _resolve_against_home(self.home_dir, self.screening.embedding_model_dir)
 
     def resolve_seed_file_path(self, configured_seed_file_path: str) -> Path:
         """A topic's `csl_json_files` entry as a path (relative entries resolve against the home directory)."""
@@ -306,7 +343,7 @@ def load_app_config(home_dir: Path) -> AppConfig:
     raw_topics = _read_toml_file(home_dir / TOPICS_FILE_NAME)
 
     known_sections = {"paths", "model", "roles", "worker", "report", "schedule", "collector", "collection",
-                      "extractor", "access"}
+                      "screening", "extractor", "access"}
     unknown_sections = set(raw_config) - known_sections
     if unknown_sections:
         raise ConfigurationError(f"unknown section(s) {sorted(unknown_sections)} in {CONFIG_FILE_NAME}")
@@ -321,6 +358,7 @@ def load_app_config(home_dir: Path) -> AppConfig:
         schedule=_build_settings_section(ScheduleSettings, raw_config.get("schedule", {}), "schedule"),
         collector=_build_settings_section(CollectorSettings, raw_config.get("collector", {}), "collector"),
         collection=_build_settings_section(CollectionSettings, raw_config.get("collection", {}), "collection"),
+        screening=_build_settings_section(ScreeningSettings, raw_config.get("screening", {}), "screening"),
         extractor=_build_settings_section(ExtractorSettings, raw_config.get("extractor", {}), "extractor"),
         access=_build_settings_section(AccessSettings, raw_config.get("access", {}), "access"),
         topics=_build_topics(raw_topics),
@@ -488,6 +526,7 @@ def _validate_cross_field_rules(app_config: AppConfig) -> None:
         raise ConfigurationError("report.max_papers_per_report must be positive")
     _validate_extractor_settings(app_config.extractor)
     _validate_collection_settings(app_config.collection)
+    _validate_screening_settings(app_config.screening)
     worker_settings = app_config.worker
     if worker_settings.max_attempts_per_job <= 0:
         raise ConfigurationError("worker.max_attempts_per_job must be positive")
@@ -516,6 +555,29 @@ def _validate_collection_settings(collection_settings: CollectionSettings) -> No
                                  "collection.historical_citation_ordering_min_age_years not negative")
     if not collection_settings.local_sources_dir.strip():
         raise ConfigurationError("collection.local_sources_dir must name a directory")
+
+
+def _validate_screening_settings(screening_settings: ScreeningSettings) -> None:
+    if screening_settings.embedding_backend not in SUPPORTED_EMBEDDING_BACKENDS:
+        raise ConfigurationError(f"screening.embedding_backend must be one of {SUPPORTED_EMBEDDING_BACKENDS}, "
+                                 f"got '{screening_settings.embedding_backend}'")
+    if not screening_settings.embedding_model_dir.strip():
+        raise ConfigurationError("screening.embedding_model_dir must name a directory")
+    signal_weights = (screening_settings.question_similarity_weight, screening_settings.seed_similarity_weight,
+                      screening_settings.phrase_match_weight)
+    if any(weight < 0 for weight in signal_weights) or sum(signal_weights) <= 0:
+        raise ConfigurationError("the screening signal weights must not be negative, and at least one must be "
+                                 "positive")
+    if screening_settings.embedding_threads <= 0 or screening_settings.embedding_batch_size <= 0 or \
+            screening_settings.closest_seed_count <= 0:
+        raise ConfigurationError("screening.embedding_threads, embedding_batch_size, and closest_seed_count must be "
+                                 "positive")
+    if screening_settings.daily_promotion_limit < 0 or screening_settings.near_cutoff_promotions < 0 or \
+            screening_settings.near_cutoff_promotions > screening_settings.daily_promotion_limit:
+        raise ConfigurationError("screening.daily_promotion_limit must not be negative, and "
+                                 "screening.near_cutoff_promotions must lie between 0 and the daily limit")
+    if not 0.0 <= screening_settings.minimum_screening_score <= 1.0:
+        raise ConfigurationError("screening.minimum_screening_score must lie between 0 and 1")
 
 
 def _validate_extractor_settings(extractor_settings: ExtractorSettings) -> None:

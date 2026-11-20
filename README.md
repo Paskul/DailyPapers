@@ -4,9 +4,10 @@ A local reading service that answers **"Which papers are worth my time today, an
 It collects papers, has the local llama.cpp model (Qwen, `qwen-local` at `http://127.0.0.1:8080/v1`) review them,
 and publishes one Markdown report per day. The full design is in [`Local_Paper_Monitor_Plan.md`](Local_Paper_Monitor_Plan.md).
 
-**Status:** parts 1-5 of 10 are implemented: the application skeleton and contracts; paper identity, editions,
+**Status:** parts 1-6 of 10 are implemented: the application skeleton and contracts; paper identity, editions,
 reading identity, and crash-safe jobs; the access limits on what can reach the internet; the research profile
-built from topics, Zotero, and CSL JSON seeds; and collection of current papers plus a finite historical search.
+built from topics, Zotero, and CSL JSON seeds; collection of current papers plus a finite historical search; and
+cheap CPU screening of every candidate with ordered dispatch of the readings.
 
 ## Project decisions (confirmed by the owner)
 
@@ -20,18 +21,22 @@ These answer open questions from the plan. Later build steps must follow them.
 | **OS controls applied by the operator** | Service accounts, nftables egress rules, and the Podman extractor image ship as scripts in `deploy/`. The owner runs them with sudo. `paperwatch access-check` verifies them from each service account. | Parts 3, 10 |
 | **llama-server stays a desktop process for now** | It keeps running as the desktop user. No model-account egress rule is loaded, because that UID is the desktop session. `access-check` reports this as a WARN. `deploy/nftables/paperwatch-model-egress.nft` is ready for a later move to its own account. | Parts 3, 10 |
 | **Local drop folder for full text** | `collect` looks in `<home>/local_sources/` (`collection.local_sources_dir`) before downloading. Files are named by arXiv id or DOI (`2401.01234v2.pdf`, `10.1109_xyz.pdf`). | Part 5 |
-| **Full text: download and extract, capped** | Until part 6 screens papers, `collect` downloads full text for queued papers, at most `daily_source_text_budget` (30) per day, and extracts it in the sandbox when the image is set. | Parts 5, 7 |
+| **Full text: download and extract, capped** | `collect` downloads full text for the papers screening promoted, at most `daily_source_text_budget` (30) per day, and extracts it in the sandbox when the image is set. | Parts 5, 6, 7 |
 | **Historical search weighted toward recent work, back to 1940** | Candidates per publication year halve every 6 years (`historical_half_life_years`), down to 1940 (`historical_earliest_year`). The curve is cut into 8 windows of equal weight (about 1.2 years wide for the newest, 1940-2008 for the oldest); each window gets an equal share, and the least-served window is paged next. Windows at least 5 years old take the most-cited papers with the exact phrase in title or abstract, so old influential papers still appear. Replaces fixed 5-year bands (owner request, 2026-11-19). | Part 5 |
 | **OpenAlex works without a key, but less** | Without a free key, OpenAlex serves only the first page of each search, and every client on the IP address shares $0.10/day. paperwatch then requests only first pages and budgets 80 requests/day. A key in the credentials file unlocks every page (900/day). | Parts 3, 5 |
+| **Screening model = BAAI/bge-base-en-v1.5 on ONNX** | One pinned sentence-embedding model (768 dimensions), run in-process by onnxruntime on the CPU (no torch, no extra service or socket). Its files are pinned by revision and sha256 in the package and installed by `deploy/install_embedding_model.sh`; nothing is downloaded at run time. | Parts 6, 10 |
+| **No minimum screening score yet** | `minimum_screening_score = 0`: the 30 daily slots go by rank, divided across topics. Embedding cosines depend on the model (bge rates unrelated texts around 0.2-0.4), so part 10 calibrates a real floor from labeled samples. | Parts 6, 10 |
+| **Signals ranked within each topic before combining** | Each signal becomes its percentile among the topic's unpromoted candidates, so the 0/1 phrase signal cannot outweigh the cosines and one topic's higher raw cosines do not win the spare and near-cutoff slots. The minimum score is therefore a relative position. Owner request after review, 2026-11-19. | Parts 6, 10 |
 | **Extractor = poppler `pdftotext`** | PDF text comes from `pdftotext` (reading order, form feeds between pages) in a Debian-slim image pinned by image id. XML (JATS/TEI) comes from a small stdlib dumper in the same image. | Parts 3, 5, 7 |
 
 ## Setup
 
 ```bash
-uv sync                                   # Python 3.12 + httpx + jsonschema (+ pytest for dev)
+uv sync                                   # Python 3.12 + httpx + jsonschema + numpy/onnxruntime/tokenizers
 uv run paperwatch --home ~/paperwatch init     # writes config.toml, topics.toml, state/, output/
+deploy/install_embedding_model.sh ~/paperwatch # pinned screening model (~440 MB) -> ~/paperwatch/models/
 $EDITOR ~/paperwatch/topics.toml               # add your research questions
-uv run paperwatch --home ~/paperwatch doctor   # checks config, DB, and the llama.cpp server
+uv run paperwatch --home ~/paperwatch doctor   # checks config, DB, screening model, and the llama.cpp server
 ```
 
 **Your settings live in [`settings/`](settings/README.md)** (topics, config, Zotero/OpenAlex keys, CSL JSON seeds).
@@ -46,17 +51,17 @@ to validate them and install them into the deployed home (`/srv/paperwatch`) wit
 | Command | What it does |
 | --- | --- |
 | `init` | Create the home layout and database; never overwrites existing config files. Safe to rerun (migrates the DB). |
-| `doctor` | PASS/WARN/FAIL per component: config, paths, database, model health, alias, context budget, reasoning levels, a schema-constrained request with reasoning. |
-| `collect [--fixture FILE] [--skip-searches]` | Sync seed papers, then collect current releases (arXiv feeds, missed-release recovery, recent OpenAlex windows) and each topic's finite historical search, queue review jobs, acquire full text, and print each topic's input mode. `--fixture` replays recorded records instead of the live searches; `--skip-searches` runs no arXiv/OpenAlex requests. |
+| `doctor` | PASS/WARN/FAIL per component: config, paths, database, the screening model (pinned hashes, loads, ranks a probe sensibly), model health, alias, context budget, reasoning levels, a schema-constrained request with reasoning. |
+| `collect [--fixture FILE] [--skip-searches]` | Sync seed papers, then collect current releases (arXiv feeds, missed-release recovery, recent OpenAlex windows) and each topic's finite historical search, screen every candidate and promote today's papers to review jobs, acquire their full text, and print each topic's input mode. `--fixture` replays recorded records instead of the live searches; `--skip-searches` runs no arXiv/OpenAlex requests. |
 | `work --once` / `work` | Run one job / loop until SIGTERM. Idle = zero inference calls. Several workers may run at once. |
 | `reread PAPER_ID [--reason TEXT]` | Operator request for a fresh reading; gets its own generation id and a separate review. |
 | `report [--date YYYY-MM-DD]` | Publish `output/daily/<date>.md` plus per-paper notes. One report per date; reruns produce identical bytes. |
-| `status` | Topics with their input mode (keywords / seeds / both) and what is missing, seed sources and their last sync, papers by status, editions/aliases, unresolved possible duplicates, jobs by kind/status (incl. expired leases), reviews by coverage, model pause state, last model call, new candidates today, each feed / recent window / historical search with its coverage and stopping reason, open coverage gaps, source text, withdrawals, outbound requests today and paused providers, last report. |
+| `status` | Topics with their input mode (keywords / seeds / both) and what is missing, seed sources and their last sync, papers by status, editions/aliases, unresolved possible duplicates, jobs by kind/status (incl. expired leases), queued jobs per priority class with the oldest one's age, the screening model and today's promotions by reason and topic, reviews by coverage, model pause state, last model call, new candidates today, each feed / recent window / historical search with its coverage and stopping reason, open coverage gaps, source text, withdrawals, outbound requests today and paused providers, last report. |
 | `access-check --component collector\|worker` | Run as a service account. Verifies the account and group; the read-only provider rules; the private credentials; the output, state, WAL, and cache permissions; the egress probes; llama-server flags and account; and the extractor sandbox (smoke test). |
 
 Failures always print `paperwatch: FAILED [<component>] ...` with a component-specific exit code
 (2 config, 3 model-server unavailable, 4 database, 5 model call/output, 6 inference lock, 7 source, 8 output, 9 worker,
-10 source-access: refused by the access rules, 11 extractor).
+10 source-access: refused by the access rules, 11 extractor, 12 screening: the embedding model is missing or altered).
 
 ## How the model is used
 
@@ -124,12 +129,75 @@ Failures always print `paperwatch: FAILED [<component>] ...` with a component-sp
     `paper_withdrawals`.
   - Such papers are never queued or recommended.
   - A paper an earlier report recommended gets one correction in the next report. The old file is never changed.
-- **Placeholder until part 6**: every collected paper is promoted, except active seeds and withdrawn works
-  (`collection/review_promotion.py`).
+- **Ingestion never decides relevance**: a new paper waits for screening (part 6, below). Only a paper that was
+  already promoted gets its new text (a new version, an abstract appearing) queued during ingestion.
 
 Put a PDF you already have into `local_sources/`, named after the work's identifier. `collect` uses it instead of
 downloading. Under the service accounts, the folder belongs to group `paperwatch-state` (setgid) so the collector
 can read it.
+
+## Screening and dispatch (plan part 6)
+
+After collection, `collect` scores every **candidate** (a catalog paper with no promotion and no job yet, other than
+an active seed or a withdrawn work) for every topic, on the CPU, and promotes the day's best to a reading
+(`screening/`). No model call is made and nothing leaves the machine.
+
+- **Embeddings:** the pinned bge-base-en-v1.5 model (`screening/embedding_model_registry.py`) embeds
+  "title. abstract" of the edition a reading would use (title only for a title-only record, which is recorded).
+  - A topic question gets the model's retrieval instruction prefix.
+  - Vectors are cached in `text_embeddings` by model identity and text hash.
+  - Measured on this workstation: 425 real abstracts take about 30 s at 16 threads (`embedding_threads`); a warm
+    rerun takes 0.3 s.
+- **Score per topic (0-1)**: the weighted mean of the available signals, renormalized by the active weights
+  (`screening/screening_score.py`):
+
+  | Signal | Weight | Value |
+  | --- | ---: | --- |
+  | Question similarity | 0.5 | `max(0, cosine)` to the question (or the joined phrases when a keyword topic has no question) |
+  | Seed similarity | 0.3 | mean `max(0, cosine)` of the 3 closest available seeds |
+  | Phrase match | 0.2 | fraction of the topic's approved phrases found verbatim (case, hyphens, and simple plurals ignored), so an exact term like "Dafny" counts |
+
+  A signal the topic lacks is omitted, not counted as zero; a seeds-only topic is scored by its seeds alone.
+- **One scale for all signals and topics** (`screening/signal_normalization.py`): raw cosines bunch up in a narrow,
+  topic-dependent band (live: 0.53-0.75 for one topic, 0.43-0.47 for another), while the phrase signal is mostly 0
+  or 1. So before combining, promotion replaces each signal by its mid-rank percentile among the topic's unpromoted
+  candidates in this run. The median candidate gets about 0.5, and ties share one value.
+  - Within one signal the ranking is unchanged.
+  - Across signals and topics the scores compare fairly.
+  - The normalized score depends on the pool, so it is never cached; the raw signals are.
+
+  A paper's screening score is its best topic's normalized score, and `minimum_screening_score` is a pool percentile.
+  Every raw component, the closest seed ids, and the matched phrases are kept in `candidate_topic_scores`. Each
+  promotion row keeps the normalized score, the raw score, and the pool size for calibration. The screening score only selects papers for reading; the report uses the
+  evidence-based score of part 7.
+- **Rescoring:** each score stores the hash of its inputs (text, question, seeds, phrases, weights, model). Only
+  missing or stale scores are recomputed, so a changed profile rescores the unpromoted candidates locally, and an
+  unchanged catalog embeds nothing. A promoted paper keeps the scores it was promoted with.
+- **Promotion** (`screening/promotion_selection.py`, `screening/review_promotion.py`), up to 30 per UTC day:
+  1. The 27 regular slots are divided evenly across the active topics. Topics pick in turns, each taking its best
+     candidate for that topic.
+  2. Unused shares and the remainder are spare slots, filled by best score.
+  3. Then 3 more go to the best candidates just below the cutoff, to show what the filter misses.
+
+  The selection and its queueing commit in one transaction, so concurrent collectors cannot exceed the limit.
+  Unselected candidates become `screened_out`: they stay searchable, are rescored on profile changes, and can be
+  promoted on a later day. Source text is acquired for the promoted papers in the same run.
+- **Worker priority classes** (`dispatch_order.py`, claimed by `jobs.claim_next_due_job`):
+
+  | Class | Job | Order within the class |
+  | ---: | --- | --- |
+  | 0 | Operator reread | queue age |
+  | 1 | New release inside its 7-day fresh window (from the original release date) | screening score, then queue age |
+  | 2 | Older paper (also a new release whose window ended while it waited) | screening score, then queue age |
+  | 3 | Important reference (queued from part 8) | importance to the parent's argument, then topic score |
+  | 4 | Comparison (queued from part 8) | shared evidence dimensions, then queue age |
+
+  A paper that qualifies for several classes runs in the highest one: a queued job only ever moves up. Each claim is
+  one bounded job, so a higher-priority arrival runs right after the current job. `status` shows the count and the
+  oldest age per class. With no due job, the worker sleeps and makes zero inference calls.
+- **A missing or altered model** fails visibly. Every other stage of `collect` still runs, candidates wait unscored
+  (nothing is promoted on partial signals), and `collect` exits with code 12. `doctor`, `status`, and `access-check`
+  name the problem.
 
 ## Research profile (plan part 4)
 
@@ -227,6 +295,7 @@ sudo env "PATH=$PATH" deploy/install_application.sh          # root-owned /opt/p
 sudo deploy/setup_service_accounts.sh /srv/paperwatch          # paperwatch-collector, -worker, group -state
 deploy/build_extractor_image.sh                                # pinned pdftotext image -> collector's store
 #   then set [extractor] image = "<printed id>" in /srv/paperwatch/config.toml
+deploy/install_embedding_model.sh /srv/paperwatch              # pinned screening model -> models/ (root:paperwatch-state)
 sudo deploy/apply_egress_rules.sh                              # nftables: worker -> 127.0.0.1:8080 only,
                                                                #   collector -> DNS + public HTTPS only; enables
                                                                #   paperwatch-egress.service to reload at boot
@@ -258,6 +327,9 @@ src/paperwatch/
   collection/recency_schedule.py  # exponential recency curve -> equal-mass date windows (historical search)
   publication_dates.py          # partial ISO dates (precision = form), release class (new vs older literature)
   seeds/                        # Zotero + CSL JSON seed parsers, seed cache, complete-snapshot sync
+  screening/                    # part 6: pinned embedding model + ONNX embedder, embedding cache, phrase signal,
+                                #   scoring formula, per-topic profiles, candidate scoring, slot selection, promotion
+  dispatch_order.py             # worker priority classes and the order within each class
   research_graph.py             # citation edges and comparison keys (used from part 8)
   source_checkpoints.py         # per-search cursor, budget, coverage, stop reason, last completed interval
   public_query_catalog.py       # approved public queries with stable ids: the only searchable terms
@@ -272,19 +344,23 @@ src/paperwatch/
   rendering/                    # Markdown escaping, notes, daily report, atomic writes
   commands/                     # one module per CLI command
 settings/                       # operator settings (gitignored) + committed *.example.toml; see settings/README.md
-deploy/                         # install, service accounts, nftables egress rules, extractor image, access checks,
+deploy/                         # install, service accounts, nftables egress rules, extractor image, embedding model,
+                                #   access checks,
                                 #   apply_settings.sh (install settings/ into the paperwatch home)
 tests/                          # step 1 vertical slice; step 2 identity/readings and worker crash/race tests;
                                 #   step 3 prompt injection, provider gateway, sandbox and egress tests;
                                 #   step 4 input modes, Zotero/CSL seed sync, outbound-parameter checks;
                                 #   step 5 feed replay, mid-page failure, downtime recovery, late indexing, revisions,
-                                #   historical cap, budgets, source text, withdrawals (fake_paper_providers.py)
+                                #   historical cap, budgets, source text, withdrawals (fake_paper_providers.py);
+                                #   step 6 500 candidates with known nearest seeds, fair promotion, claim order of all
+                                #   four job types, zero inference while idle, rescoring, missing model
 ```
 
 ## Tests
 
 ```bash
-uv run pytest                               # offline, uses the fake model
+uv run pytest                               # offline: the fake model and the word-hashing test embedder
 PAPERWATCH_LIVE_MODEL=1 uv run pytest -m live_model   # also reviews the fixture with the real server
 PAPERWATCH_TEST_EXTRACTOR_IMAGE=<image id> uv run pytest -k real_podman   # real sandbox (needs podman + image)
+PAPERWATCH_TEST_EMBEDDING_MODEL_DIR=<home>/models/bge-base-en-v1.5 uv run pytest -k real_onnx   # real screening model
 ```

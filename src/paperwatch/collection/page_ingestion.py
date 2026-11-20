@@ -8,6 +8,9 @@ The admission limit caps how many papers NEW to the catalog this page may add (t
 historical budget). Records of papers already in the catalog are always stored: they add editions, routes, and
 revisions, and cost no candidate budget. When the limit stops a page part-way, the caller keeps the page's cursor, so
 the page is fetched again later and its remaining new papers are admitted then.
+
+Ingestion never decides relevance: a new paper waits for the screening stage of part 6 (paperwatch.screening). Only a
+paper screening already promoted gets a reading queued here, when this page brings it new text.
 """
 
 from __future__ import annotations
@@ -17,9 +20,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from paperwatch.catalog import prepare_catalog_record, record_prepared_paper_in_transaction, would_create_new_paper
-from paperwatch.collection.review_promotion import queue_review_if_promoted_in_transaction
 from paperwatch.db import write_transaction
 from paperwatch.errors import SourceInputError
+from paperwatch.screening.review_promotion import queue_new_reading_for_promoted_paper_in_transaction
 from paperwatch.source_checkpoints import SourceCheckpoint, save_source_checkpoint
 from paperwatch.sources.types import CollectedPaperRecord
 
@@ -30,7 +33,7 @@ class PageIngestionResult:
     new_papers_admitted: int = 0
     already_known: int = 0
     new_editions_of_known_papers: int = 0
-    review_jobs_queued: int = 0
+    review_jobs_queued: int = 0  # new readings of already promoted papers (new papers wait for screening)
     possible_duplicates_flagged: int = 0
     withdrawals_reported: int = 0
     skipped_malformed_records: int = 0
@@ -50,8 +53,8 @@ class PageIngestionResult:
 
     def describe(self, source_label: str) -> str:
         description = (f"{source_label}: {self.records_received} record(s), {self.new_papers_admitted} new, "
-                       f"{self.already_known} already known, {self.review_jobs_queued} review job(s) queued, "
-                       f"{self.new_editions_of_known_papers} new edition(s) of known papers, "
+                       f"{self.already_known} already known, {self.review_jobs_queued} new reading(s) of promoted "
+                       f"papers queued, {self.new_editions_of_known_papers} new edition(s) of known papers, "
                        f"{self.possible_duplicates_flagged} possible duplicate(s) flagged")
         extras = [f"{self.withdrawals_reported} withdrawn/retracted" if self.withdrawals_reported else "",
                   f"{self.skipped_malformed_records} malformed record(s) skipped"
@@ -95,9 +98,9 @@ def ingest_records_with_checkpoints(connection: sqlite3.Connection, collected_re
                 result.new_editions_of_known_papers += int(catalog_outcome.was_new_edition)
             result.possible_duplicates_flagged += len(catalog_outcome.possible_match_paper_ids)
             result.withdrawals_reported += int(prepared_record.collected_record.withdrawal_notice is not None)
-            if queue_review_if_promoted_in_transaction(connection, catalog_outcome.paper_id,
-                                                       active_seed_paper_ids=active_seed_paper_ids,
-                                                       max_attempts=max_attempts_per_job):
+            if queue_new_reading_for_promoted_paper_in_transaction(connection, catalog_outcome.paper_id,
+                                                                   active_seed_paper_ids=active_seed_paper_ids,
+                                                                   max_attempts=max_attempts_per_job):
                 result.review_jobs_queued += 1
                 result.queued_paper_ids.append(catalog_outcome.paper_id)
         for checkpoint in (checkpoints_after_page(result) if checkpoints_after_page else []):

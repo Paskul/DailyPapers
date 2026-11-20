@@ -8,7 +8,9 @@ Job life cycle: queued -> running -> done, with delayed retries (back to queued)
   * Leases are short; a worker renews its lease while a long call runs (paperwatch.lease_keeper), so a crashed
     worker's job is reclaimable within one lease period instead of after the slowest possible call.
   * A service outage releases the job without charging an attempt; a paper-specific failure charges one.
-Part 6 adds the full priority classes and the ordering within each class.
+Claim order (plan part 6, paperwatch.dispatch_order): the effective priority class first (a new release whose fresh
+window has ended counts as class 2), then the two within-class order values (higher first), then queue age. Each
+claim is one bounded job, so a higher-priority arrival runs right after the current job.
 """
 
 from __future__ import annotations
@@ -19,25 +21,23 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from enum import IntEnum
 from typing import Any
 
 from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp, utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
+from paperwatch.dispatch_order import JobDispatchOrder, JobPriorityClass
 from paperwatch.errors import PaperwatchError
 from paperwatch.identifiers import JOB_ID_PREFIX, new_internal_id
 
-REVIEW_PAPER_JOB_KIND = "review_paper"
+REVIEW_PAPER_JOB_KIND = "review_paper"  # classes 0-3: a reading of one paper
+COMPARE_REVIEWS_JOB_KIND = "compare_reviews"  # class 4: queued from part 8; the worker gains its handler then
 
+__all__ = ["JobPriorityClass", "JobDispatchOrder"]  # re-exported: callers import the classes from here
 
-class JobPriorityClass(IntEnum):
-    """Worker priority classes from plan part 6 (lower number = claimed first)."""
-
-    OPERATOR_REQUEST = 0  # explicit operator reread; not in the plan's table, so it goes ahead of every class
-    NEW_RELEASE = 1
-    HISTORICAL_SEARCH = 2
-    IMPORTANT_REFERENCE = 3
-    COMPARISON = 4
+# The class a job is claimed under right now: a new release past its fresh window drops to older literature.
+EFFECTIVE_PRIORITY_CLASS_SQL = f"""CASE WHEN priority = {int(JobPriorityClass.NEW_RELEASE)}
+                   AND new_release_fresh_until IS NOT NULL AND new_release_fresh_until <= :now
+              THEN {int(JobPriorityClass.HISTORICAL_SEARCH)} ELSE priority END"""
 
 
 @dataclass(frozen=True)
@@ -62,17 +62,43 @@ def build_review_job_key(paper_id: str, review_input_key: str) -> str:
 
 
 def enqueue_job_if_absent(connection: sqlite3.Connection, *, job_key: str, kind: str, paper_id: str | None,
-                          input_version: str, input_payload: dict[str, Any], priority: int,
+                          input_version: str, input_payload: dict[str, Any], dispatch_order: JobDispatchOrder,
                           max_attempts: int) -> bool:
     """Insert the job unless a job with the same logical key exists (whatever its status). Returns True if added."""
     now_timestamp = utc_now_timestamp()
     insert_cursor = connection.execute(
         """INSERT OR IGNORE INTO jobs (job_id, job_key, kind, paper_id, input_version, input_json, priority,
+               within_class_order_primary, within_class_order_secondary, new_release_fresh_until,
                status, attempts, max_attempts, due_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?)""",
         (new_internal_id(JOB_ID_PREFIX), job_key, kind, paper_id, input_version, json.dumps(input_payload),
-         priority, max_attempts, now_timestamp, now_timestamp, now_timestamp))
+         int(dispatch_order.priority_class), dispatch_order.within_class_order_primary,
+         dispatch_order.within_class_order_secondary, dispatch_order.new_release_fresh_until,
+         max_attempts, now_timestamp, now_timestamp, now_timestamp))
     return insert_cursor.rowcount == 1
+
+
+def upgrade_queued_job_dispatch_order_if_higher(connection: sqlite3.Connection, job_key: str,
+                                                dispatch_order: JobDispatchOrder) -> bool:
+    """A paper that qualifies for several classes runs in the highest one: move a still-QUEUED job up to
+    `dispatch_order` if that is claimed earlier than its current order. Never moves a job down. Returns True if
+    changed. Call inside a write transaction."""
+    job_row = connection.execute(
+        """SELECT priority, within_class_order_primary, within_class_order_secondary FROM jobs
+           WHERE job_key = ? AND status = 'queued'""", (job_key,)).fetchone()
+    if job_row is None:
+        return False
+    current_order = JobDispatchOrder(JobPriorityClass(job_row["priority"]), job_row["within_class_order_primary"],
+                                     job_row["within_class_order_secondary"])
+    if not dispatch_order.is_higher_than(current_order):
+        return False
+    connection.execute(
+        """UPDATE jobs SET priority = ?, within_class_order_primary = ?, within_class_order_secondary = ?,
+               new_release_fresh_until = ?, updated_at = ? WHERE job_key = ? AND status = 'queued'""",
+        (int(dispatch_order.priority_class), dispatch_order.within_class_order_primary,
+         dispatch_order.within_class_order_secondary, dispatch_order.new_release_fresh_until, utc_now_timestamp(),
+         job_key))
+    return True
 
 
 def claim_next_due_job(connection: sqlite3.Connection, *, lease_duration_seconds: float) -> ClaimedJob | None:
@@ -81,11 +107,12 @@ def claim_next_due_job(connection: sqlite3.Connection, *, lease_duration_seconds
     lease_expires_at = format_utc_timestamp(utc_now() + timedelta(seconds=lease_duration_seconds))
     with write_transaction(connection):
         job_row = connection.execute(
-            """SELECT * FROM jobs
-               WHERE (status = 'queued' AND due_at <= ?)
-                  OR (status = 'running' AND lease_expires_at <= ?)
-               ORDER BY priority, due_at, created_at
-               LIMIT 1""", (now_timestamp, now_timestamp)).fetchone()
+            f"""SELECT * FROM jobs
+               WHERE (status = 'queued' AND due_at <= :now)
+                  OR (status = 'running' AND lease_expires_at <= :now)
+               ORDER BY {EFFECTIVE_PRIORITY_CLASS_SQL}, within_class_order_primary DESC,
+                        within_class_order_secondary DESC, created_at, job_id
+               LIMIT 1""", {"now": now_timestamp}).fetchone()
         if job_row is None:
             return None
         connection.execute(
@@ -178,3 +205,22 @@ def find_next_job_due_time(connection: sqlite3.Connection) -> datetime | None:
                UNION ALL
                SELECT MIN(lease_expires_at) FROM jobs WHERE status = 'running')""").fetchone()
     return parse_utc_timestamp(next_due_row["next_moment"]) if next_due_row["next_moment"] else None
+
+
+@dataclass(frozen=True)
+class QueuedClassSummary:
+    """Queued jobs of one effective priority class, so the operator sees when new arrivals delay older work."""
+
+    priority_class: JobPriorityClass
+    queued_count: int
+    oldest_queued_at: datetime
+
+
+def summarize_queued_jobs_by_class(connection: sqlite3.Connection, moment: datetime) -> list[QueuedClassSummary]:
+    return [QueuedClassSummary(JobPriorityClass(summary_row["effective_class"]), summary_row["queued_count"],
+                               parse_utc_timestamp(summary_row["oldest_queued_at"]))
+            for summary_row in connection.execute(
+                f"""SELECT {EFFECTIVE_PRIORITY_CLASS_SQL} AS effective_class, COUNT(*) AS queued_count,
+                           MIN(created_at) AS oldest_queued_at
+                    FROM jobs WHERE status = 'queued' GROUP BY effective_class ORDER BY effective_class""",
+                {"now": format_utc_timestamp(moment)})]

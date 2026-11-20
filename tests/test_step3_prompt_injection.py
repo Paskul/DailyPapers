@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from paperwatch.catalog import record_collected_paper
-from paperwatch.collection.review_promotion import queue_review_if_promoted
+from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.commands.report_command import run_report_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
 from paperwatch.errors import ModelOutputInvalid
@@ -58,7 +58,7 @@ def collect_fixture_papers(app, fixture_path: Path) -> list[str]:
     paper_ids = []
     for collected_record in RecordedFixtureSource(fixture_path).fetch_records():
         paper_id = record_collected_paper(app.connection, collected_record).paper_id
-        queue_review_if_promoted(app.connection, paper_id, max_attempts=3)
+        promote_paper_directly_and_queue_review(app.connection, paper_id, max_attempts=3)
         paper_ids.append(paper_id)
     return paper_ids
 

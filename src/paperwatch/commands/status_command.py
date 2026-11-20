@@ -1,13 +1,16 @@
-"""`paperwatch status`: a read-only summary of the research profile (topics and seeds), catalog, queue, model health,
-provider access, and the last report."""
+"""`paperwatch status`: a read-only summary of the research profile (topics and seeds), catalog, queue (count and age
+per priority class), screening and today's promotions, model health, provider access, and the last report."""
 
 from __future__ import annotations
 
 import argparse
+from datetime import timedelta
 
 from paperwatch.app_context import AppContext
 from paperwatch.clock import format_utc_timestamp, utc_now
 from paperwatch.config import TOPICS_FILE_NAME
+from paperwatch.dispatch_order import PRIORITY_CLASS_LABELS
+from paperwatch.jobs import summarize_queued_jobs_by_class
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, read_service_health_state
 from paperwatch.network.outbound_ledger import summarize_outbound_requests_today
 from paperwatch.network.provider_gateway import PROVIDER_SERVICE_NAME_PREFIX
@@ -20,6 +23,9 @@ from paperwatch.collection.current_releases import (ARXIV_FEED_CHECKPOINT_PREFIX
 from paperwatch.collection.historical_search import (history_plan_key, historical_queries_for_topic, plan_windows,
                                                      recency_schedule_settings)
 from paperwatch.public_query_catalog import build_public_query_catalog
+from paperwatch.screening.embedding_model_registry import look_up_pinned_embedding_model
+from paperwatch.screening.review_promotion import count_screening_promotions_today, utc_day_start_timestamp
+from paperwatch.screening.text_embedders import EMBEDDING_BACKEND_HASHING
 from paperwatch.source_checkpoints import (SourceCheckpoint, load_source_checkpoint,
                                            load_source_checkpoints_with_prefix)
 
@@ -71,6 +77,9 @@ def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
         print(f"  failed {failed_row['job_id']} (paper {failed_row['paper_id']}): "
               f"[{failed_row['last_error_component']}] {failed_row['last_error']}")
 
+    _print_queue_by_priority_class(app)
+    _print_screening_summary(app)
+
     coverage_rows = connection.execute(
         "SELECT coverage, COUNT(*) AS review_count FROM reviews GROUP BY coverage").fetchall()
     print("Reviews: " + (", ".join(f"{row['coverage']} {row['review_count']}" for row in coverage_rows) or "none"))
@@ -99,6 +108,53 @@ def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
     print(f"Last report: {last_report['report_date']} {last_report['status']} -> {last_report['output_path']}"
           if last_report else "Last report: none yet")
     return 0
+
+
+def _print_queue_by_priority_class(app: AppContext) -> None:
+    """Plan part 6: count and age per worker class, so sustained new arrivals delaying older work are visible."""
+    now = utc_now()
+    class_summaries = summarize_queued_jobs_by_class(app.connection, now)
+    if not class_summaries:
+        return
+    print("Queue by class (claimed in this order): " + "; ".join(
+        f"{int(summary.priority_class)} {PRIORITY_CLASS_LABELS[summary.priority_class]} {summary.queued_count}, "
+        f"oldest {_describe_age(now - summary.oldest_queued_at)}" for summary in class_summaries))
+
+
+def _describe_age(age: timedelta) -> str:
+    total_hours = age.total_seconds() / 3600
+    return f"{total_hours / 24:.1f} d" if total_hours >= 48 else f"{total_hours:.1f} h"
+
+
+def _print_screening_summary(app: AppContext) -> None:
+    """Plan part 6: the embedding model, how many candidates are scored, and today's promotions per reason and topic."""
+    connection, screening_settings = app.connection, app.config.screening
+    model_description = screening_settings.embedding_backend
+    if screening_settings.embedding_backend == EMBEDDING_BACKEND_HASHING:
+        model_description += " (offline TEST embedder, not for real screening)"
+    else:
+        model_present = all((app.config.embedding_model_dir / pinned_file.file_name).is_file() for pinned_file in
+                            look_up_pinned_embedding_model(screening_settings.embedding_model).pinned_files)
+        model_description += (f" {screening_settings.embedding_model} in {app.config.embedding_model_dir} "
+                              f"({'installed' if model_present else 'MISSING: run deploy/install_embedding_model.sh'})")
+    scored_paper_count = connection.execute(
+        "SELECT COUNT(DISTINCT paper_id) FROM candidate_topic_scores").fetchone()[0]
+    waiting_count = connection.execute(
+        """SELECT COUNT(*) FROM papers WHERE status = 'waiting_input'
+             AND paper_id NOT IN (SELECT paper_id FROM candidate_topic_scores)""").fetchone()[0]
+    print(f"Screening: {model_description}; {scored_paper_count} paper(s) scored; {waiting_count} paper(s) without "
+          "a score (new since the last collect, seeds, or waiting for the embedding model)")
+    today_counts = count_screening_promotions_today(connection, utc_now())
+    promotion_rows = connection.execute(
+        """SELECT promotion_reason, COALESCE(topic_id, '-') AS topic_id, COUNT(*) AS promotion_count
+           FROM paper_promotions WHERE promoted_at >= ? GROUP BY promotion_reason, topic_id
+           ORDER BY promotion_reason, topic_id""", (utc_day_start_timestamp(utc_now()),)).fetchall()
+    print(f"  promoted today (UTC): {today_counts['regular_count'] + today_counts['near_cutoff_count']} of "
+          f"{screening_settings.daily_promotion_limit} ({today_counts['near_cutoff_count']} of "
+          f"{screening_settings.near_cutoff_promotions} near the cutoff); minimum score "
+          f"{screening_settings.minimum_screening_score:g}" + ("; by reason and topic: " + ", ".join(
+              f"{row['promotion_reason']} {row['topic_id']} {row['promotion_count']}" for row in promotion_rows)
+              if promotion_rows else ""))
 
 
 def _print_research_profile(app: AppContext) -> None:

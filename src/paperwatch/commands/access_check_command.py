@@ -34,6 +34,8 @@ from paperwatch.network.collector_credentials import describe_credentials_file_p
 from paperwatch.network.egress_guard import is_public_internet_address
 from paperwatch.network.provider_rules import load_provider_access_rules, packaged_provider_rules_path
 from paperwatch.sandboxed_extractor import extract_text_in_sandbox
+from paperwatch.screening.embedding_model_registry import look_up_pinned_embedding_model
+from paperwatch.screening.text_embedders import EMBEDDING_BACKEND_ONNX
 from paperwatch.source_cache import store_source_bytes
 
 COMPONENT_COLLECTOR = "collector"
@@ -61,6 +63,7 @@ def run_access_check_command(app: AppContext, arguments: argparse.Namespace) -> 
         check_results += _probe_network_egress(app, component, literal_probe_addresses)
     check_results += _check_model_server_isolation(app)
     if component == COMPONENT_COLLECTOR:
+        check_results += _check_embedding_model_files(app)
         check_results += _check_extractor_sandbox(app)
     return print_check_results(check_results, f"access-check ({component})")
 
@@ -232,6 +235,25 @@ def _attempt_tcp_connection(host: str, port: int) -> tuple[bool, str]:
 # --------------------------------------------------------------------------------------------------------------------
 # Model server isolation
 # --------------------------------------------------------------------------------------------------------------------
+
+
+def _check_embedding_model_files(app: AppContext) -> list[CheckResult]:
+    """Plan part 6: the collector screens with the pinned embedding model, so it must READ the model files, and must
+    not be able to change them (their hashes are checked anyway; `doctor` checks that they match)."""
+    if app.config.screening.embedding_backend != EMBEDDING_BACKEND_ONNX:
+        return [CheckResult("files", "embedding model", WARN, "screening uses the offline test embedder")]
+    model_dir = app.config.embedding_model_dir
+    pinned_files = look_up_pinned_embedding_model(app.config.screening.embedding_model).pinned_files
+    unreadable = [pinned_file.file_name for pinned_file in pinned_files
+                  if not _can_read(model_dir / pinned_file.file_name)]
+    writable = [pinned_file.file_name for pinned_file in pinned_files
+                if os.access(model_dir / pinned_file.file_name, os.W_OK)]
+    if unreadable:
+        return [CheckResult("files", "embedding model", FAIL, f"{', '.join(unreadable)} in {model_dir} missing or "
+                            "unreadable by this account", hint="run deploy/install_embedding_model.sh")]
+    return [CheckResult("files", "embedding model", WARN if writable else PASS,
+                        f"{model_dir}: readable" + (f"; {', '.join(writable)} WRITABLE by this account" if writable
+                                                    else ", read-only for this account"))]
 
 
 def _check_model_server_isolation(app: AppContext) -> list[CheckResult]:

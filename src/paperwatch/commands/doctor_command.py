@@ -7,6 +7,8 @@ Model checks (in order; later ones are skipped once the server is unreachable):
   4. configured reasoning levels are supported by the chat template,
   5. a short schema-constrained /v1/chat/completions request succeeds, with reasoning returned separately
      from the final answer.
+Screening (plan part 6): the pinned sentence-embedding model's files match their sha256 hashes, it loads on the CPU,
+and it ranks a related sentence above an unrelated one.
 Plan part 3: the server must expose no built-in tools, agent mode, or MCP proxy (checked over HTTP here; the
 process flags and account are checked by `paperwatch access-check`).
 """
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 
 from paperwatch.app_context import AppContext
 from paperwatch.commands.check_results import FAIL, PASS, SKIP, WARN, CheckResult, print_check_results
@@ -24,10 +27,12 @@ from paperwatch.errors import PaperwatchError
 from paperwatch.llm.types import ModelServerDescription
 from paperwatch.roles.base import run_role_once
 from paperwatch.roles.healthcheck import HEALTHCHECK_ROLE
+from paperwatch.screening.text_embedders import EMBEDDING_BACKEND_HASHING, load_text_embedder
 
 
 def run_doctor_command(app: AppContext, arguments: argparse.Namespace) -> int:
-    check_results = [*_check_configuration_and_paths(app), *_check_database(app), *_check_model_server(app)]
+    check_results = [*_check_configuration_and_paths(app), *_check_database(app), *_check_screening_embedder(app),
+                     *_check_model_server(app)]
     return print_check_results(check_results, "doctor")
 
 
@@ -56,6 +61,33 @@ def _check_database(app: AppContext) -> list[CheckResult]:
                     f"version {schema_version} (expected {CURRENT_SCHEMA_VERSION})"),
         CheckResult("database", "journal mode", PASS if journal_mode == "wal" else WARN, journal_mode),
     ]
+
+
+SCREENING_PROBE_QUESTION = "Can a runtime monitor stop a robot before it collides with a person?"
+SCREENING_PROBE_RELATED_TEXT = "Runtime verification of mobile robot motion plans with human safety constraints."
+SCREENING_PROBE_UNRELATED_TEXT = "A survey of medieval grain prices in northern European market towns."
+
+
+def _check_screening_embedder(app: AppContext) -> list[CheckResult]:
+    component = "screening"
+    if app.config.screening.embedding_backend == EMBEDDING_BACKEND_HASHING:
+        return [CheckResult(component, "embedding model", WARN, "the offline word-hashing test embedder is "
+                            "configured; set screening.embedding_backend = \"onnx\" for real screening")]
+    try:
+        loading_started = time.monotonic()
+        embedder = load_text_embedder(app.config)
+        probe_vectors = embedder.embed_texts([embedder.prepare_query_text(SCREENING_PROBE_QUESTION),
+                                              SCREENING_PROBE_RELATED_TEXT, SCREENING_PROBE_UNRELATED_TEXT])
+        seconds_taken = time.monotonic() - loading_started
+    except PaperwatchError as embedder_failure:
+        return [CheckResult(component, "embedding model", FAIL, str(embedder_failure), embedder_failure)]
+    related_similarity = float(probe_vectors[0] @ probe_vectors[1])
+    unrelated_similarity = float(probe_vectors[0] @ probe_vectors[2])
+    ranks_sensibly = related_similarity > unrelated_similarity
+    return [CheckResult(component, "embedding model", PASS if ranks_sensibly else FAIL,
+                        f"{embedder.identity} ({embedder.dimensions} dimensions) verified and loaded in "
+                        f"{seconds_taken:.1f} s; probe cosine related {related_similarity:.2f} vs unrelated "
+                        f"{unrelated_similarity:.2f}")]
 
 
 def _check_model_server(app: AppContext) -> list[CheckResult]:

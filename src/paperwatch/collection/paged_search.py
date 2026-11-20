@@ -66,8 +66,8 @@ class SearchRunSummary:
         state = f"{checkpoint.coverage_status}" + (f" ({checkpoint.stop_reason})" if checkpoint and
                                                     checkpoint.stop_reason else "") if checkpoint else "not run"
         return (f"{self.search_key}: {self.pages_fetched} page(s), {self.ingestion.records_received} record(s), "
-                f"{self.ingestion.new_papers_admitted} new, {self.ingestion.review_jobs_queued} review job(s) "
-                f"queued; {state}")
+                f"{self.ingestion.new_papers_admitted} new, {self.ingestion.review_jobs_queued} new reading(s) "
+                f"of promoted papers queued; {state}")
 
 
 def is_search_resumable(checkpoint: SourceCheckpoint) -> bool:

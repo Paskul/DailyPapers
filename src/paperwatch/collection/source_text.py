@@ -1,6 +1,6 @@
 """Acquire full text for papers queued for review, then extract it in the sandbox (plan part 5: "Source text").
 
-Shortlisted work = papers with a queued review job (every collected paper until part 6 adds screening). For each, in
+Shortlisted work = papers with a queued review job, i.e. those screening promoted (plan part 6). For each, in
 queue order (priority class, then queue age), the first route that works wins:
   1. local file: a PDF/XML the user placed in the local sources folder (local_source_files.py). Free; no network.
   2. a VERSIONED arXiv PDF through arXiv's programmatic host (export.arxiv.org), for an arXiv edition.

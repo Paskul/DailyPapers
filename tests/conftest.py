@@ -27,6 +27,10 @@ arxiv_categories = ["cs.RO"]
 """
 
 
+ONNX_EMBEDDING_BACKEND_LINE = 'embedding_backend = "onnx"'
+HASHING_EMBEDDING_BACKEND_LINE = 'embedding_backend = "hashing"'
+
+
 @dataclass(frozen=True)
 class CliResult:
     exit_code: int
@@ -66,6 +70,13 @@ class PaperwatchHome:
 
     def use_fake_model(self) -> None:
         self.replace_in_config('backend = "llama_cpp"', 'backend = "fake"')
+        self.use_hashing_test_embedder()
+
+    def use_hashing_test_embedder(self) -> None:
+        """Screening with the offline word-hashing embedder instead of the pinned ONNX model (not installed in CI).
+        Idempotent, so it can follow use_fake_model."""
+        if HASHING_EMBEDDING_BACKEND_LINE not in (self.home_dir / "config.toml").read_text():
+            self.replace_in_config(ONNX_EMBEDDING_BACKEND_LINE, HASHING_EMBEDDING_BACKEND_LINE)
 
     def use_unreachable_model_endpoint(self) -> None:
         self.replace_in_config('"http://127.0.0.1:8080/v1"', f'"http://127.0.0.1:{find_unused_local_port()}/v1"')
@@ -85,11 +96,12 @@ class PaperwatchHome:
 
 def build_in_process_app(home_dir: Path, *, topics_toml: str = EXAMPLE_TOPIC_TOML,
                          config_replacements: dict[str, str] | None = None, model_client=None,
-                         use_configured_model_backend: bool = False):
+                         use_configured_model_backend: bool = False, use_onnx_embedder: bool = False):
     """Init a home in this process, write topics and config edits, and load an AppContext.
 
     The model is a FakeModelClient unless `model_client` is given, or `use_configured_model_backend` asks for the
-    client config.toml describes (e.g. the real llama.cpp client pointed at a FakeLlamaServer)."""
+    client config.toml describes (e.g. the real llama.cpp client pointed at a FakeLlamaServer). Screening uses the
+    offline hashing embedder unless `use_onnx_embedder` keeps the template's pinned ONNX model."""
     from paperwatch.app_context import AppContext
     from paperwatch.commands.init_command import run_init_command
     from paperwatch.llm.fake_client import FakeModelClient
@@ -98,6 +110,8 @@ def build_in_process_app(home_dir: Path, *, topics_toml: str = EXAMPLE_TOPIC_TOM
     (home_dir / "topics.toml").write_text(topics_toml)
     config_path = home_dir / "config.toml"
     config_text = config_path.read_text()
+    if not use_onnx_embedder:
+        config_text = config_text.replace(ONNX_EMBEDDING_BACKEND_LINE, HASHING_EMBEDDING_BACKEND_LINE)
     for old_text, new_text in (config_replacements or {}).items():
         assert old_text in config_text, f"{old_text!r} not found in config.toml"
         config_text = config_text.replace(old_text, new_text)

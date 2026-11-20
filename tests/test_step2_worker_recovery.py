@@ -54,9 +54,11 @@ def test_paper_imported_by_two_routes_is_one_canonical_paper_with_one_review(ini
     prepare_home(initialized_home)
     arxiv_result = initialized_home.run_cli("collect", "--fixture", str(ARXIV_ROUTE_FIXTURE))
     openalex_result = initialized_home.run_cli("collect", "--fixture", str(OPENALEX_ROUTE_FIXTURE))
-    assert "1 new, 0 already known, 1 review job(s) queued" in arxiv_result.stdout
-    # The linked record joins the arXiv paper (same text: no new job); the look-alike is new and flagged.
-    assert "2 record(s), 1 new, 1 already known, 1 review job(s) queued" in openalex_result.stdout
+    assert "1 new, 0 already known" in arxiv_result.stdout
+    assert "Promotion: 1 paper(s) queued for review now" in arxiv_result.stdout
+    # The linked record joins the arXiv paper (same text: no new job); the look-alike is new, flagged, and screened.
+    assert "2 record(s), 1 new, 1 already known, 0 new reading(s) of promoted papers queued" in openalex_result.stdout
+    assert "Promotion: 1 paper(s) queued for review now" in openalex_result.stdout
     assert "1 possible duplicate(s) flagged" in openalex_result.stdout
 
     linked_papers = initialized_home.query(

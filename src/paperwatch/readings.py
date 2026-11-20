@@ -7,7 +7,7 @@ when two collectors race. Consequences, matching plan part 2:
     another reading, because none of them changes the text hash or the generation;
   * a model or prompt upgrade alone never re-enqueues the archive, because neither is part of the key;
   * a new edition with identical text is not read again; a verified text change or newly available text gets a new
-    reading (subject to promotion, plan part 6);
+    reading, if the paper was promoted by screening (plan part 6, paperwatch.screening.review_promotion);
   * an explicit operator reread gets a fresh generation id: a new logical job and, later, a separate review.
 A job that failed permanently is NOT re-queued automatically for the same input; the operator can request a reread.
 """
@@ -20,8 +20,10 @@ from enum import StrEnum
 from typing import Any
 
 from paperwatch.clock import utc_now_timestamp
+from paperwatch.dispatch_order import JobDispatchOrder
 from paperwatch.identifiers import READING_GENERATION_ID_PREFIX, new_internal_id
-from paperwatch.jobs import REVIEW_PAPER_JOB_KIND, build_review_job_key, enqueue_job_if_absent
+from paperwatch.jobs import (REVIEW_PAPER_JOB_KIND, build_review_job_key, enqueue_job_if_absent,
+                             upgrade_queued_job_dispatch_order_if_higher)
 from paperwatch.review_inputs import INITIAL_READING_GENERATION, ReviewPacket, build_abstract_review_packet
 
 
@@ -55,14 +57,17 @@ class ReadingJobInput:
                    coverage=payload["coverage"], operator_reason=payload.get("operator_reason"))
 
 
+# The edition a new reading should use: one with an abstract if any, then the most recently first-seen, then the
+# highest version number. A stale re-sighting of an old version never becomes "latest" (first_seen_at is kept).
+# Shared with screening (paperwatch.screening.candidate_screening), so a paper is scored on the text it will be read on.
+PREFERRED_EDITION_ORDER_SQL = """(abstract IS NOT NULL AND TRIM(abstract) != '') DESC, first_seen_at DESC,
+                    COALESCE(version_number, 0) DESC, edition_id DESC"""
+
+
 def select_edition_to_read(connection: sqlite3.Connection, paper_id: str) -> sqlite3.Row | None:
-    """The edition a new reading should use: one with an abstract if any, then the most recently first-seen, then the
-    highest version number. A stale re-sighting of an old version never becomes "latest" (first_seen_at is kept)."""
     return connection.execute(
-        """SELECT * FROM paper_editions WHERE paper_id = ?
-           ORDER BY (abstract IS NOT NULL AND TRIM(abstract) != '') DESC, first_seen_at DESC,
-                    COALESCE(version_number, 0) DESC, edition_id DESC
-           LIMIT 1""", (paper_id,)).fetchone()
+        f"SELECT * FROM paper_editions WHERE paper_id = ? ORDER BY {PREFERRED_EDITION_ORDER_SQL} LIMIT 1",
+        (paper_id,)).fetchone()
 
 
 def review_exists_for_input(connection: sqlite3.Connection, paper_id: str, review_input_key: str) -> bool:
@@ -70,11 +75,13 @@ def review_exists_for_input(connection: sqlite3.Connection, paper_id: str, revie
                               (paper_id, review_input_key)).fetchone() is not None
 
 
-def enqueue_reading_if_needed(connection: sqlite3.Connection, paper_id: str, *, priority: int, max_attempts: int,
-                              reading_generation: str = INITIAL_READING_GENERATION,
+def enqueue_reading_if_needed(connection: sqlite3.Connection, paper_id: str, *, dispatch_order: JobDispatchOrder,
+                              max_attempts: int, reading_generation: str = INITIAL_READING_GENERATION,
                               operator_reason: str | None = None) -> tuple[ReadingEnqueueOutcome, ReviewPacket | None]:
     """Queue a reading of the paper's preferred edition unless this exact input was already read or queued.
 
+    If the job already exists and is still queued, it is moved up to `dispatch_order` when that is a higher class
+    (a paper qualifying for several classes runs in the highest one), never down.
     Call inside a write transaction. Does not change the paper's status; the caller decides that.
     """
     edition_row = select_edition_to_read(connection, paper_id)
@@ -83,12 +90,15 @@ def enqueue_reading_if_needed(connection: sqlite3.Connection, paper_id: str, *, 
     review_packet = build_abstract_review_packet(edition_row, reading_generation)
     if review_exists_for_input(connection, paper_id, review_packet.review_input_key):
         return ReadingEnqueueOutcome.ALREADY_REVIEWED, review_packet
+    review_job_key = build_review_job_key(paper_id, review_packet.review_input_key)
     job_was_added = enqueue_job_if_absent(
-        connection, job_key=build_review_job_key(paper_id, review_packet.review_input_key),
+        connection, job_key=review_job_key,
         kind=REVIEW_PAPER_JOB_KIND, paper_id=paper_id, input_version=review_packet.review_input_key,
         input_payload=ReadingJobInput(edition_id=review_packet.edition_id, reading_generation=reading_generation,
                                       coverage=review_packet.coverage, operator_reason=operator_reason).to_payload(),
-        priority=priority, max_attempts=max_attempts)
+        dispatch_order=dispatch_order, max_attempts=max_attempts)
+    if not job_was_added:
+        upgrade_queued_job_dispatch_order_if_higher(connection, review_job_key, dispatch_order)
     return (ReadingEnqueueOutcome.QUEUED if job_was_added else ReadingEnqueueOutcome.ALREADY_HAS_JOB), review_packet
 
 

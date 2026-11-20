@@ -136,6 +136,14 @@ class ExtractionTimedOut(ExtractionError):
     """The extractor exceeded its time limit; the container was killed. Charged to that one source file."""
 
 
+class ScreeningUnavailable(PaperwatchError):
+    """The pinned sentence-embedding model is missing, does not match its pinned hashes, or cannot run. Candidates
+    wait unscored (nothing is promoted on partial signals) until the model is installed."""
+
+    failed_component = "screening"
+    process_exit_code = 12
+
+
 class OutputWriteError(PaperwatchError):
     failed_component = "output"
     process_exit_code = 8

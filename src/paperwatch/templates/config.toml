@@ -72,6 +72,28 @@ daily_source_text_budget = 30             # full-text downloads per UTC day for 
 local_sources_dir = "local_sources"       # put PDFs here named by arXiv id or DOI (2401.01234v2.pdf,
                                           #   10.1109_xyz.pdf); used before any download
 
+# Cheap CPU screening of every candidate, then the daily promotion of the best ones to a reading (plan part 6).
+# Score per topic, 0-1 = weighted mean of the AVAILABLE signals (a missing one is left out, the rest renormalized):
+#   question similarity  max(0, cosine) of the paper to the topic's question (or its phrases when it has none)
+#   seed similarity      mean max(0, cosine) to the `closest_seed_count` most similar active seeds
+#   phrase match         fraction of the topic's approved public phrases found verbatim in title + abstract
+# Promotion first replaces each signal by its percentile among the topic's unpromoted candidates, so raw cosines and
+# the 0/1 phrase signal share one scale and topics compare fairly. A paper's screening score is its best topic's
+# score. Starting values; calibrate them in part 10.
+[screening]
+embedding_backend = "onnx"                     # "onnx" (pinned local model, CPU) or "hashing" (offline tests only)
+embedding_model = "bge-base-en-v1.5"           # pinned in paperwatch/screening/embedding_model_registry.py
+embedding_model_dir = "models/bge-base-en-v1.5"  # install with deploy/install_embedding_model.sh
+embedding_threads = 16                         # CPU threads; 425 real abstracts took 30 s at 16 threads
+embedding_batch_size = 32
+question_similarity_weight = 0.5
+seed_similarity_weight = 0.3
+phrase_match_weight = 0.2
+closest_seed_count = 3
+daily_promotion_limit = 30      # readings promoted per UTC day; slots are divided across topics first
+near_cutoff_promotions = 3      # of those, the best candidates just below the cutoff (to see what it misses)
+minimum_screening_score = 0.0   # a pool percentile (0.8 = top fifth); 0 = rank only, until part 10 calibrates it
+
 # PDF/XML text extraction runs in rootless Podman with no network, a read-only root, and one read-only input.
 [extractor]
 container_runtime = "podman"

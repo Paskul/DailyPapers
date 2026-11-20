@@ -15,7 +15,7 @@ import pytest
 
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import record_collected_paper
-from paperwatch.collection.review_promotion import queue_review_if_promoted
+from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.commands.init_command import run_init_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
 from paperwatch.db import apply_pending_migrations, connect_database
@@ -53,7 +53,7 @@ def load_test_app(home_dir: Path, model_client: FakeModelClient | None = None) -
 def collect(app: AppContext, collected_record: CollectedPaperRecord) -> tuple[str, bool]:
     """Catalog the record and queue a reading if needed, exactly like `paperwatch collect`."""
     paper_id = record_collected_paper(app.connection, collected_record).paper_id
-    return paper_id, queue_review_if_promoted(app.connection, paper_id, max_attempts=3)
+    return paper_id, promote_paper_directly_and_queue_review(app.connection, paper_id, max_attempts=3)
 
 
 def drain_queue(app: AppContext) -> list[WorkCycleOutcome]:
@@ -250,7 +250,8 @@ def test_operator_reread_gets_its_own_generation_and_review(initialized_home):
 
     # The ordinary collector still sees the original reading and queues nothing.
     recollect_result = initialized_home.run_cli("collect", "--fixture", str(RECORDED_PAPER_FIXTURE))
-    assert "0 review job(s) queued" in recollect_result.stdout
+    assert "0 new reading(s) of promoted papers queued" in recollect_result.stdout
+    assert "Promotion: 0 paper(s) queued for review now" in recollect_result.stdout
     assert initialized_home.run_cli("reread", "p_0000000000000000").exit_code == 2
 
 
