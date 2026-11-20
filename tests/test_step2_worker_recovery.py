@@ -149,7 +149,8 @@ def test_two_concurrent_workers_share_the_queue_without_duplicate_reviews(initia
     slow_model = {FAKE_MODEL_DELAY_ENVIRONMENT_VARIABLE: "1"}
     workers = [initialized_home.start_cli("work", environment_overrides=slow_model) for _ in range(2)]
     try:
-        wait_until(lambda: len(initialized_home.query("SELECT * FROM jobs WHERE status = 'done'")) == 3,
+        wait_until(lambda: len(initialized_home.query(
+            "SELECT * FROM jobs WHERE status = 'done' AND kind = 'review_paper'")) == 3,
                    description="both workers drained the queue")
     finally:
         for worker in workers:
@@ -159,7 +160,9 @@ def test_two_concurrent_workers_share_the_queue_without_duplicate_reviews(initia
 
     assert len(initialized_home.query("SELECT * FROM reviews")) == 3
     assert len(initialized_home.query("SELECT DISTINCT paper_id FROM reviews")) == 3
-    assert [row["attempts"] for row in initialized_home.query("SELECT attempts FROM jobs")] == [1, 1, 1]
+    # Reading jobs only: part 8 may also queue comparisons of the finished reviews.
+    assert [row["attempts"] for row in initialized_home.query(
+        "SELECT attempts FROM jobs WHERE kind = 'review_paper'")] == [1, 1, 1]
     assert all("lease" not in stderr for _stdout, stderr in worker_outputs)
 
 

@@ -2,8 +2,14 @@
 
 Each job kind has a handler that performs the slow external work (model calls) OUTSIDE any write transaction and
 returns the database writes to commit; those writes and `job done` then commit together under the lease check.
-After a successful commit the handler's file output (the permanent reading note) is written; if that write fails,
-`report` restores the note from the saved review.
+After a successful commit the handler's file output (the permanent reading or comparison note) is written; if that
+write fails, `report` restores the note from the saved review or comparison.
+
+Job kinds:
+    review_paper       read one paper (plan part 7); its commit also queues its comparison (plan part 8)
+    select_references  the research role chooses which cited works of a reviewed paper to read (plan part 8)
+    compare_reviews    the comparison role compares two saved reviews on the same question (plan part 8)
+Only a review_paper job changes its paper's status; the other kinds have no paper of their own.
 While the handler runs, a JobLeaseKeeper thread renews the job's short lease, so a crashed worker's job is
 reclaimable quickly while a live worker keeps its job however long the model takes.
 
@@ -29,17 +35,27 @@ from paperwatch.clock import utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
 from paperwatch.errors import (InferenceLockTimeout, ModelServerUnavailable, PaperwatchError, SourceInputError,
                                UnexpectedWorkerError, describe_failure_for_operator)
+from paperwatch.comparisons.comparison_job import prepare_comparison, write_comparison
+from paperwatch.comparisons.comparison_queue import ComparisonJobInput, queue_comparison_for_review
 from paperwatch.jobs import (ATTEMPT_SETTLEMENT_FAILED_PERMANENTLY, ATTEMPT_SETTLEMENT_LEASE_LOST,
-                             REVIEW_PAPER_JOB_KIND, ClaimedJob, claim_next_due_job, find_next_job_due_time,
-                             finish_job_with_writes, record_job_attempt_failure, release_job_without_charging_attempt)
+                             COMPARE_REVIEWS_JOB_KIND, REVIEW_PAPER_JOB_KIND, ClaimedJob, claim_next_due_job,
+                             find_next_job_due_time, finish_job_with_writes, record_job_attempt_failure,
+                             release_job_without_charging_attempt)
 from paperwatch.lease_keeper import JobLeaseKeeper
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, ensure_model_service_available, read_service_health_state
 from paperwatch.reading.reading_pipeline import read_paper
 from paperwatch.reading.review_packet import ExtractedTextUnavailable, build_review_packet
 from paperwatch.readings import (ReadingEnqueueOutcome, ReadingJobInput, dispatch_order_of_job_row,
                                  enqueue_reading_if_needed, refresh_paper_status_from_work, select_reading_input)
+from paperwatch.references.reference_selection import (SELECT_REFERENCES_JOB_KIND, ReferenceSelectionJobInput,
+                                                       prepare_reference_selection, write_reference_selection_outcome)
+from paperwatch.rendering.comparison_notes import write_comparison_note_if_missing
 from paperwatch.rendering.review_notes import load_selected_review, write_paper_note_if_missing
+from paperwatch.research_profile import load_active_seed_library_paper_ids
 from paperwatch.review_store import insert_completed_reading
+from paperwatch.roles.base import run_role_with_one_repair
+from paperwatch.roles.comparison import COMPARISON_ROLE
+from paperwatch.roles.research import RESEARCH_ROLE
 
 LOGGER = logging.getLogger(__name__)
 RETRY_AFTER_LOCK_TIMEOUT_SECONDS = 5.0
@@ -54,8 +70,11 @@ class JobHandlerResult:
     file output to produce once the commit succeeded (never before: a lost lease must leave no file behind)."""
 
     write_results: ResultWriter
-    completion_note: str
+    completion_note: str | Callable[[], str]  # a callable is evaluated after the commit (e.g. counts it decided)
     after_commit: Callable[[], None] | None = None
+
+    def describe_completion(self) -> str:
+        return self.completion_note() if callable(self.completion_note) else self.completion_note
 
 
 JobHandler = Callable[[AppContext, ClaimedJob], JobHandlerResult]
@@ -110,6 +129,8 @@ def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHand
                                                              job_id=claimed_job.job_id,
                                                              completed_reading=completed_reading))
         set_paper_status(connection, claimed_job.paper_id, "complete")
+        # Plan part 8: compare the new review with its closest comparable neighbour (within the daily limit).
+        queue_comparison_for_review(connection, app.config, committed_review_ids[0], utc_now())
 
     def write_permanent_note() -> None:
         write_paper_note_if_missing(app.config.paper_notes_dir,
@@ -171,8 +192,66 @@ def load_edition_checked_against_catalog(app: AppContext, claimed_job: ClaimedJo
     return edition_row
 
 
+def handle_select_references_job(app: AppContext, claimed_job: ClaimedJob) -> JobHandlerResult:
+    """Plan part 8: the research role chooses up to three cited works the parent's argument depends on (and maybe one
+    gap search); the host admits the choices as class-3 readings within the daily limit."""
+    job_input = ReferenceSelectionJobInput.from_payload(claimed_job.input_payload)
+    active_seed_paper_ids = load_active_seed_library_paper_ids(app.connection, app.config)
+    try:
+        prepared = prepare_reference_selection(app.connection, app.config, job_input,
+                                               active_seed_paper_ids=active_seed_paper_ids, moment=utc_now())
+    except LookupError as missing_review:
+        raise SourceInputError(f"job {claimed_job.job_id}: {missing_review}") from None
+    role_result = None
+    if prepared.candidates:
+        role_result = run_role_with_one_repair(role_definition=RESEARCH_ROLE, role_input=prepared.role_input,
+                                               app_config=app.config, model_client=app.model_client,
+                                               connection=app.connection, job_id=claimed_job.job_id)
+    write_summaries = []
+
+    def write_selection(connection: sqlite3.Connection) -> None:
+        write_summaries.append(write_reference_selection_outcome(
+            connection, app.config, prepared, role_result, job_id=claimed_job.job_id,
+            active_seed_paper_ids=active_seed_paper_ids, moment=utc_now()))
+
+    def describe_after_commit() -> str:  # the outcome is known only once the commit admitted the choices
+        return (f"references of review {job_input.parent_review_id}: "
+                + (write_summaries[0].describe() if write_summaries else "not written")
+                + ("" if role_result else " (no unread candidate; no model call made)"))
+
+    return JobHandlerResult(write_selection, describe_after_commit)
+
+
+def handle_compare_reviews_job(app: AppContext, claimed_job: ClaimedJob) -> JobHandlerResult:
+    """Plan part 8: compare two saved reviews on the same question; store the comparison once, then write its note."""
+    prepared = prepare_comparison(app.connection, app.config,
+                                  ComparisonJobInput.from_payload(claimed_job.input_payload))
+    if prepared.role_input is None:
+        return JobHandlerResult(lambda connection: None,
+                                f"comparison {prepared.job_input.comparison_key} not made: "
+                                f"{prepared.reason_without_model_call}; no model call made")
+    role_result = run_role_with_one_repair(role_definition=COMPARISON_ROLE, role_input=prepared.role_input,
+                                           app_config=app.config, model_client=app.model_client,
+                                           connection=app.connection, job_id=claimed_job.job_id)
+    written: list[tuple[str, bool]] = []
+
+    def store_comparison(connection: sqlite3.Connection) -> None:
+        written.append(write_comparison(connection, prepared, role_result))
+
+    def write_comparison_note() -> None:
+        write_comparison_note_if_missing(app.connection, app.config.comparison_notes_dir, written[0][0])
+
+    return JobHandlerResult(store_comparison,
+                            f"comparison of reviews {prepared.job_input.review_id_a} and "
+                            f"{prepared.job_input.review_id_b} "
+                            f"({role_result.validated_output['conditions_comparability']})",
+                            after_commit=write_comparison_note)
+
+
 JOB_HANDLERS_BY_KIND: dict[str, JobHandler] = {
     REVIEW_PAPER_JOB_KIND: handle_review_paper_job,
+    SELECT_REFERENCES_JOB_KIND: handle_select_references_job,
+    COMPARE_REVIEWS_JOB_KIND: handle_compare_reviews_job,
 }
 
 
@@ -191,7 +270,7 @@ def run_single_work_cycle(app: AppContext, *, probe_paused_model_now: bool) -> W
     claimed_job = claim_next_due_job(app.connection, lease_duration_seconds=app.config.worker.lease_seconds)
     if claimed_job is None:
         return WorkCycleReport(WorkCycleOutcome.NO_JOB_DUE, "no job is due")
-    if claimed_job.paper_id:
+    if claimed_job.paper_id and claimed_job.kind == REVIEW_PAPER_JOB_KIND:
         set_paper_status(app.connection, claimed_job.paper_id, "reviewing")
     LOGGER.info("claimed %s (%s, attempt %d/%d)", claimed_job.job_id, claimed_job.kind,
                 claimed_job.attempts_including_this_one, claimed_job.max_attempts)
@@ -214,7 +293,7 @@ def run_single_work_cycle(app: AppContext, *, probe_paused_model_now: bool) -> W
         return WorkCycleReport(WorkCycleOutcome.LEASE_LOST, f"lease on {claimed_job.job_id} was lost; result "
                                "discarded so a newer worker's result is not overwritten",
                                job_id=claimed_job.job_id, paper_id=claimed_job.paper_id)
-    completion_message = f"completed {claimed_job.kind} {claimed_job.job_id}: {handler_result.completion_note}"
+    completion_message = f"completed {claimed_job.kind} {claimed_job.job_id}: {handler_result.describe_completion()}"
     if handler_result.after_commit is not None:
         try:
             handler_result.after_commit()
@@ -249,7 +328,7 @@ def _settle_failed_job(app: AppContext, claimed_job: ClaimedJob, failure: Paperw
                 paper_status, outcome = "queued", WorkCycleOutcome.JOB_RETRY_SCHEDULED
                 message = f"{failure}; job {claimed_job.job_id} will retry " \
                           f"(attempt {claimed_job.attempts_including_this_one}/{claimed_job.max_attempts} used)"
-        if claimed_job.paper_id:
+        if claimed_job.paper_id and claimed_job.kind == REVIEW_PAPER_JOB_KIND:
             set_paper_status(app.connection, claimed_job.paper_id, paper_status)
     if claimed_job.paper_id:
         message += f"; paper {claimed_job.paper_id} is preserved"

@@ -8,8 +8,12 @@ internal keys, never from paper text:
     history:<query id>                                the finite historical search of a topic            (historical)
     zotero-seed:<collection> / csl-seed:<file key>    the private seed library (plan part 4)             (seed)
     fixture:<file name>                               recorded fixtures for tests and replays            (fixture)
+    research-branch:<query id>                        a gap search the research role chose (part 8)      (historical)
+    reference:<citing paper id>                       a work cited by a reviewed paper (part 8)           (reference)
+    openalex-lookup:<paper id>                        a reviewed paper's own OpenAlex record (part 8)     (reference)
 The paper's ORIGINAL route (papers.origin_route) is never rewritten, even when a later route raises its priority.
-Only current and historical routes count against the daily budget of new metadata candidates.
+Only current and historical routes count against the daily budget of new metadata candidates. Reference routes are
+bounded instead by the reference settings (papers fetched per run, ids per paper).
 """
 
 from __future__ import annotations
@@ -23,9 +27,13 @@ ARXIV_RECOVERY_ROUTE_PREFIX = "arxiv-recovery:"
 OPENALEX_RECENT_ROUTE_PREFIX = "openalex-recent:"
 HISTORICAL_SEARCH_ROUTE_PREFIX = "history:"
 FIXTURE_ROUTE_PREFIX = "fixture:"
+RESEARCH_BRANCH_ROUTE_PREFIX = "research-branch:"
+REFERENCE_ROUTE_PREFIX = "reference:"
+OPENALEX_LOOKUP_ROUTE_PREFIX = "openalex-lookup:"
 
 CURRENT_RELEASE_ROUTE_PREFIXES = (ARXIV_FEED_ROUTE_PREFIX, ARXIV_RECOVERY_ROUTE_PREFIX, OPENALEX_RECENT_ROUTE_PREFIX)
-HISTORICAL_ROUTE_PREFIXES = (HISTORICAL_SEARCH_ROUTE_PREFIX,)
+HISTORICAL_ROUTE_PREFIXES = (HISTORICAL_SEARCH_ROUTE_PREFIX, RESEARCH_BRANCH_ROUTE_PREFIX)
+REFERENCE_ROUTE_PREFIXES = (REFERENCE_ROUTE_PREFIX, OPENALEX_LOOKUP_ROUTE_PREFIX)
 PROVIDER_SEARCH_ROUTE_PREFIXES = CURRENT_RELEASE_ROUTE_PREFIXES + HISTORICAL_ROUTE_PREFIXES
 
 
@@ -34,7 +42,8 @@ class RouteKind(StrEnum):
     HISTORICAL_SEARCH = "historical_search"
     SEED_LIBRARY = "seed_library"
     RECORDED_FIXTURE = "recorded_fixture"
-    OTHER = "other"  # e.g. a test route, or a reference route added in part 8
+    REFERENCE = "reference"
+    OTHER = "other"  # e.g. a test route
 
 
 def classify_discovery_route(route: str) -> RouteKind:
@@ -46,6 +55,8 @@ def classify_discovery_route(route: str) -> RouteKind:
         return RouteKind.SEED_LIBRARY
     if route.startswith(FIXTURE_ROUTE_PREFIX):
         return RouteKind.RECORDED_FIXTURE
+    if route.startswith(REFERENCE_ROUTE_PREFIXES):
+        return RouteKind.REFERENCE
     return RouteKind.OTHER
 
 
@@ -63,3 +74,15 @@ def openalex_recent_route(query_id: str) -> str:
 
 def historical_search_route(query_id: str) -> str:
     return f"{HISTORICAL_SEARCH_ROUTE_PREFIX}{query_id}"
+
+
+def research_branch_route(query_id: str) -> str:
+    return f"{RESEARCH_BRANCH_ROUTE_PREFIX}{query_id}"
+
+
+def reference_route(citing_paper_id: str) -> str:
+    return f"{REFERENCE_ROUTE_PREFIX}{citing_paper_id}"
+
+
+def openalex_lookup_route(paper_id: str) -> str:
+    return f"{OPENALEX_LOOKUP_ROUTE_PREFIX}{paper_id}"

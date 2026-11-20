@@ -10,13 +10,21 @@ Stages of one run:
      missed during downtime, recent OpenAlex windows), then each topic's finite historical search, all within the
      daily budget of new metadata candidates. `--fixture FILE` replaces these live searches with recorded records
      (a replay); `--skip-searches` skips them.
+  2b. References and gap searches (plan part 8, live runs only): fetch the outgoing references of reviewed papers
+     that address a topic's question (paperwatch.references.reference_fetch), and run the gap searches the research
+     role requested (paperwatch.references.research_branches). Cited works and branch results join the catalog and
+     are screened in step 3 like every other candidate.
   3. Screening (plan part 6, paperwatch.screening): score every candidate for every topic on the CPU with the pinned
      local embedding model plus the phrase signal, then promote up to the daily limit (slots divided across topics
      first) and queue each reading in its priority class. Nothing leaves the machine and no model call is made.
-  4. Source text: for papers queued for review, a local file, else (live runs only) a capped download; then text
-     extraction in the sandbox when the extractor image is configured. A paper whose full text was extracted gets its
-     reading switched to the full text (plan part 7). The readings promoted in step 3 are held until this stage
-     ends, so the worker does not read an abstract seconds before the PDF arrives.
+  3b. Follow-up work (plan part 8, no network): queue the research role's choice of references for each fetched
+     parent, admit choices that waited for the daily reference limit, and queue comparisons the daily comparison
+     limit held back for recent reviews.
+  4. Source text: for papers queued for review (reference readings included), a local file, else (live runs only) a
+     capped download; then text extraction in the sandbox when the extractor image is configured. A paper whose full
+     text was extracted gets its reading switched to the full text (plan part 7). The readings promoted in step 3,
+     and the reference readings chosen since the last run, are held until this stage ends, so the worker does not
+     read an abstract seconds before the PDF arrives.
   5. Research profile: print each topic's input mode (keywords, seeds, or both) and anything missing.
 
 Re-collecting is always safe: the catalog resolves each record to its canonical paper, every page commits with its
@@ -40,6 +48,11 @@ from paperwatch.collection.current_releases import collect_current_releases
 from paperwatch.collection.historical_search import run_historical_searches
 from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
 from paperwatch.collection.source_text import acquire_source_texts
+from paperwatch.comparisons.comparison_queue import queue_comparisons_for_recent_reviews
+from paperwatch.references.reference_fetch import fetch_references_of_reviewed_papers
+from paperwatch.references.reference_selection import (admit_waiting_reference_selections,
+                                                       queue_reference_selection_jobs)
+from paperwatch.references.research_branches import run_requested_research_branches
 from paperwatch.errors import describe_failure_for_operator
 from paperwatch.network.provider_gateway import ProviderGateway
 from paperwatch.research_profile import (build_research_profiles, explain_empty_research_profile,
@@ -74,7 +87,9 @@ def run_collect_command(app: AppContext, arguments: argparse.Namespace, *,
     elif run_live_searches:
         _print_lines(collect_current_releases(collection_context))
         _print_lines(run_historical_searches(collection_context))
+        _print_lines(run_requested_research_branches(collection_context))
         print(f"Candidates: {collection_context.candidate_budget.describe()}")
+        _print_lines(fetch_references_of_reviewed_papers(collection_context))
     else:
         print("Papers: live arXiv / OpenAlex searches skipped (--skip-searches)")
     screening_result = run_screening_and_promotion(
@@ -83,6 +98,7 @@ def run_collect_command(app: AppContext, arguments: argparse.Namespace, *,
         hold_new_readings_until=compute_source_text_hold_until(utc_now(),
                                                                app.config.collection.source_text_hold_minutes))
     _print_lines(screening_result.report_lines)
+    _print_lines(_queue_follow_up_work(app, collection_context))
     try:
         _print_lines(acquire_source_texts(collection_context, allow_network=run_live_searches))
     finally:  # the held readings become due now, whatever the source-text stage achieved
@@ -95,6 +111,20 @@ def run_collect_command(app: AppContext, arguments: argparse.Namespace, *,
         print(describe_failure_for_operator(screening_result.embedder_failure), file=sys.stderr)
         return screening_result.embedder_failure.process_exit_code
     return 0
+
+
+def _queue_follow_up_work(app: AppContext, collection_context: CollectionContext) -> list[str]:
+    """Plan part 8 queueing that needs no network: reference choices, waiting admissions, comparisons."""
+    with write_transaction(app.connection):
+        selection_jobs = queue_reference_selection_jobs(
+            app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids)
+        admitted, waiting, _skipped = admit_waiting_reference_selections(
+            app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids,
+            moment=utc_now())
+        comparison_jobs = queue_comparisons_for_recent_reviews(app.connection, app.config, utc_now())
+    return [f"Follow-up: {selection_jobs} reference choice(s) queued for the research role, {admitted} waiting "
+            f"reference reading(s) admitted ({waiting} still waiting for the daily limit), {comparison_jobs} "
+            "comparison(s) queued"]
 
 
 def _synchronize_seed_sources(app: AppContext, build_gateway: Callable[[], ProviderGateway]) -> None:

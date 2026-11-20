@@ -137,7 +137,8 @@ def test_full_truncated_and_abstract_only_papers_share_one_schema_and_are_not_re
                                    extracted_text=synthetic_full_text(truncated=True))
     abstract_paper_id = add_paper(app, "2611.00003v1", "Abstract only (synthetic)")
 
-    assert drain(app) == [WorkCycleOutcome.JOB_COMPLETED] * 3
+    first_run_outcomes = drain(app)  # three readings, plus any part-8 comparison of them
+    assert set(first_run_outcomes) == {WorkCycleOutcome.JOB_COMPLETED} and len(first_run_outcomes) >= 3
     reviews = {row["paper_id"]: row for row in app.connection.execute("SELECT * FROM reviews")}
     assert {paper_id: reviews[paper_id]["coverage"] for paper_id in reviews} == {
         full_paper_id: "full_text", truncated_paper_id: "partial_text", abstract_paper_id: "abstract_only"}

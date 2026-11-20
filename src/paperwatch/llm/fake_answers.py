@@ -74,8 +74,42 @@ def build_fake_topic_assessments(role_input: Mapping[str, Any]) -> dict[str, Any
     return {"topic_assessments": assessments}
 
 
+def build_fake_reference_selection(role_input: Mapping[str, Any]) -> dict[str, Any]:
+    """Part 8 research role: choose the first candidate as a method source (citing its first context), no gap."""
+    selections = []
+    for candidate in role_input["candidates"][:1]:
+        selections.append({"candidate_id": candidate["candidate_id"], "role_in_parent": "method", "importance": 3,
+                           "explanation": "Offline fake choice: the first candidate offered.",
+                           "context_passage_ids": [context["passage_id"]
+                                                   for context in candidate["citation_contexts"][:1]]})
+    return {"selected_references": selections[:role_input["maximum_selections"]], "search_gap": []}
+
+
+def build_fake_comparison(role_input: Mapping[str, Any]) -> dict[str, Any]:
+    """Part 8 comparison role: quote the first passage of each review; conditions only partially comparable, so it
+    names a condition difference and ranks nothing."""
+    evidence = []
+    for review in role_input["reviews"]:
+        quotable = _first_quotable_passage(review["passages"])
+        if quotable is not None:
+            evidence.append({"review_id": review["review_id"], "passage_id": quotable[0], "excerpt": quotable[1]})
+    both_cited = len(evidence) == len(role_input["reviews"])
+    return {"conditions_comparability": "partially_comparable",
+            "condition_differences": [{"dimension": "evaluation_setting",
+                                       "statement": "Offline fake: the two evaluation settings are not the same.",
+                                       "evidence": evidence[:1]}] if evidence else [],
+            "agreements": [{"statement": "Offline fake: both papers address the same question.",
+                            "evidence": evidence}] if both_cited else [],
+            "differences": [], "result_ranking": [],
+            "reader_conclusion": {"statement": "Offline fake conclusion: read both with their conditions in mind.",
+                                  "evidence": evidence if both_cited else []},
+            "insufficient_evidence": not both_cited}
+
+
 FAKE_ANSWER_BUILDERS_BY_ROLE: dict[str, Callable[[Mapping[str, Any]], dict[str, Any]]] = {
     "section_reader": build_fake_section_notes,
     "reviewer": build_fake_review,
     "topic_assessor": build_fake_topic_assessments,
+    "research": build_fake_reference_selection,
+    "comparison": build_fake_comparison,
 }

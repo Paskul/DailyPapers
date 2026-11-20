@@ -5,6 +5,7 @@ It offers a handful of FIXED operations; callers never supply a URL, host, or fr
     search(topic_query_id, cursor)          an approved catalog query (paperwatch.public_query_catalog)
     poll_category_feed(arxiv_category)      arXiv's announcement feed of a category some topic approved (part 5)
     get_work(provider_id)                   metadata of a work already known from a source record
+    get_works(openalex_provider_ids)        metadata of up to 100 cited works, each a stored citation edge (part 8)
     get_text(known_edition_id)              the text of one catalogued edition, saved to the source cache
     list_seed_items(collection_key, start)  items of an approved Zotero collection (plan part 4)
 
@@ -43,6 +44,7 @@ from paperwatch.network.outbound_ledger import OutboundRequestRecord, record_out
 from paperwatch.network.provider_requests import (ProviderRequest, PublicationWindow, SearchResultOrder,
                                                   build_category_feed_request,
                                                   build_get_text_request, build_get_work_request,
+                                                  build_get_works_request,
                                                   build_search_request, build_seed_items_request)
 from paperwatch.network.provider_rules import (CREDENTIAL_KIND_HEADER, CREDENTIAL_KIND_QUERY_PARAMETER,
                                                OperationRule, ProviderAccessRules, ProviderRule,
@@ -51,8 +53,8 @@ from paperwatch.network.secure_fetcher import (AddressResolver, HopResult, Https
                                                SecureHttpsFetcher, resolve_allowed_redirect,
                                                resolve_public_addresses_only)
 from paperwatch.public_query_catalog import QUERY_KIND_CATEGORY, build_public_query_catalog, find_public_query
-from paperwatch.scholarly_identifiers import ARXIV_SCHEME, NormalizedIdentifier, normalize_identifier, \
-    parse_version_number
+from paperwatch.scholarly_identifiers import ARXIV_SCHEME, NormalizedIdentifier, identifiers_implied_by, \
+    normalize_identifier, parse_version_number
 from paperwatch.seeds.seed_items import SEED_DISCOVERY_ROUTE_PREFIXES
 from paperwatch.source_cache import INTERNAL_ID_PATTERN, CachedSourceFile, store_source_bytes
 
@@ -131,6 +133,17 @@ class ProviderGateway:
                                      "catalog alias nor a provider-supplied citation); refusing to look it up")
         return self._execute(build_get_work_request(identifier))
 
+    def get_works(self, openalex_provider_ids: list[str]) -> ProviderResponse:
+        """Metadata of up to 100 works by OpenAlex id ('openalex:W123'). Every id must already be a known source
+        record (in practice: a citation edge a provider supplied for a reviewed paper); otherwise nothing is sent."""
+        identifiers = [_parse_scheme_and_value(provider_id) for provider_id in openalex_provider_ids]
+        unknown_identifiers = [identifier.scheme_and_value for identifier in identifiers
+                               if not self._is_known_source_identifier(identifier)]
+        if unknown_identifiers:
+            raise SourceAccessDenied(f"{len(unknown_identifiers)} id(s) are not known source records (first: "
+                                     f"'{unknown_identifiers[0]}'); refusing the whole lookup")
+        return self._execute(build_get_works_request(identifiers))
+
     def get_text(self, known_edition_id: str) -> CachedSourceFile:
         if not isinstance(known_edition_id, str) or not INTERNAL_ID_PATTERN.match(known_edition_id):
             raise SourceAccessDenied(f"'{known_edition_id}' is not an internal edition id")
@@ -163,14 +176,24 @@ class ProviderGateway:
     # ---- dispatch-time checks against source records ----------------------------------------------------------
 
     def _is_known_source_identifier(self, identifier: NormalizedIdentifier) -> bool:
-        """Known = a provider supplied it (a citation edge or a paper found by a public route), or it is a seed's
-        identifier and the operator explicitly allowed seed lookups (looking it up discloses interest in it)."""
+        """Known = a provider supplied it (a citation edge or a paper found by a public route), it was found in the
+        bibliography of a paper the collector downloaded and awaits confirmation by exactly this lookup (plan part
+        8), or it is a seed's identifier and the operator explicitly allowed seed lookups (looking it up discloses
+        interest in it). An identifier that by definition names a known work (arXiv's own DataCite DOI of a
+        catalogued arXiv paper) counts as that work."""
         version_free_identifier = identifier.without_version()
         if self._connection.execute(
                 "SELECT 1 FROM citation_edges WHERE cited_scheme = ? AND cited_value = ? LIMIT 1",
                 (version_free_identifier.scheme, version_free_identifier.value)).fetchone() is not None:
             return True
+        if self._connection.execute(
+                """SELECT 1 FROM bibliography_identifiers WHERE identifier_scheme = ? AND identifier_value = ?
+                     AND confirmation_status = 'pending' LIMIT 1""",
+                (version_free_identifier.scheme, version_free_identifier.value)).fetchone() is not None:
+            return True
         paper_id = find_paper_id_by_identifier(self._connection, version_free_identifier)
+        for implied_identifier in identifiers_implied_by(version_free_identifier):
+            paper_id = paper_id or find_paper_id_by_identifier(self._connection, implied_identifier.without_version())
         if paper_id is None:
             return False
         if self._app_config.collector.allow_lookup_by_seed_identifier or \

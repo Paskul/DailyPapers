@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 
 from paperwatch.config import AppConfig
+from paperwatch.reading.reading_priority import question_fit_from_stored_assessment
 from paperwatch.research_profile import TopicInputMode, TopicResearchProfile
 from paperwatch.screening.embedding_cache import hash_model_input_text, load_cached_vectors
 from paperwatch.screening.text_embedders import configured_embedder_identity
@@ -121,6 +122,14 @@ def _seed_anchor(seed: StoredSeed, abstract_characters: int) -> dict[str, Any]:
 def _comparable_review_anchors(connection: sqlite3.Connection, vector_lookup: CachedVectorLookup,
                                paper_vector: np.ndarray | None, paper_id: str, topic_id: str,
                                review_limit: int) -> list[dict[str, Any]]:
+    ranked_rows = rank_comparable_reviews(connection, vector_lookup, paper_vector, paper_id, topic_id)
+    return [_review_anchor(row) for row in ranked_rows[:review_limit]]
+
+
+def rank_comparable_reviews(connection: sqlite3.Connection, vector_lookup: CachedVectorLookup,
+                            paper_vector: np.ndarray | None, paper_id: str, topic_id: str) -> list[sqlite3.Row]:
+    """The latest reviews of OTHER papers whose newest assessment for `topic_id` rated question_fit >= 2, nearest to
+    `paper_vector` first (by cached embeddings), then by topic score. Also used by part-8 comparisons."""
     candidate_rows = connection.execute(
         """SELECT review.review_id, review.review_json, paper.title, paper.first_published_date,
                   edition.title AS edition_title, edition.abstract AS edition_abstract,
@@ -139,7 +148,8 @@ def _comparable_review_anchors(connection: sqlite3.Connection, vector_lookup: Ca
                                            WHERE newer.review_id = assessment.review_id
                                              AND newer.topic_id = assessment.topic_id)""",
         (topic_id, paper_id)).fetchall()
-    comparable_rows = [row for row in candidate_rows if _question_fit_of(row) >= MINIMUM_QUESTION_FIT_OF_COMPARABLE_REVIEW]
+    comparable_rows = [row for row in candidate_rows
+                       if _question_fit_of(row) >= MINIMUM_QUESTION_FIT_OF_COMPARABLE_REVIEW]
     comparable_rows = list({row["review_id"]: row for row in comparable_rows}.values())  # one per review
     review_vectors = vector_lookup.vectors_for_documents(
         [(row["edition_title"] or row["title"], row["edition_abstract"]) for row in comparable_rows])
@@ -151,15 +161,12 @@ def _comparable_review_anchors(connection: sqlite3.Connection, vector_lookup: Ca
             else -2.0  # rows without vectors rank after every row with one
         return (-cosine, -_normalized_topic_score(row), row["review_id"])
 
-    ranked_rows = [row for _index, row in sorted(enumerate(comparable_rows), key=ranking_key)]
-    return [_review_anchor(row) for row in ranked_rows[:review_limit]]
+    return [row for _index, row in sorted(enumerate(comparable_rows), key=ranking_key)]
 
 
 def _question_fit_of(assessment_row: sqlite3.Row) -> int:
-    if assessment_row["score_scale"] == LEGACY_RELEVANCE_SCALE:
-        return int(assessment_row["topic_score"])
-    applied_ratings = json.loads(assessment_row["assessment_json"]).get("scoring", {}).get("applied_ratings", {})
-    return int(applied_ratings.get("question_fit", 0))
+    return question_fit_from_stored_assessment(assessment_row["score_scale"], assessment_row["topic_score"],
+                                               json.loads(assessment_row["assessment_json"]))
 
 
 def _normalized_topic_score(assessment_row: sqlite3.Row) -> float:

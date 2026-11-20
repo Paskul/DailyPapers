@@ -21,6 +21,7 @@ from paperwatch.scholarly_identifiers import ARXIV_SCHEME, DOI_SCHEME, OPENALEX_
 OPERATION_SEARCH = "search"
 OPERATION_FEED = "feed"
 OPERATION_GET_WORK = "get_work"
+OPERATION_GET_WORKS = "get_works"
 OPERATION_GET_TEXT = "get_text"
 OPERATION_LIST_SEED_ITEMS = "list_seed_items"
 
@@ -175,6 +176,26 @@ def build_get_work_request(identifier: NormalizedIdentifier) -> ProviderRequest:
         return ProviderRequest("openalex", OPERATION_GET_WORK,
                                f"/works/doi:{urllib.parse.quote(identifier.value, safe='/')}")
     raise SourceAccessDenied(f"no provider lookup exists for '{identifier.scheme}' identifiers")
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# get_works(openalex ids)  (plan part 8: the works a reviewed paper cites)
+# --------------------------------------------------------------------------------------------------------------------
+
+MAXIMUM_OPENALEX_IDS_PER_REQUEST = 100  # OpenAlex: up to 100 values in one OR filter, at most 100 results per page
+
+
+def build_get_works_request(openalex_identifiers: list[NormalizedIdentifier]) -> ProviderRequest:
+    """One request for the metadata of up to 100 works: filter=openalex:W1|W2|..., the parser's fields only."""
+    if not 1 <= len(openalex_identifiers) <= MAXIMUM_OPENALEX_IDS_PER_REQUEST:
+        raise SourceAccessDenied(f"a works lookup takes 1 to {MAXIMUM_OPENALEX_IDS_PER_REQUEST} ids")
+    if any(identifier.scheme != OPENALEX_SCHEME or not re.fullmatch(r"W\d+", identifier.value)
+           for identifier in openalex_identifiers):
+        raise SourceAccessDenied("a works lookup accepts normalized OpenAlex work ids only")
+    unique_work_ids = list(dict.fromkeys(identifier.value for identifier in openalex_identifiers))
+    return ProviderRequest("openalex", OPERATION_GET_WORKS, "/works",
+                           (("filter", "openalex:" + "|".join(unique_work_ids)),
+                            ("per-page", str(len(unique_work_ids))), ("select", OPENALEX_SELECTED_FIELDS)))
 
 
 # --------------------------------------------------------------------------------------------------------------------

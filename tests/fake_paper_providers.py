@@ -2,7 +2,9 @@
 
 The fakes follow the real formats checked against live responses on 2026-11-19: the Atom announcement feed at
 rss.arxiv.org/atom/<category> (with ETag), export.arxiv.org/api/query with opensearch paging and submittedDate
-windows, and api.openalex.org/works with cursor paging and publication-date filters. All paper text is synthetic.
+windows, and api.openalex.org/works with cursor paging and publication-date filters. For plan part 8 it also serves
+single works (/works/W123, /works/doi:...) with their `referenced_works`, and id batches (filter=openalex:W1|W2).
+All paper text is synthetic.
 """
 
 from __future__ import annotations
@@ -58,6 +60,7 @@ class FakeOpenAlexWork:
     arxiv_id: str = ""  # an arXiv location of the same work
     is_retracted: bool = False
     cited_by_count: int = 0
+    referenced_work_ids: tuple[str, ...] = ()  # the works this work cites ("W2", ...)
 
 
 @dataclass
@@ -112,7 +115,16 @@ class FakePaperProviders:
 
     # ---- OpenAlex -------------------------------------------------------------------------------------------------
     def _openalex(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/works/"):
+            return self._openalex_single_work(request.url.path.removeprefix("/works/"))
         filters = dict(part.split(":", 1) for part in request.url.params.get("filter", "").split(",") if part)
+        if "openalex" in filters:  # a batch of known ids (plan part 8)
+            wanted_ids = filters["openalex"].split("|")
+            document = {"meta": {"count": 0, "next_cursor": None, "per_page": len(wanted_ids)},
+                        "results": [openalex_work_json(work) for work in self.openalex_works
+                                    if work.work_id in wanted_ids]}
+            document["meta"]["count"] = len(document["results"])
+            return _streamed(200, {"content-type": "application/json"}, json.dumps(document).encode())
         phrase = (request.url.params.get("search") or filters.get("title_and_abstract.search", "").strip('"')).lower()
         first_date = date.fromisoformat(filters["from_publication_date"]) if "from_publication_date" in filters \
             else date.min
@@ -133,6 +145,14 @@ class FakePaperProviders:
         document = {"meta": {"count": len(visible_works), "next_cursor": next_cursor, "per_page": page_size},
                     "results": [openalex_work_json(work) for work in page_works]}
         return _streamed(200, {"content-type": "application/json"}, json.dumps(document).encode())
+
+    def _openalex_single_work(self, work_reference: str) -> httpx.Response:
+        for work in self.openalex_works:
+            if work_reference == work.work_id or (work.doi and work_reference.lower() == f"doi:{work.doi}".lower()) \
+                    or (work.arxiv_id and work_reference.lower() == f"doi:10.48550/arxiv.{work.arxiv_id}".lower()):
+                return _streamed(200, {"content-type": "application/json"},
+                                 json.dumps(openalex_work_json(work)).encode())
+        return _streamed(404, {"content-type": "application/json"}, b'{"error": "not found"}')
 
     # ---- inspection -----------------------------------------------------------------------------------------------
     def requests_to(self, host: str, path_prefix: str = "") -> list[httpx.Request]:
@@ -235,7 +255,8 @@ def openalex_work_json(work: FakeOpenAlexWork) -> dict:
             "abstract_inverted_index": inverted_index,
             "ids": {"openalex": f"https://openalex.org/{work.work_id}",
                     **({"doi": f"https://doi.org/{work.doi}"} if work.doi else {})},
-            "locations": locations}
+            "locations": locations,
+            "referenced_works": [f"https://openalex.org/{work_id}" for work_id in work.referenced_work_ids]}
 
 
 def _streamed(status_code: int, headers: dict, content: bytes) -> httpx.Response:

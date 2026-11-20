@@ -23,7 +23,10 @@ from paperwatch.collection.current_releases import (ARXIV_FEED_CHECKPOINT_PREFIX
 from paperwatch.collection.historical_search import (history_plan_key, historical_queries_for_topic, plan_windows,
                                                      recency_schedule_settings)
 from paperwatch.public_query_catalog import build_public_query_catalog
+from paperwatch.comparisons.comparison_queue import count_comparison_jobs_created_today
 from paperwatch.reading.stage_results import count_saved_stages_of_unfinished_readings
+from paperwatch.references.reference_selection import count_reference_admissions_today
+from paperwatch.references.research_branches import count_branches_requested_today
 from paperwatch.screening.embedding_model_registry import look_up_pinned_embedding_model
 from paperwatch.screening.review_promotion import count_screening_promotions_today, utc_day_start_timestamp
 from paperwatch.screening.text_embedders import EMBEDDING_BACKEND_HASHING
@@ -85,6 +88,7 @@ def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
         "SELECT coverage, COUNT(*) AS review_count FROM reviews GROUP BY coverage").fetchall()
     print("Reviews: " + (", ".join(f"{row['coverage']} {row['review_count']}" for row in coverage_rows) or "none"))
     _print_reading_progress(app)
+    _print_references_and_comparisons(app)
 
     model_health = read_service_health_state(connection, MODEL_SERVICE_NAME)
     if model_health.is_paused_at(utc_now()):
@@ -234,6 +238,38 @@ def _print_reading_progress(app: AppContext) -> None:
     if priority_row["assessed"]:
         print(f"  Reading priority: {priority_row['assessed']} review(s) scored, {priority_row['at_least_65'] or 0} "
               "at 65/100 or more for their best topic")
+
+
+def _print_references_and_comparisons(app: AppContext) -> None:
+    """Plan part 8: reference fetches, the research role's choices and today's admissions against the limit, gap
+    searches, unresolved bibliography references, and comparisons with today's jobs against their limit."""
+    connection, moment = app.connection, utc_now()
+    fetch_counts = {row["fetch_status"]: row["paper_count"] for row in connection.execute(
+        "SELECT fetch_status, COUNT(*) AS paper_count FROM reference_fetches GROUP BY fetch_status")}
+    edge_row = connection.execute(
+        "SELECT COUNT(*) AS edges, SUM(cited_paper_id IS NULL) AS unresolved FROM citation_edges").fetchone()
+    unresolved_bibliography = connection.execute(
+        "SELECT COUNT(*) FROM bibliography_identifiers WHERE confirmation_status IN ('mismatch', 'not_found')"
+    ).fetchone()[0]
+    print(f"References: {fetch_counts.get('fetched', 0)} paper(s) fetched, "
+          f"{fetch_counts.get('no_provider_record', 0)} without a provider record, {fetch_counts.get('blocked', 0)} "
+          f"blocked; {edge_row['edges']} citation edge(s) ({edge_row['unresolved'] or 0} not in the catalog); "
+          f"{unresolved_bibliography} bibliography identifier(s) unresolved")
+    selection_counts = {row["admission_status"]: row["selection_count"] for row in connection.execute(
+        "SELECT admission_status, COUNT(*) AS selection_count FROM reference_selections GROUP BY admission_status")}
+    print(f"  Chosen references: {selection_counts.get('admitted', 0)} admitted, "
+          f"{selection_counts.get('waiting_daily_cap', 0)} waiting for the daily limit, "
+          f"{selection_counts.get('skipped', 0)} skipped; {count_reference_admissions_today(connection, moment)} of "
+          f"{app.config.references.daily_reference_readings} admitted today (UTC)")
+    branch_counts = {row["branch_status"]: row["branch_count"] for row in connection.execute(
+        "SELECT branch_status, COUNT(*) AS branch_count FROM research_branches GROUP BY branch_status")}
+    if branch_counts:
+        print(f"  Gap searches: {branch_counts.get('requested', 0)} requested, {branch_counts.get('done', 0)} done, "
+              f"{branch_counts.get('blocked', 0)} blocked; {count_branches_requested_today(connection, moment)} of "
+              f"{app.config.references.research_branches_per_day} requested today")
+    comparison_count = connection.execute("SELECT COUNT(*) FROM comparisons").fetchone()[0]
+    print(f"Comparisons: {comparison_count} saved; {count_comparison_jobs_created_today(connection, moment)} of "
+          f"{app.config.comparisons.daily_comparison_jobs} comparison job(s) queued today (UTC)")
 
 
 def _print_collection_coverage(app: AppContext) -> None:

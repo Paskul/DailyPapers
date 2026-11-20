@@ -28,7 +28,8 @@ from paperwatch.catalog import is_paper_withdrawn, load_paper_row, set_paper_sta
 from paperwatch.clock import format_utc_timestamp, utc_now
 from paperwatch.config import ScreeningSettings
 from paperwatch.db import write_transaction
-from paperwatch.dispatch_order import JobDispatchOrder, dispatch_order_for_promoted_paper
+from paperwatch.dispatch_order import (JobDispatchOrder, dispatch_order_for_important_reference,
+                                      dispatch_order_for_promoted_paper)
 from paperwatch.readings import ReadingEnqueueOutcome, enqueue_reading_if_needed
 from paperwatch.screening.candidate_screening import CandidateScreeningOutcome
 from paperwatch.screening.promotion_selection import (PromotionCandidate, PromotionDecision, PromotionReason,
@@ -37,6 +38,9 @@ from paperwatch.screening.screening_score import SignalWeights, combine_screenin
 from paperwatch.screening.signal_normalization import compute_pool_normalized_scores
 
 PROMOTION_REASON_DIRECT = "direct"  # an operator tool or a test queued the paper without screening
+# Part 8: the research role chose the paper from a reviewed paper's references. Not counted against the daily
+# promotion limit (it has its own: references.daily_reference_readings); its readings stay in class 3.
+PROMOTION_REASON_REFERENCE = "reference"
 SCREENING_PROMOTION_REASONS = tuple(reason.value for reason in PromotionReason)
 
 
@@ -151,14 +155,38 @@ def queue_new_reading_for_promoted_paper_in_transaction(connection: sqlite3.Conn
                                                         max_attempts: int) -> bool:
     """During ingestion: if the paper was promoted before and its preferred text is new, queue the new reading in
     the paper's current class. New papers return False here and wait for screening. Returns True if a job was added."""
-    promotion_row = connection.execute("SELECT screening_score FROM paper_promotions WHERE paper_id = ?",
-                                       (paper_id,)).fetchone()
+    promotion_row = connection.execute(
+        "SELECT promotion_reason, screening_score FROM paper_promotions WHERE paper_id = ?", (paper_id,)).fetchone()
     if promotion_row is None or paper_id in active_seed_paper_ids or is_paper_withdrawn(connection, paper_id):
         return False
-    paper_row = load_paper_row(connection, paper_id)
-    dispatch_order = dispatch_order_for_promoted_paper(paper_row["first_published_date"],
-                                                       promotion_row["screening_score"] or 0.0, utc_now())
+    if promotion_row["promotion_reason"] == PROMOTION_REASON_REFERENCE:
+        dispatch_order = dispatch_order_of_reference_reading(connection, paper_id, promotion_row["screening_score"])
+    else:
+        paper_row = load_paper_row(connection, paper_id)
+        dispatch_order = dispatch_order_for_promoted_paper(paper_row["first_published_date"],
+                                                           promotion_row["screening_score"] or 0.0, utc_now())
     return _queue_reading_and_mark_paper(connection, paper_id, dispatch_order, max_attempts)
+
+
+def dispatch_order_of_reference_reading(connection: sqlite3.Connection, paper_id: str,
+                                        topic_score: float | None) -> JobDispatchOrder:
+    """Class 3, by the highest importance any admitting parent gave the paper, then its topic score (plan part 6)."""
+    importance_row = connection.execute(
+        """SELECT MAX(importance) AS importance FROM reference_selections
+           WHERE cited_paper_id = ? AND admission_status = 'admitted'""", (paper_id,)).fetchone()
+    return dispatch_order_for_important_reference(float(importance_row["importance"] or 1), topic_score or 0.0)
+
+
+def record_reference_promotion_and_queue_reading(connection: sqlite3.Connection, paper_id: str, *,
+                                                 best_topic_id: str | None, topic_score: float | None,
+                                                 dispatch_order: JobDispatchOrder, max_attempts: int,
+                                                 hold_until: datetime | None, moment: datetime) -> bool:
+    """Part 8: record a 'reference' promotion and queue the reading in class 3, held until `collect` has tried to
+    fetch the full text (owner decision 2026-11-20). Call inside a write transaction. Returns True if queued."""
+    _record_promotion(connection, paper_id, PROMOTION_REASON_REFERENCE, best_topic_id, best_topic_id,
+                      PromotionScoreRecord(screening_score=topic_score, unnormalized_score=topic_score),
+                      dispatch_order, moment)
+    return _queue_reading_and_mark_paper(connection, paper_id, dispatch_order, max_attempts, hold_until=hold_until)
 
 
 def promote_paper_directly_and_queue_review(connection: sqlite3.Connection, paper_id: str, *, max_attempts: int,

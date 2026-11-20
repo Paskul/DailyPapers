@@ -373,3 +373,8 @@ def _render_source_links(paper_aliases: list[tuple[str, str]]) -> str:
         label = escape_untrusted_inline_text(f"{provider}:{provider_paper_id}")
         rendered_sources.append(f"[{label}](<{trusted_url}>)" if trusted_url else label)
     return ", ".join(rendered_sources) or "none"
+
+
+def render_source_links(paper_aliases: list[tuple[str, str]]) -> str:
+    """Links built from trusted identifiers only (shared with the comparison notes of part 8)."""
+    return _render_source_links(paper_aliases)

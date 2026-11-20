@@ -87,3 +87,16 @@ def compute_reading_priority_score(applied_ratings: dict[str, int]) -> int:
     numerator = 100 * sum(RUBRIC_DIMENSION_BY_NAME[name].weight * rating for name, rating in applied_ratings.items())
     denominator = MAXIMUM_RATING * sum(RUBRIC_DIMENSION_BY_NAME[name].weight for name in applied_ratings)
     return (2 * numerator + denominator) // (2 * denominator)
+
+
+LEGACY_RELEVANCE_SCALE = "rating_0_to_4"  # the provisional step-1 reviewer stored one 0-4 relevance rating
+
+
+def question_fit_from_stored_assessment(score_scale: str, topic_score: float,
+                                        assessment_record: dict[str, Any]) -> int:
+    """The applied question_fit rating (0-4) of a saved topic assessment. A legacy 0-4 relevance rating counts as
+    question fit. Used to decide which reviews address a question (comparison anchors, references, comparisons)."""
+    if score_scale == LEGACY_RELEVANCE_SCALE:
+        return int(topic_score)
+    applied_ratings = assessment_record.get("scoring", {}).get("applied_ratings", {})
+    return int(applied_ratings.get(QUESTION_FIT.dimension_name, 0))

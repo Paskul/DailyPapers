@@ -90,6 +90,9 @@ DEFAULT_ROLE_LIMITS: dict[str, RoleLimits] = {
     "section_reader": RoleLimits(max_output_tokens=16384, timeout_seconds=1800),  # one bounded reading section
     "reviewer": RoleLimits(max_output_tokens=16384, timeout_seconds=1800),  # the evidence-backed review
     "topic_assessor": RoleLimits(max_output_tokens=12288, timeout_seconds=1200),  # rubric ratings per topic
+    # Plan part 8 roles, also at the server's default reasoning (the same choice as the reading roles).
+    "research": RoleLimits(max_output_tokens=8192, timeout_seconds=1200),  # chooses references and gap searches
+    "comparison": RoleLimits(max_output_tokens=12288, timeout_seconds=1200),  # compares two saved reviews
 }
 # Room the reading roles need besides the passages themselves: system prompt, orientation (title + abstract), JSON
 # keys. Used by the load-time check that a reading section fits the context budget.
@@ -209,6 +212,40 @@ class ScreeningSettings:
 
 
 @dataclass(frozen=True)
+class ReferenceSettings:
+    """Following important references of completed reviews (plan part 8). Starting values; measure in part 10.
+
+    After a review, `collect` fetches the paper's outgoing OpenAlex references (and confirms identifiers found in its
+    own bibliography with a provider record). The research role then picks up to `references_per_paper` of them that
+    the paper's method, theorem, data, or baseline depends on; each pick becomes a class-3 reading. Owner decisions
+    (2026-11-20): reference readings have their own daily limit on top of screening's 30; they wait for the next
+    `collect` to fetch their full text; only reviews that address part of some topic's question are followed.
+    """
+
+    follow_references: bool = True
+    max_citation_hops: int = 2  # a reference of a reference is hop 2; references of hop-2 papers are not followed
+    references_per_paper: int = 3  # readings the research role may choose per parent paper (at most 3)
+    daily_reference_readings: int = 20  # newly admitted reference readings per UTC day, on top of screening's limit
+    minimum_parent_question_fit: int = 2  # follow a review's references only if it rated question_fit >= this
+    reference_fetches_per_run: int = 10  # reviewed papers whose references one `collect` run fetches
+    max_references_fetched_per_paper: int = 200  # OpenAlex ids looked up per paper (100 per request)
+    bibliography_lookups_per_paper: int = 10  # identifiers from the paper's own bibliography confirmed per paper
+    candidates_offered_per_selection: int = 30  # cited works shown to the research role, best screening score first
+    reference_reading_hold_minutes: int = 360  # a chosen reference waits this long for `collect` to fetch its text
+    research_branches_per_day: int = 3  # gap searches (unused approved query + year window) per UTC day
+    branches_offered_per_selection: int = 12  # unused branches shown to the research role
+
+
+@dataclass(frozen=True)
+class ComparisonSettings:
+    """Comparisons of two completed reviews that address the same question (plan part 8)."""
+
+    daily_comparison_jobs: int = 5  # new comparison jobs per UTC day
+    minimum_shared_evidence_dimensions: int = 1  # of assumptions / guarantees / evaluation setting
+    sweep_reviews_completed_within_days: int = 14  # `collect` retries queueing for recent reviews the cap held back
+
+
+@dataclass(frozen=True)
 class ExtractorSettings:
     """The PDF/XML text extractor runs in rootless Podman: no network, read-only root, one read-only input."""
 
@@ -303,6 +340,8 @@ class AppConfig:
     extractor: ExtractorSettings
     access: AccessSettings
     topics: tuple[TopicDefinition, ...]
+    references: ReferenceSettings = ReferenceSettings()
+    comparisons: ComparisonSettings = ComparisonSettings()
 
     # ---- Derived paths --------------------------------------------------------------------------------------------
     @property
@@ -346,6 +385,10 @@ class AppConfig:
         return self.output_dir / "papers"
 
     @property
+    def comparison_notes_dir(self) -> Path:
+        return self.output_dir / "comparisons"
+
+    @property
     def daily_reports_dir(self) -> Path:
         return self.output_dir / "daily"
 
@@ -371,7 +414,7 @@ def load_app_config(home_dir: Path) -> AppConfig:
     raw_topics = _read_toml_file(home_dir / TOPICS_FILE_NAME)
 
     known_sections = {"paths", "model", "roles", "worker", "report", "schedule", "collector", "collection",
-                      "screening", "reading", "extractor", "access"}
+                      "screening", "reading", "extractor", "access", "references", "comparisons"}
     unknown_sections = set(raw_config) - known_sections
     if unknown_sections:
         raise ConfigurationError(f"unknown section(s) {sorted(unknown_sections)} in {CONFIG_FILE_NAME}")
@@ -391,6 +434,8 @@ def load_app_config(home_dir: Path) -> AppConfig:
         extractor=_build_settings_section(ExtractorSettings, raw_config.get("extractor", {}), "extractor"),
         access=_build_settings_section(AccessSettings, raw_config.get("access", {}), "access"),
         topics=_build_topics(raw_topics),
+        references=_build_settings_section(ReferenceSettings, raw_config.get("references", {}), "references"),
+        comparisons=_build_settings_section(ComparisonSettings, raw_config.get("comparisons", {}), "comparisons"),
     )
     _validate_cross_field_rules(app_config)
     return app_config
@@ -557,6 +602,7 @@ def _validate_cross_field_rules(app_config: AppConfig) -> None:
     _validate_collection_settings(app_config.collection)
     _validate_screening_settings(app_config.screening)
     _validate_reading_settings(app_config)
+    _validate_reference_and_comparison_settings(app_config)
     worker_settings = app_config.worker
     if worker_settings.max_attempts_per_job <= 0:
         raise ConfigurationError("worker.max_attempts_per_job must be positive")
@@ -633,6 +679,28 @@ def _validate_reading_settings(app_config: AppConfig) -> None:
                 f"{app_config.model.required_context_tokens}",
                 operator_hint="lower reading.section_max_characters or the role's max_output_tokens, or raise "
                               "model.required_context_tokens if the server's per-slot context allows it")
+
+
+MAXIMUM_REFERENCES_PER_PAPER = 3  # plan part 8: "choose up to three"; the research role's schema allows no more
+MAXIMUM_REFERENCES_PER_LOOKUP_REQUEST = 100  # OpenAlex: up to 100 ids in one filter, 100 results per page
+
+
+def _validate_reference_and_comparison_settings(app_config: AppConfig) -> None:
+    for section_name, settings in (("references", app_config.references), ("comparisons", app_config.comparisons)):
+        for setting_name, setting_value in dataclasses.asdict(settings).items():
+            if isinstance(setting_value, int) and not isinstance(setting_value, bool) and setting_value < 0:
+                raise ConfigurationError(f"{section_name}.{setting_name} must not be negative")
+    reference_settings = app_config.references
+    if not 1 <= reference_settings.references_per_paper <= MAXIMUM_REFERENCES_PER_PAPER:
+        raise ConfigurationError(f"references.references_per_paper must lie between 1 and "
+                                 f"{MAXIMUM_REFERENCES_PER_PAPER}")
+    if not 0 <= reference_settings.minimum_parent_question_fit <= 4:
+        raise ConfigurationError("references.minimum_parent_question_fit is a rubric rating between 0 and 4")
+    if reference_settings.candidates_offered_per_selection == 0:
+        raise ConfigurationError("references.candidates_offered_per_selection must be positive")
+    if app_config.comparisons.minimum_shared_evidence_dimensions > 3:
+        raise ConfigurationError("comparisons.minimum_shared_evidence_dimensions counts assumptions, guarantees and "
+                                 "evaluation setting, so it cannot exceed 3")
 
 
 def _validate_extractor_settings(extractor_settings: ExtractorSettings) -> None:

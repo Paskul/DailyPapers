@@ -38,6 +38,16 @@ max_output_tokens = 12288
 timeout_seconds = 1200
 reasoning_effort = "server-default"
 
+[roles.research]                          # picks the references worth reading, and a gap search (plan part 8)
+max_output_tokens = 8192
+timeout_seconds = 1200
+reasoning_effort = "server-default"
+
+[roles.comparison]                        # compares two saved reviews on the same question (plan part 8)
+max_output_tokens = 12288
+timeout_seconds = 1200
+reasoning_effort = "server-default"
+
 [worker]
 max_attempts_per_job = 3      # paper-specific failures only; outages never consume attempts
 retry_delay_seconds = 600     # multiplied by the attempt number
@@ -118,6 +128,32 @@ passage_min_characters = 200     # shorter paragraphs are merged with the next o
 closest_seeds_per_topic = 3      # seed papers from your library attached to each topic's assessment
 comparison_reviews_per_topic = 3 # earlier reviews on the same question attached as comparison anchors
 anchor_abstract_characters = 800
+
+# Following important references of completed reviews (plan part 8). After a review that addresses part of some
+# topic's question, `collect` fetches the paper's OpenAlex reference list (and confirms identifiers found in its own
+# bibliography with a provider record). The research role picks up to `references_per_paper` cited works that the
+# paper's method, theorem, data, or baseline depends on; each becomes a class-3 reading that waits for the next
+# `collect` to fetch its full text. It may also pick one unused approved search (query + year window) to fill a gap.
+[references]
+follow_references = true
+max_citation_hops = 2                 # references of references, no further
+references_per_paper = 3              # at most 3
+daily_reference_readings = 20         # per UTC day, on top of screening.daily_promotion_limit
+minimum_parent_question_fit = 2       # follow a review only if it rated question_fit >= 2 for some topic
+reference_fetches_per_run = 10        # reviewed papers whose references one collect run fetches
+max_references_fetched_per_paper = 200
+bibliography_lookups_per_paper = 10   # bibliography DOIs / arXiv ids confirmed with a provider record, per paper
+candidates_offered_per_selection = 30
+reference_reading_hold_minutes = 360  # a chosen reference waits up to this long for its full text
+research_branches_per_day = 3         # gap searches the research role may request per UTC day
+branches_offered_per_selection = 12
+
+# Comparisons of two completed reviews on the same question (plan part 8): queued when both rate question_fit >= 2
+# for a topic and share comparable assumptions, guarantees, or evaluation settings; the closest neighbour first.
+[comparisons]
+daily_comparison_jobs = 5
+minimum_shared_evidence_dimensions = 1   # of assumptions / guarantees / evaluation setting
+sweep_reviews_completed_within_days = 14 # collect queues comparisons the daily cap held back for these reviews
 
 # PDF/XML text extraction runs in rootless Podman with no network, a read-only root, and one read-only input.
 [extractor]

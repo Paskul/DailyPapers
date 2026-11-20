@@ -101,6 +101,15 @@ max_response_bytes = 2_000_000
 max_decompressed_bytes = 10_000_000
 total_timeout_seconds = 60.0
 
+[providers.openalex.operations.get_works]       # metadata of up to 100 KNOWN works by OpenAlex id (plan part 8)
+host = "api.openalex.org"                         # the works a reviewed paper cites; every id is re-checked at
+path_pattern = '/works'                           # dispatch against a stored citation edge
+query_parameters = ["filter", "per-page", "select"]
+content_types = ["application/json"]
+max_response_bytes = 10_000_000
+max_decompressed_bytes = 50_000_000
+total_timeout_seconds = 90.0
+
 [providers.openalex.operations.get_text]
 host = "content.openalex.org"
 path_pattern = '/works/W[0-9]+\.pdf'

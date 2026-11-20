@@ -15,7 +15,9 @@ no longer jumps ahead of older work.
 
 A paper that qualifies for several classes is assigned to the highest applicable one (lowest number):
 paperwatch.jobs.upgrade_queued_job_dispatch_order_if_higher moves a queued job up, never down.
-The builders for classes 3 and 4 exist now so the ordering is defined in one place; part 8 queues those jobs.
+Part 8 queues class 3 and 4 work: a research-role selection over a reviewed paper's references (class 3, ahead of
+the reference readings it may create, because it is one short call that decides them), the chosen reference
+readings (class 3), and comparisons of two reviews (class 4).
 """
 
 from __future__ import annotations
@@ -100,6 +102,18 @@ def dispatch_order_for_important_reference(importance_to_parent_argument: float,
     return JobDispatchOrder(JobPriorityClass.IMPORTANT_REFERENCE,
                             within_class_order_primary=importance_to_parent_argument,
                             within_class_order_secondary=topic_score)
+
+
+# The research role's selection is ordered before every reference reading of class 3: importance ratings run 1-4.
+REFERENCE_SELECTION_ORDER_ABOVE_ALL_IMPORTANCE_RATINGS = 5.0
+
+
+def dispatch_order_for_reference_selection(parent_topic_score: float) -> JobDispatchOrder:
+    """Part 8: the research role chooses which references of a completed review to read. Parents with a higher
+    reading priority (0-1) are decided first."""
+    return JobDispatchOrder(JobPriorityClass.IMPORTANT_REFERENCE,
+                            within_class_order_primary=REFERENCE_SELECTION_ORDER_ABOVE_ALL_IMPORTANCE_RATINGS,
+                            within_class_order_secondary=parent_topic_score)
 
 
 def dispatch_order_for_comparison(shared_evidence_dimension_count: int) -> JobDispatchOrder:

@@ -39,6 +39,7 @@ class PageIngestionResult:
     skipped_malformed_records: int = 0
     skipped_over_admission_limit: int = 0
     queued_paper_ids: list[str] = field(default_factory=list)
+    catalogued_paper_ids: list[str] = field(default_factory=list)  # every paper a stored record landed on, in order
 
     @property
     def was_stopped_by_admission_limit(self) -> bool:
@@ -50,6 +51,7 @@ class PageIngestionResult:
                              "withdrawals_reported", "skipped_malformed_records", "skipped_over_admission_limit"):
             setattr(self, counter_name, getattr(self, counter_name) + getattr(other, counter_name))
         self.queued_paper_ids += other.queued_paper_ids
+        self.catalogued_paper_ids += other.catalogued_paper_ids
 
     def describe(self, source_label: str) -> str:
         description = (f"{source_label}: {self.records_received} record(s), {self.new_papers_admitted} new, "
@@ -91,6 +93,7 @@ def ingest_records_with_checkpoints(connection: sqlite3.Connection, collected_re
                 result.skipped_over_admission_limit += 1
                 continue
             catalog_outcome = record_prepared_paper_in_transaction(connection, prepared_record)
+            result.catalogued_paper_ids.append(catalog_outcome.paper_id)
             if catalog_outcome.was_newly_created:
                 result.new_papers_admitted += 1
             else:

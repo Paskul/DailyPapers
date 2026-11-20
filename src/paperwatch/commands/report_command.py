@@ -26,6 +26,7 @@ from paperwatch.errors import ConfigurationError
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, read_service_health_state
 from paperwatch.rendering.file_output import write_bytes_atomically
 from paperwatch.rendering.notes import ReportCorrection, SelectedReview, render_daily_report
+from paperwatch.rendering.comparison_notes import restore_missing_comparison_notes
 from paperwatch.rendering.review_notes import load_selected_review, write_paper_note_if_missing
 
 
@@ -59,6 +60,7 @@ def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
 
     for selected_review in selected_reviews:  # restore any missing note from its saved review first
         write_paper_note_if_missing(app.config.paper_notes_dir, selected_review)
+    restore_missing_comparison_notes(app.connection, app.config.comparison_notes_dir)  # plan part 8 notes
     write_bytes_atomically(report_output_path, report_bytes)
     app.connection.execute("UPDATE reports SET status = 'published', published_at = ? WHERE report_date = ?",
                            (utc_now_timestamp(), report_date))

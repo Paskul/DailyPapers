@@ -552,6 +552,123 @@ def _backfill_full_text_reading_identity(connection: sqlite3.Connection) -> None
              text_row["edition_id"]))
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# Migration 8 (plan part 8): important references and comparisons.
+#   paper_promotions          rebuilt so promotion_reason may be 'reference' (a cited work the research role chose;
+#                             it does not count against screening's daily limit; SQLite cannot alter a CHECK)
+#   reference_fetches         the collector fetched one reviewed paper's outgoing references (once per paper)
+#   bibliography_identifiers  DOIs / arXiv ids found in a paper's own bibliography; accepted as a citation edge only
+#                             after a provider record confirms the match, otherwise kept here as unresolved
+#   reference_selection_runs  one research-role decision per parent review, with its validated output
+#   reference_selections      each cited work it chose: hop depth, role in the parent's argument, importance, and
+#                             whether the daily limit admitted it
+#   research_branches         an unused approved search (query + year window) the research role chose to fill a gap:
+#                             the gap, the branch, the parent review, and the candidates it returned
+# Citation edges and comparisons already have their tables (migration 2).
+# --------------------------------------------------------------------------------------------------------------------
+MIGRATION_0008_REFERENCES_AND_COMPARISONS = """
+CREATE TABLE paper_promotions_with_reference_reason (
+    paper_id          TEXT PRIMARY KEY REFERENCES papers(paper_id),
+    promotion_reason  TEXT NOT NULL
+        CHECK (promotion_reason IN ('topic_share', 'spare_slot', 'near_cutoff', 'direct', 'reference')),
+    topic_id          TEXT,
+    best_topic_id     TEXT,
+    screening_score   REAL,
+    unnormalized_score       REAL,
+    normalization_pool_size  INTEGER,
+    priority_class    INTEGER NOT NULL,
+    promoted_at       TEXT NOT NULL
+);
+INSERT INTO paper_promotions_with_reference_reason (paper_id, promotion_reason, topic_id, best_topic_id,
+        screening_score, unnormalized_score, normalization_pool_size, priority_class, promoted_at)
+    SELECT paper_id, promotion_reason, topic_id, best_topic_id, screening_score, unnormalized_score,
+           normalization_pool_size, priority_class, promoted_at FROM paper_promotions;
+DROP TABLE paper_promotions;
+ALTER TABLE paper_promotions_with_reference_reason RENAME TO paper_promotions;
+CREATE INDEX paper_promotions_by_time ON paper_promotions(promoted_at);
+
+CREATE TABLE reference_fetches (                               -- outgoing references of one reviewed paper
+    citing_paper_id               TEXT PRIMARY KEY REFERENCES papers(paper_id),
+    parent_review_id              TEXT NOT NULL REFERENCES reviews(review_id),
+    citation_hop_depth            INTEGER NOT NULL,            -- 0: the paper itself was not reached as a reference
+    fetch_status                  TEXT NOT NULL CHECK (fetch_status IN ('fetched', 'no_provider_record', 'blocked')),
+    openalex_work_id              TEXT,
+    referenced_work_count         INTEGER NOT NULL DEFAULT 0,  -- ids OpenAlex lists for the paper
+    catalogued_reference_count    INTEGER NOT NULL DEFAULT 0,  -- cited works now in the catalog
+    bibliography_identifier_count INTEGER NOT NULL DEFAULT 0,
+    attempts                      INTEGER NOT NULL DEFAULT 0,
+    last_error                    TEXT,
+    fetched_at                    TEXT,
+    updated_at                    TEXT NOT NULL
+);
+
+CREATE TABLE bibliography_identifiers (                        -- identifiers in a paper's own bibliography text
+    citing_paper_id     TEXT NOT NULL REFERENCES papers(paper_id),
+    identifier_scheme   TEXT NOT NULL,                         -- doi | arxiv (normalized, version-free)
+    identifier_value    TEXT NOT NULL,
+    passage_id          TEXT NOT NULL,                         -- the bibliography passage it was found in
+    entry_excerpt       TEXT NOT NULL,                         -- untrusted, bounded
+    confirmation_status TEXT NOT NULL
+        CHECK (confirmation_status IN ('pending', 'confirmed', 'mismatch', 'not_found', 'refused')),
+    confirmed_paper_id  TEXT REFERENCES papers(paper_id),
+    checked_at          TEXT,
+    recorded_at         TEXT NOT NULL,
+    PRIMARY KEY (citing_paper_id, identifier_scheme, identifier_value)
+);
+CREATE INDEX bibliography_identifiers_by_identifier ON bibliography_identifiers(identifier_scheme, identifier_value);
+
+CREATE TABLE reference_selection_runs (                        -- one research-role decision per parent review
+    parent_review_id         TEXT PRIMARY KEY REFERENCES reviews(review_id),
+    parent_paper_id          TEXT NOT NULL REFERENCES papers(paper_id),
+    job_id                   TEXT,
+    offered_candidate_count  INTEGER NOT NULL,
+    offered_branch_count     INTEGER NOT NULL,
+    research_output_json     TEXT NOT NULL,                    -- validated role output ('{}' when no call was needed)
+    role_name                TEXT,
+    prompt_version           TEXT,
+    model_identity           TEXT,
+    server_build             TEXT,
+    completed_at             TEXT NOT NULL
+);
+
+CREATE TABLE reference_selections (                            -- a cited work the research role chose to read
+    parent_review_id   TEXT NOT NULL REFERENCES reviews(review_id),
+    cited_paper_id     TEXT NOT NULL REFERENCES papers(paper_id),
+    parent_paper_id    TEXT NOT NULL REFERENCES papers(paper_id),
+    citation_hop_depth INTEGER NOT NULL,                       -- the parent's depth + 1
+    role_in_parent     TEXT NOT NULL,                          -- method | theorem | data | baseline
+    importance         INTEGER NOT NULL,                       -- 1-4: how much the parent's argument depends on it
+    explanation        TEXT NOT NULL,
+    admission_status   TEXT NOT NULL CHECK (admission_status IN ('admitted', 'waiting_daily_cap', 'skipped')),
+    skip_reason        TEXT,
+    selected_at        TEXT NOT NULL,
+    admitted_at        TEXT,
+    PRIMARY KEY (parent_review_id, cited_paper_id)
+);
+CREATE INDEX reference_selections_by_admission ON reference_selections(admission_status, admitted_at);
+CREATE INDEX reference_selections_by_cited_paper ON reference_selections(cited_paper_id);
+
+CREATE TABLE research_branches (                               -- a gap search chosen by the research role
+    branch_key              TEXT PRIMARY KEY,                  -- '<query id>@<first day>..<last day>'
+    topic_id                TEXT NOT NULL,
+    query_id                TEXT NOT NULL,                     -- an approved catalog id, never model text
+    window_first_date       TEXT NOT NULL,
+    window_last_date        TEXT NOT NULL,
+    result_order            TEXT NOT NULL,                     -- as the historical search orders this window
+    parent_review_id        TEXT NOT NULL REFERENCES reviews(review_id),
+    gap_statement           TEXT NOT NULL,                     -- the model's description of the gap (untrusted)
+    branch_status           TEXT NOT NULL CHECK (branch_status IN ('requested', 'done', 'blocked')),
+    returned_record_count   INTEGER NOT NULL DEFAULT 0,
+    new_paper_count         INTEGER NOT NULL DEFAULT 0,
+    returned_paper_ids_json TEXT NOT NULL DEFAULT '[]',
+    stop_reason             TEXT,
+    requested_at            TEXT NOT NULL,
+    completed_at            TEXT
+);
+CREATE INDEX research_branches_by_request_time ON research_branches(requested_at);
+"""
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("initial schema (plan part 1)", MIGRATION_0001_INITIAL_SCHEMA),
     SchemaMigration("paper identity, editions, reading identity and part-2 records",
@@ -566,4 +683,6 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
                     MIGRATION_0006_SCREENING_AND_DISPATCH_ORDER),
     SchemaMigration("evidence-backed reading: stage results, cited passages, reading records (plan part 7)",
                     MIGRATION_0007_EVIDENCE_BACKED_READING, _backfill_full_text_reading_identity),
+    SchemaMigration("important references, research branches, and comparisons (plan part 8)",
+                    MIGRATION_0008_REFERENCES_AND_COMPARISONS),
 )

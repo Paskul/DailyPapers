@@ -4,11 +4,12 @@ A local reading service that answers **"Which papers are worth my time today, an
 It collects papers, has the local llama.cpp model (Qwen, `qwen-local` at `http://127.0.0.1:8080/v1`) review them,
 and publishes one Markdown report per day. The full design is in [`Local_Paper_Monitor_Plan.md`](Local_Paper_Monitor_Plan.md).
 
-**Status:** parts 1-7 of 10 are implemented: the application skeleton and contracts; paper identity, editions,
+**Status:** parts 1-8 of 10 are implemented: the application skeleton and contracts; paper identity, editions,
 reading identity, and crash-safe jobs; the access limits on what can reach the internet; the research profile
 built from topics, Zotero, and CSL JSON seeds; collection of current papers plus a finite historical search; cheap
 CPU screening of every candidate with ordered dispatch of the readings; and evidence-backed reading with
-passage-level citations, a 0-100 reading-priority rubric per topic, and a permanent note per review.
+passage-level citations, a 0-100 reading-priority rubric per topic, and a permanent note per review; and following
+the important references of reviewed papers plus comparisons of reviews that address the same question.
 
 ## Project decisions (confirmed by the owner)
 
@@ -31,6 +32,10 @@ These answer open questions from the plan. Later build steps must follow them.
 | **Every topic is assessed** | Each completed reading is rated against every topic that has a question, terms, or seeds (topics with no input are skipped), in one topic-assessment call. Owner decision, 2026-11-19. | Parts 7, 9 |
 | **Seeds and earlier reviews are comparison papers** | The rubric's "value relative to nearby saved papers" uses the topic's closest seeds from your library AND earlier reviews on the same question. It is omitted ("comparison unavailable") only when a topic has neither. Owner decision, 2026-11-19. | Parts 7, 9 |
 | **Deep reading at the server's default reasoning** | Up to 10 reading sections per paper; every reading call (section reader, reviewer, topic assessor) uses the server's default reasoning effort (xhigh). Owner decision, 2026-11-19; measure in part 10. | Parts 7, 10 |
+| **Reference readings have their own daily limit** | Up to 20 reference readings per UTC day (`references.daily_reference_readings`), on top of screening's 30. They sit in priority class 3, so they run only when no new release or older paper is waiting. Owner decision, 2026-11-20. | Parts 8, 10 |
+| **Reference readings wait for their full text** | A chosen reference is held up to 6 h (`references.reference_reading_hold_minutes`) so the next `collect` can fetch its PDF from the same 30/day download budget; it is read from the abstract only when no full text exists. Owner decision, 2026-11-20. | Parts 5, 8 |
+| **Comparisons get their own note** | Each comparison is written once to `output/comparisons/<comparison id>.md`, linking both reading notes relatively; `report` restores a missing one. Part 9 links to it. Owner decision, 2026-11-20. | Parts 8, 9 |
+| **References are followed for relevant reviews only** | A reviewed paper's references are fetched only if its review rated question_fit >= 2 ("addresses part of the question") for some topic, the same bar as comparison anchors. Owner decision, 2026-11-20. | Part 8 |
 | **Extractor = poppler `pdftotext`** | PDF text comes from `pdftotext` (reading order, form feeds between pages) in a Debian-slim image pinned by image id. XML (JATS/TEI) comes from a small stdlib dumper in the same image. | Parts 3, 5, 7 |
 
 ## Setup
@@ -56,8 +61,8 @@ to validate them and install them into the deployed home (`/srv/paperwatch`) wit
 | --- | --- |
 | `init` | Create the home layout and database; never overwrites existing config files. Safe to rerun (migrates the DB). |
 | `doctor` | PASS/WARN/FAIL per component: config, paths, database, the screening model (pinned hashes, loads, ranks a probe sensibly), model health, alias, context budget, reasoning levels, a schema-constrained request with reasoning. |
-| `collect [--fixture FILE] [--skip-searches]` | Sync seed papers, then collect current releases (arXiv feeds, missed-release recovery, recent OpenAlex windows) and each topic's finite historical search, screen every candidate and promote today's papers to review jobs, acquire their full text, and print each topic's input mode. `--fixture` replays recorded records instead of the live searches; `--skip-searches` runs no arXiv/OpenAlex requests. |
-| `work --once` / `work` | Run one job / loop until SIGTERM. A review job reads the paper in bounded sections, validates every citation, scores it per topic, commits, then writes its note. Idle = zero inference calls. Several workers may run at once. |
+| `collect [--fixture FILE] [--skip-searches]` | Sync seed papers, then collect current releases (arXiv feeds, missed-release recovery, recent OpenAlex windows) and each topic's finite historical search, run requested gap searches, fetch the references of relevant reviewed papers, screen every candidate and promote today's papers to review jobs, acquire their full text, and print each topic's input mode. `--fixture` replays recorded records instead of the live searches; `--skip-searches` runs no arXiv/OpenAlex requests. |
+| `work --once` / `work` | Run one job / loop until SIGTERM. A review job reads the paper in bounded sections, validates every citation, scores it per topic, commits, then writes its note (and queues its comparison). A `select_references` job lets the research role choose which cited works to read; a `compare_reviews` job compares two saved reviews and writes `output/comparisons/<id>.md`. Idle = zero inference calls. Several workers may run at once. |
 | `reread PAPER_ID [--reason TEXT]` | Operator request for a fresh reading; gets its own generation id and a separate review. |
 | `report [--date YYYY-MM-DD]` | Publish `output/daily/<date>.md` plus per-paper notes. One report per date; reruns produce identical bytes. |
 | `status` | Topics with their input mode (keywords / seeds / both) and what is missing, seed sources and their last sync, papers by status, editions/aliases, unresolved possible duplicates, jobs by kind/status (incl. expired leases), queued jobs per priority class with the oldest one's age, the screening model and today's promotions by reason and topic, reviews by coverage, model pause state, last model call, new candidates today, each feed / recent window / historical search with its coverage and stopping reason, open coverage gaps, source text, withdrawals, outbound requests today and paused providers, last report. |
@@ -263,6 +268,58 @@ The worker reads each queued paper from text the collector already saved; it nev
   evidence pointers (`P12` (p. 4, 3 Results)) and quotes, the scoring table per topic, matched seeds, the coverage,
   and the cited passages. `report` restores a missing note from the saved review.
 
+## References and comparisons (plan part 8)
+
+The model never composes a request: it names ids from the list it was given, and host code checks every id, the hop
+limit, the daily limits, and cycles before anything is queued or searched (`references/`, `comparisons/`).
+
+- **Fetching references** (`collect`, `references/reference_fetch.py`): for each reviewed paper that addresses some
+  topic's question and is less than `max_citation_hops` (2) from a screened paper, at most `reference_fetches_per_run`
+  (10) per run:
+  1. Its OpenAlex work is found by its OpenAlex id, its DOI, or arXiv's DataCite DOI of its arXiv id. The record must
+     link back through an identifier the paper already has; then only the OpenAlex alias is added (never a new
+     edition, which could change which abstract is read).
+  2. Each id in its `referenced_works` becomes a citation edge (`openalex:referenced_works`). The cited works are
+     looked up 100 at a time (`filter=openalex:W1|W2|...`, the new fixed `get_works` operation, which refuses any id
+     that is not a stored edge) and catalogued under the route `reference:<citing paper>`. They are then screened
+     like every other candidate.
+  3. When the graph is incomplete: DOIs and arXiv ids in the paper's own bibliography that no edge covers are looked up
+     (at most `bibliography_lookups_per_paper`). One becomes an edge (`bibliography:confirmed_by_provider`) only if
+     the provider record's title matches the bibliography entry; otherwise it stays in `bibliography_identifiers` as
+     an unresolved reference (`mismatch`, `not_found`).
+  OpenAlex documents no filter for "the works W cites" (checked 2026-11-20: `cites:` is the other direction), so the
+  list comes from the work's own `referenced_works`.
+- **Choosing references** (worker, `research` role, class 3 ahead of reference readings): one call per parent
+  review. The role sees the parent's validated review, the questions it addresses, up to 30 candidates (cited works
+  not yet reviewed, queued, or promoted, not seeds or withdrawn; best screening score first), each with its citation
+  contexts: the sentences of the parent that cite it (`references/citation_contexts.py`: numeric labels like
+  "[3, 12]" or "[10-14]", or author-year). It picks at most 3, each with its role in the parent's argument (method,
+  theorem, data, baseline), an importance 1-4, an explanation, and the context passages it relied on.
+- **Admitting choices** (`references/reference_selection.py`): hop depth = parent's + 1; a choice that is already
+  reviewed, queued, promoted, a seed, or withdrawn is skipped (this ends cycles: a paper's ancestors are reviewed).
+  At most `daily_reference_readings` (20) are admitted per UTC day, counted from the table so the limit holds across
+  restarts; the rest wait (`waiting_daily_cap`) and are admitted on a later day, most important first. An admitted
+  choice records a `reference` promotion and queues a class-3 reading ordered by importance, then topic score,
+  held until the next `collect` has tried to fetch its PDF. A paper reached from two parents is read once.
+- **Gap searches** (`references/research_branches.py`): the research role may also pick one unused branch of an
+  approved historical search (one catalog query over one recency window that has admitted nothing yet) and state the
+  gap it fills. At most `research_branches_per_day` (3); a branch is never requested twice. `collect` runs one page
+  of it through that window's own checkpoint under the route `research-branch:<query id>` (historical allowance) and
+  records the gap, branch, parent review, and returned candidates.
+- **Comparisons** (`comparisons/`, `comparison` role, class 4): when a review commits, its closest neighbour (by cached
+  screening embeddings) among the newest reviews of other papers that also rated question_fit >= 2 for the same
+  topic is chosen if the two share at least one evidence dimension (assumptions, guarantees, evaluation setting, by
+  word overlap of supported statements). One comparison is started per review, at most `daily_comparison_jobs` (5)
+  per UTC day; `collect` queues the ones the limit held back for reviews of the last 14 days. The key is the question
+  plus the sorted pair of review ids, so a pair is compared once. The role reads the two saved reviews and the
+  passages they cite (no rereading) and states the condition differences, agreements, differences, an optional
+  ranking, and what the evidence permits the reader to conclude. Every evidence item `{review_id, passage_id,
+  excerpt}` is checked against that review's saved passages, agreements and the conclusion must cite both reviews,
+  and numbers must occur in the cited passages. A ranking under conditions that are not comparable is rejected
+  unless the condition differences are listed and a caveat explains them.
+- `status` shows fetched references, citation edges, unresolved bibliography identifiers, choices admitted / waiting /
+  skipped against today's limit, gap searches, and comparisons against today's limit.
+
 ## Research profile (plan part 4)
 
 The question is the unit of relevance, and every topic is defined by keywords, seeds, or both:
@@ -394,7 +451,10 @@ src/paperwatch/
   screening/                    # part 6: pinned embedding model + ONNX embedder, embedding cache, phrase signal,
                                 #   scoring formula, per-topic profiles, candidate scoring, slot selection, promotion
   dispatch_order.py             # worker priority classes and the order within each class
-  research_graph.py             # citation edges and comparison keys (used from part 8)
+  research_graph.py             # citation edges and comparison keys
+  references/                   # part 8: reference fetch, bibliography identifiers, citation contexts, hop depth,
+                                #   candidates, research-role selection and admission, gap-search branches
+  comparisons/                  # part 8: shared evidence dimensions, comparison queueing, comparison jobs
   source_checkpoints.py         # per-search cursor, budget, coverage, stop reason, last completed interval
   public_query_catalog.py       # approved public queries with stable ids: the only searchable terms
   source_cache.py               # downloaded source bytes, named by internal ids and hashes only
@@ -404,11 +464,12 @@ src/paperwatch/
   llm/                          # model client contract, llama.cpp client, fake client, lock, outage guard
   reading/                      # part 7: passages, reading plan, parser recovery, review packet, evidence checks,
                                 #   saved stage results, comparison anchors, rubric, the reading pipeline
-  roles/                        # healthcheck, section_reader, reviewer, topic_assessor; shared evidence fields;
+  roles/                        # healthcheck, section_reader, reviewer, topic_assessor, research, comparison;
+                                #   shared evidence fields;
                                 #   output guards
   sources/                      # record types, discovery route names, parsers: arXiv Atom (feed + API), OpenAlex
                                 #   works JSON, recorded fixtures
-  rendering/                    # Markdown escaping, evidence notes, daily report, note loading, atomic writes
+  rendering/                    # Markdown escaping, evidence notes, comparison notes, daily report, atomic writes
   commands/                     # one module per CLI command
 settings/                       # operator settings (gitignored) + committed *.example.toml; see settings/README.md
 deploy/                         # install, service accounts, nftables egress rules, extractor image, embedding model,
@@ -423,7 +484,10 @@ tests/                          # step 1 vertical slice; step 2 identity/reading
                                 #   four job types, zero inference while idle, rescoring, missing model;
                                 #   step 7 full / truncated / abstract-only through one schema, invented metric and
                                 #   unknown passage rejected, no second reading, resume after a timeout, rubric,
-                                #   anchors, held readings, switch to full text, fallback when the cache is gone
+                                #   anchors, held readings, switch to full text, fallback when the cache is gone;
+                                #   step 8 mutual citations with a shared reference (search ends, one review each,
+                                #   one comparison), hop limit, daily limit, bibliography confirmation, citation
+                                #   contexts, research-role id checks, gap search, incompatible-ranking rejection
 ```
 
 ## Tests

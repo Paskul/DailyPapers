@@ -18,7 +18,7 @@ from typing import Any
 from paperwatch.clock import utc_now_timestamp
 from paperwatch.identifiers import REVIEW_ID_PREFIX, new_internal_id
 from paperwatch.reading.reading_pipeline import CompletedReading
-from paperwatch.reading.reading_priority import SCORE_SCALE_PRIORITY_0_TO_100
+from paperwatch.reading.reading_priority import SCORE_SCALE_PRIORITY_0_TO_100, question_fit_from_stored_assessment
 from paperwatch.roles.reviewer import REVIEWER_ROLE_NAME
 from paperwatch.roles.topic_assessor import TOPIC_ASSESSOR_ROLE_NAME
 
@@ -38,6 +38,11 @@ class TopicAssessment:
     def priority_score_out_of_100(self) -> float:
         """Legacy 0-4 relevance and the 0-100 reading priority on one scale (for ordering only)."""
         return 25.0 * self.topic_score if self.score_scale == SCORE_SCALE_RATING_0_TO_4 else float(self.topic_score)
+
+    @property
+    def question_fit(self) -> int:
+        """The applied 0-4 question_fit rating (a legacy relevance rating counts as question fit)."""
+        return question_fit_from_stored_assessment(self.score_scale, self.topic_score, self.assessment_record)
 
 
 @dataclass(frozen=True)
@@ -129,3 +134,19 @@ def load_review_evidence_passages(connection: sqlite3.Connection, review_id: str
                                                row["passage_text"])
             for row in connection.execute(
                 "SELECT * FROM review_evidence_passages WHERE review_id = ? ORDER BY passage_id", (review_id,))}
+
+
+def load_latest_review_id_of_paper(connection: sqlite3.Connection, paper_id: str) -> str | None:
+    """The paper's newest completed review (the one later parts build on)."""
+    review_row = connection.execute(
+        """SELECT review_id FROM reviews WHERE paper_id = ? ORDER BY completed_at DESC, review_id DESC LIMIT 1""",
+        (paper_id,)).fetchone()
+    return review_row["review_id"] if review_row else None
+
+
+def best_question_fit_and_priority(topic_assessments: list[TopicAssessment]) -> tuple[int, float]:
+    """(highest question_fit over the topics, highest reading priority 0-100); (0, 0.0) without assessments."""
+    if not topic_assessments:
+        return 0, 0.0
+    return (max(assessment.question_fit for assessment in topic_assessments),
+            max(assessment.priority_score_out_of_100 for assessment in topic_assessments))

@@ -7,6 +7,7 @@ Identifier links: OpenAlex groups the versions of one work (preprint, journal ar
 as locations. The work's DOI and its arXiv location (an arxiv.org/abs/... landing page, or arXiv's DataCite DOI
 10.48550/arxiv.<id>) are clear identifier links stated by the provider, so the catalog may merge on them. Other
 locations' DOIs (e.g. another preprint server) are not used for merging.
+A single work (GET /works/<id>, plan part 8) also carries `referenced_works`: the OpenAlex ids of the works it cites.
 Dates: publication_date is a day; without it, publication_year is kept as a year. `is_retracted` is recorded as a
 retraction notice. Notices, errata, and similar non-papers are skipped.
 """
@@ -16,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from dataclasses import dataclass
 from typing import Any
 
 from paperwatch.errors import SourceResponseRejected
@@ -54,6 +56,34 @@ def parse_works_page(body_bytes: bytes, discovery_route: str) -> ParsedSearchPag
         next_cursor = None  # OpenAlex keeps returning a cursor on the last, empty page
     total_results = meta.get("count") if isinstance(meta.get("count"), int) else None
     return ParsedSearchPage(records, len(response_document["results"]), next_cursor, total_results, skipped_counts)
+
+
+MAXIMUM_REFERENCED_WORKS_READ = 2000
+
+
+@dataclass(frozen=True)
+class ParsedSingleWork:
+    """One work from GET /works/<id>: its catalog record (None if skipped) and the works it cites."""
+
+    record: CollectedPaperRecord | None
+    skip_reason: str
+    referenced_work_ids: tuple[str, ...]  # normalized OpenAlex ids, e.g. "W2741809807", in the provider's order
+
+
+def parse_single_work(body_bytes: bytes, discovery_route: str) -> ParsedSingleWork:
+    try:
+        raw_work = json.loads(body_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+        raise SourceResponseRejected(f"OpenAlex: response is not valid JSON ({decode_error})") from None
+    if not isinstance(raw_work, dict):
+        raise SourceResponseRejected("OpenAlex: a single work must be a JSON object")
+    record, skip_reason = convert_openalex_work(raw_work, discovery_route)
+    referenced_work_ids: list[str] = []
+    raw_references = raw_work.get("referenced_works")
+    for raw_reference in (raw_references if isinstance(raw_references, list) else [])[:MAXIMUM_REFERENCED_WORKS_READ]:
+        if isinstance(raw_reference, str) and OPENALEX_WORK_ID_PATTERN.match(raw_reference):
+            referenced_work_ids.append("W" + raw_reference.rsplit("/", 1)[-1][1:])
+    return ParsedSingleWork(record, skip_reason, tuple(dict.fromkeys(referenced_work_ids)))
 
 
 def convert_openalex_work(raw_work: Any, discovery_route: str) -> tuple[CollectedPaperRecord | None, str]:
