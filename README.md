@@ -1,4 +1,5 @@
 # DailyPapers (`paperwatch`)
+# This is a total WIP and completely vibe coded. This is traditionally for my own use. I do not take any responsibility for anything bad happening in a world where you use this.
 
 **A private, local research assistant that answers one question every morning: _which papers are worth my time
 today, and why?_**
