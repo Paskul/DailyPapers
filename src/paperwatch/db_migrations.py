@@ -382,6 +382,51 @@ CREATE INDEX paper_seed_memberships_by_collection
 """
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# Migration 5 (plan part 5): what each route reported, withdrawals and retractions, and acquired source text.
+# Search cursors, coverage, and gaps keep using source_checkpoints (migration 2): a missed-release recovery search is
+# its own checkpoint row, so an open gap is simply a recovery checkpoint that is not yet exhausted.
+# --------------------------------------------------------------------------------------------------------------------
+MIGRATION_0005_COLLECTION_ROUTES_WITHDRAWALS_AND_SOURCE_TEXT = """
+ALTER TABLE paper_discoveries ADD COLUMN announcement_kind TEXT;          -- arXiv: new | cross_list | revision
+ALTER TABLE paper_discoveries ADD COLUMN reported_publication_date TEXT;  -- as reported; its length = precision
+ALTER TABLE paper_editions ADD COLUMN announcement_kind TEXT;             -- how this edition was first announced
+CREATE INDEX papers_by_discovery_time ON papers(discovered_at);           -- daily budget of new metadata candidates
+
+CREATE TABLE paper_withdrawals (                               -- a provider reported the work withdrawn or retracted
+    paper_id                 TEXT PRIMARY KEY REFERENCES papers(paper_id),
+    notice_kind              TEXT NOT NULL CHECK (notice_kind IN ('withdrawn', 'retracted')),
+    reported_by_route        TEXT NOT NULL,
+    evidence                 TEXT,                             -- short provider text that carried the notice
+    detected_at              TEXT NOT NULL,
+    correction_report_date   TEXT                              -- report that announced the correction (part 9)
+);
+
+CREATE TABLE edition_source_texts (                            -- full text acquired for one edition (plan part 5)
+    edition_id               TEXT PRIMARY KEY REFERENCES paper_editions(edition_id),
+    paper_id                 TEXT NOT NULL REFERENCES papers(paper_id),
+    acquisition_status       TEXT NOT NULL CHECK (acquisition_status IN ('acquired', 'unavailable', 'failed')),
+    text_route               TEXT,                             -- local_file | arxiv_pdf | openalex_content
+    source_file_name         TEXT,                             -- inside state/cache/sources/<edition_id>/
+    source_sha256            TEXT,
+    content_type             TEXT,
+    source_bytes             INTEGER,
+    extraction_status        TEXT NOT NULL DEFAULT 'pending'
+        CHECK (extraction_status IN ('pending', 'extracted', 'failed', 'not_configured')),
+    extracted_text_file_name TEXT,                             -- inside the same cache directory
+    extracted_text_sha256    TEXT,
+    extractor_image          TEXT,
+    attempts                 INTEGER NOT NULL DEFAULT 0,
+    last_error               TEXT,
+    acquired_at              TEXT,                             -- set once, when the bytes were stored
+    downloaded_from_network  INTEGER NOT NULL DEFAULT 0,       -- 1 if it used the daily source-text budget
+    updated_at               TEXT NOT NULL
+);
+CREATE INDEX edition_source_texts_by_paper ON edition_source_texts(paper_id);
+CREATE INDEX edition_source_texts_by_acquisition ON edition_source_texts(acquired_at);
+"""
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("initial schema (plan part 1)", MIGRATION_0001_INITIAL_SCHEMA),
     SchemaMigration("paper identity, editions, reading identity and part-2 records",
@@ -390,4 +435,6 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("outbound request log and provider request budgets (plan part 3)",
                     MIGRATION_0003_OUTBOUND_REQUEST_LEDGER),
     SchemaMigration("seed cache for Zotero and CSL JSON seeds (plan part 4)", MIGRATION_0004_SEED_CACHE),
+    SchemaMigration("route reports, withdrawals, and acquired source text (plan part 5)",
+                    MIGRATION_0005_COLLECTION_ROUTES_WITHDRAWALS_AND_SOURCE_TEXT),
 )

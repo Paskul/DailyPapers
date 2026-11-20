@@ -15,7 +15,7 @@ import pytest
 
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import record_collected_paper
-from paperwatch.commands.collect_command import _queue_review_if_promoted
+from paperwatch.collection.review_promotion import queue_review_if_promoted
 from paperwatch.commands.init_command import run_init_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
 from paperwatch.db import apply_pending_migrations, connect_database
@@ -53,7 +53,7 @@ def load_test_app(home_dir: Path, model_client: FakeModelClient | None = None) -
 def collect(app: AppContext, collected_record: CollectedPaperRecord) -> tuple[str, bool]:
     """Catalog the record and queue a reading if needed, exactly like `paperwatch collect`."""
     paper_id = record_collected_paper(app.connection, collected_record).paper_id
-    return paper_id, _queue_review_if_promoted(app, paper_id)
+    return paper_id, queue_review_if_promoted(app.connection, paper_id, max_attempts=3)
 
 
 def drain_queue(app: AppContext) -> list[WorkCycleOutcome]:

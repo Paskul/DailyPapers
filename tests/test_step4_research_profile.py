@@ -176,7 +176,8 @@ def profiles_by_topic(app):
 def test_three_input_modes_send_only_approved_terms_and_permitted_ids(app, capsys):
     fake_library = FakeZoteroLibrary(standard_collection_items())
     gateway = make_gateway(app, fake_library.transport)
-    assert run_collect_command(app, argparse.Namespace(fixture_paths=None), build_gateway=lambda: gateway) == 0
+    assert run_collect_command(app, argparse.Namespace(fixture_paths=None, skip_searches=True),
+                               build_gateway=lambda: gateway) == 0
 
     profiles = profiles_by_topic(app)
     assert profiles["keywords-only"].input_mode == TopicInputMode.KEYWORDS
@@ -233,7 +234,8 @@ def test_three_input_modes_send_only_approved_terms_and_permitted_ids(app, capsy
 def test_missing_zotero_key_sends_nothing_and_keeps_every_topic_working(app, capsys, credentials, expected_reason):
     fake_library = FakeZoteroLibrary(standard_collection_items())
     gateway = make_gateway(app, fake_library.transport, credentials=credentials)
-    assert run_collect_command(app, argparse.Namespace(fixture_paths=None), build_gateway=lambda: gateway) == 0
+    assert run_collect_command(app, argparse.Namespace(fixture_paths=None, skip_searches=True),
+                               build_gateway=lambda: gateway) == 0
 
     printed = capsys.readouterr().out
     assert f"Zotero collection {ZOTERO_COLLECTION_KEY}: NOT synced" in printed and expected_reason in printed
@@ -538,7 +540,8 @@ def test_status_explains_what_to_add_when_both_inputs_are_empty(initialized_home
 id = "library-only"
 zotero_collections = ["{ZOTERO_COLLECTION_KEY}"]
 """)
-    collect_result = initialized_home.run_cli("collect")  # no credentials file: Zotero is skipped, nothing is sent
+    # No credentials file: Zotero is skipped, and nothing is sent.
+    collect_result = initialized_home.run_cli("collect", "--skip-searches")
     assert collect_result.exit_code == 0, collect_result.stderr
     assert "NOT synced" in collect_result.stdout
     status_result = initialized_home.run_cli("status")
@@ -556,7 +559,7 @@ def test_status_shows_each_topic_mode_after_collecting_csl_seeds(initialized_hom
     seeds_dir.mkdir()
     shutil.copy(CSL_SEED_FIXTURE, seeds_dir / "team_safety_seeds.csl.json")
     (initialized_home.home_dir / "topics.toml").write_text(THREE_MODE_TOPICS)
-    collect_result = initialized_home.run_cli("collect")
+    collect_result = initialized_home.run_cli("collect", "--skip-searches")
     assert collect_result.exit_code == 0, collect_result.stderr
     assert "CSL JSON seeds/team_safety_seeds.csl.json: synced" in collect_result.stdout
 

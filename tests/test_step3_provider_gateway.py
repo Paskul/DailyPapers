@@ -163,7 +163,7 @@ def test_get_text_fetches_the_exact_versioned_edition_into_the_cache(app):
     edition_id = record_collected_paper(app.connection, ARXIV_RECORD).edition_id
 
     cached_file = gateway.get_text(edition_id)
-    assert str(transport.sent_requests[0].url) == "https://arxiv.org/pdf/2411.05555v1"
+    assert str(transport.sent_requests[0].url) == "https://export.arxiv.org/pdf/2411.05555v1"
     assert cached_file.file_path.read_bytes() == pdf_bytes
     assert cached_file.file_path.parent == app.config.source_cache_dir / "sources" / edition_id
     assert stat.S_IMODE(cached_file.file_path.stat().st_mode) == 0o640
@@ -352,10 +352,10 @@ def test_zotero_seed_items_need_an_approved_collection_and_the_collector_key(app
 
 def test_packaged_rules_allow_only_https_hosts_by_name():
     provider_rules = load_provider_access_rules()
-    assert provider_rules.all_permitted_hosts() == {"export.arxiv.org", "arxiv.org", "api.openalex.org",
+    assert provider_rules.all_permitted_hosts() == {"export.arxiv.org", "rss.arxiv.org", "api.openalex.org",
                                                     "content.openalex.org", "api.zotero.org"}
     with pytest.raises(ConfigurationError, match="not an IP address|DNS host name"):
-        load_provider_access_rules(rules_with('host = "arxiv.org"', 'host = "127.0.0.1"'))
+        load_provider_access_rules(rules_with('host = "rss.arxiv.org"', 'host = "127.0.0.1"'))
     with pytest.raises(ConfigurationError, match="unknown key"):
         load_provider_access_rules(rules_with("[defaults]", "[defaults]\nallow_http = true"))
 

@@ -3,6 +3,7 @@
 It offers a handful of FIXED operations; callers never supply a URL, host, or free-text query:
 
     search(topic_query_id, cursor)          an approved catalog query (paperwatch.public_query_catalog)
+    poll_category_feed(arxiv_category)      arXiv's announcement feed of a category some topic approved (part 5)
     get_work(provider_id)                   metadata of a work already known from a source record
     get_text(known_edition_id)              the text of one catalogued edition, saved to the source cache
     list_seed_items(collection_key, start)  items of an approved Zotero collection (plan part 4)
@@ -18,7 +19,8 @@ For every operation, code:
   5. logs every hop, with credentials redacted, to `outbound_requests`.
 Network calls happen outside write transactions; each budget reservation and log row is its own short write.
 Response parsing belongs to the source modules: Zotero JSON in paperwatch.seeds (part 4), Atom and OpenAlex JSON in
-part 5. A conditional request (Zotero's If-Modified-Since-Version) may come back as `was_not_modified`.
+paperwatch.sources (part 5). A conditional request (Zotero's If-Modified-Since-Version, the feed's If-None-Match) may
+come back as `was_not_modified`.
 """
 
 from __future__ import annotations
@@ -33,12 +35,13 @@ import httpx
 from paperwatch.catalog import find_paper_id_by_identifier, load_edition_row
 from paperwatch.clock import format_utc_timestamp, utc_now, utc_now_timestamp
 from paperwatch.config import AppConfig
-from paperwatch.errors import (ProviderUnavailable, SourceAccessDenied, SourceInputError, SourceRecordNotFound,
-                               SourceRequestBudgetExhausted, SourceResponseRejected)
+from paperwatch.errors import (ProviderUnavailable, SourceAccessDenied, SourceCredentialRequired, SourceInputError,
+                               SourceRecordNotFound, SourceRequestBudgetExhausted, SourceResponseRejected)
 from paperwatch.llm.service_guard import read_service_health_state, record_service_outage, record_service_success
 from paperwatch.network.collector_credentials import CollectorCredentials, load_collector_credentials
 from paperwatch.network.outbound_ledger import OutboundRequestRecord, record_outbound_request, reserve_provider_request
-from paperwatch.network.provider_requests import (ProviderRequest, PublicationWindow,
+from paperwatch.network.provider_requests import (ProviderRequest, PublicationWindow, SearchResultOrder,
+                                                  build_category_feed_request,
                                                   build_get_text_request, build_get_work_request,
                                                   build_search_request, build_seed_items_request)
 from paperwatch.network.provider_rules import (CREDENTIAL_KIND_HEADER, CREDENTIAL_KIND_QUERY_PARAMETER,
@@ -47,7 +50,7 @@ from paperwatch.network.provider_rules import (CREDENTIAL_KIND_HEADER, CREDENTIA
 from paperwatch.network.secure_fetcher import (AddressResolver, HopResult, HttpsHop, ResponseBounds,
                                                SecureHttpsFetcher, resolve_allowed_redirect,
                                                resolve_public_addresses_only)
-from paperwatch.public_query_catalog import build_public_query_catalog, find_public_query
+from paperwatch.public_query_catalog import QUERY_KIND_CATEGORY, build_public_query_catalog, find_public_query
 from paperwatch.scholarly_identifiers import ARXIV_SCHEME, NormalizedIdentifier, normalize_identifier, \
     parse_version_number
 from paperwatch.seeds.seed_items import SEED_DISCOVERY_ROUTE_PREFIXES
@@ -97,10 +100,28 @@ class ProviderGateway:
     # ---- fixed operations -----------------------------------------------------------------------------------------
 
     def search(self, query_id: str, cursor: str | None = None, *,
-               publication_window: PublicationWindow | None = None) -> ProviderResponse:
+               publication_window: PublicationWindow | None = None,
+               result_order: SearchResultOrder = SearchResultOrder.PROVIDER_DEFAULT) -> ProviderResponse:
         public_query = find_public_query(self._query_catalog, query_id)
         page_size = self._rules.provider_rule(public_query.provider_name).search_page_size
-        return self._execute(build_search_request(public_query, cursor, page_size, publication_window))
+        search_rule = self._rules.operation_rule(public_query.provider_name, "search")
+        is_first_page = cursor in (None, "", "*", "0")
+        if search_rule.cursor_paging_requires_credential and not is_first_page and \
+                self._credentials.get(public_query.provider_name, CREDENTIAL_SECRET_FIELD) is None:
+            raise SourceCredentialRequired(
+                f"{search_rule.describe()}: pages after the first need an API key, and none is configured",
+                operator_hint=f"add a free key as [{public_query.provider_name}] api_key in "
+                              f"{self._app_config.collector_credentials_path}")
+        return self._execute(build_search_request(public_query, cursor, page_size, publication_window,
+                                                  result_order))
+
+    def poll_category_feed(self, arxiv_category: str, *, if_none_match_etag: str | None = None) -> ProviderResponse:
+        """The current announcement feed of one arXiv category, which must be an approved category of some topic."""
+        approved_categories = {public_query.public_value for public_query in self._query_catalog.values()
+                               if public_query.query_kind == QUERY_KIND_CATEGORY}
+        if arxiv_category not in approved_categories:
+            raise SourceAccessDenied(f"arXiv category '{arxiv_category}' is not an approved category in topics.toml")
+        return self._execute(build_category_feed_request(arxiv_category, if_none_match_etag))
 
     def get_work(self, provider_id: str) -> ProviderResponse:
         """`provider_id` is 'scheme:value', e.g. 'arxiv:2401.01234v2', 'openalex:W123', 'doi:10.1109/x'."""
@@ -220,7 +241,8 @@ class ProviderGateway:
         try:
             wait_seconds = reserve_provider_request(
                 self._connection, provider_name=provider_rule.provider_name,
-                daily_request_budget=provider_rule.daily_request_budget,
+                daily_request_budget=provider_rule.effective_daily_request_budget(
+                    self._credentials.get(provider_rule.provider_name, CREDENTIAL_SECRET_FIELD) is not None),
                 minimum_seconds_between_requests=provider_rule.minimum_seconds_between_requests)
         except SourceRequestBudgetExhausted as budget_error:
             log_hop("budget_exhausted", error_message=str(budget_error))

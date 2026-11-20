@@ -27,3 +27,4 @@ def test_example_credentials_file_has_the_accepted_shape(tmp_path):
     # The example is committed to git: it must only ever hold placeholders, never a real key.
     assert credentials.get("zotero", "api_key") == "YOUR-READ-ONLY-ZOTERO-KEY"
     assert credentials.get("zotero", "library_id") == "12345678"
+    assert credentials.get("openalex", "api_key") == "YOUR-OPENALEX-API-KEY"

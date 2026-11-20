@@ -2,8 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from typing import NamedTuple, Protocol
+
+# How an arXiv announcement presented an edition (plan part 5: "new, cross-listed, or revised").
+ANNOUNCEMENT_KIND_NEW = "new"
+ANNOUNCEMENT_KIND_CROSS_LIST = "cross_list"
+ANNOUNCEMENT_KIND_REVISION = "revision"
+ANNOUNCEMENT_KINDS = (ANNOUNCEMENT_KIND_NEW, ANNOUNCEMENT_KIND_CROSS_LIST, ANNOUNCEMENT_KIND_REVISION)
+
+# A provider's report that a work should no longer be recommended (plan part 5).
+WITHDRAWAL_NOTICE_WITHDRAWN = "withdrawn"  # arXiv: the authors withdrew the paper
+WITHDRAWAL_NOTICE_RETRACTED = "retracted"  # OpenAlex: the publisher retracted the work
+WITHDRAWAL_NOTICES = (WITHDRAWAL_NOTICE_WITHDRAWN, WITHDRAWAL_NOTICE_RETRACTED)
 
 
 class RawIdentifier(NamedTuple):
@@ -21,6 +33,9 @@ class CollectedPaperRecord:
     id, or in `source_version`). `linked_identifiers` are OTHER identifiers of the same work that the provider
     states explicitly, e.g. an OpenAlex work listing its DOI and arXiv id. Only put clear identifier links there:
     the catalog merges papers on them. Never put title or author look-alikes there.
+
+    Dates are ISO forms whose length IS their precision (paperwatch.publication_dates): "2026" (year), "2026-11"
+    (month), or "2026-11-17" (day). Parsers must never invent precision a provider did not report.
     """
 
     provider: str  # e.g. "fixture", "arxiv", "openalex"
@@ -33,6 +48,11 @@ class CollectedPaperRecord:
     source_version: str | None  # e.g. arXiv "v2"
     discovery_route: str  # how we found it, e.g. "fixture:recorded_paper.json", "arxiv-feed:cs.RO"
     linked_identifiers: tuple[RawIdentifier, ...] = ()
+    # How an arXiv announcement presented this edition: "new", "cross_list", or "revision" (None for other routes).
+    announcement_kind: str | None = None
+    # A provider's own report that the work was withdrawn (arXiv) or retracted (OpenAlex); None when not reported.
+    withdrawal_notice: str | None = None
+    withdrawal_evidence: str | None = None  # short provider text that carried the notice, for the operator
 
 
 class PaperSource(Protocol):
@@ -40,3 +60,14 @@ class PaperSource(Protocol):
 
     def fetch_records(self) -> list[CollectedPaperRecord]:
         """Return records; raise SourceInputError (or a subclass) naming what went wrong."""
+
+
+@dataclass(frozen=True)
+class ParsedSearchPage:
+    """One parsed page of any provider's search results, plus what is needed to continue paging (plan part 5)."""
+
+    records: list[CollectedPaperRecord]
+    raw_entry_count: int  # entries the provider returned, including skipped ones
+    next_cursor: str | None  # None: the provider has no further page
+    total_results: int | None
+    skipped_entry_counts: Counter[str] = field(default_factory=Counter)

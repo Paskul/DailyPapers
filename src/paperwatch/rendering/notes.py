@@ -16,6 +16,19 @@ from paperwatch.review_store import SCORE_SCALE_RATING_0_TO_4, TopicAssessment
 
 
 @dataclass(frozen=True)
+class ReportCorrection:
+    """A previously reported paper that a provider now reports withdrawn or retracted (plan part 5).
+
+    The historical report file is never altered; the next report carries this correction instead."""
+
+    paper_id: str
+    title: str
+    notice_kind: str  # withdrawn | retracted
+    first_reported_on: str  # report date (YYYY-MM-DD) that recommended it
+    detected_at: str  # UTC timestamp of the provider notice
+
+
+@dataclass(frozen=True)
 class SelectedReview:
     """One completed review chosen for a report, with the trusted metadata needed to render it."""
 
@@ -88,7 +101,8 @@ def render_paper_note(selected_review: SelectedReview) -> str:
 
 
 def render_daily_report(*, report_date: str, timezone_name: str, cutoff_at: str,
-                        selected_reviews: list[SelectedReview], report_statistics: dict[str, Any]) -> str:
+                        selected_reviews: list[SelectedReview], report_statistics: dict[str, Any],
+                        corrections: tuple[ReportCorrection, ...] = ()) -> str:
     report_lines = [
         f"# Paper report for {report_date}",
         "",
@@ -126,6 +140,14 @@ def render_daily_report(*, report_date: str, timezone_name: str, cutoff_at: str,
             f"Source: {_render_source_links(selected_review.paper_aliases)}",
             "",
         ]
+    if corrections:
+        report_lines += ["## Corrections", ""]
+        for correction in corrections:
+            report_lines.append(
+                f"- **{escape_untrusted_inline_text(correction.title)}** (recommended on "
+                f"{correction.first_reported_on}): the provider now reports it {correction.notice_kind} "
+                f"(noticed {correction.detected_at[:10]}). It is no longer recommended.")
+        report_lines.append("")
     return "\n".join(report_lines).rstrip() + "\n"
 
 

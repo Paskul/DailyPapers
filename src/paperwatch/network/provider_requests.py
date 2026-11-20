@@ -12,12 +12,14 @@ import re
 import urllib.parse
 from dataclasses import dataclass
 from datetime import date
+from enum import StrEnum
 
 from paperwatch.errors import SourceAccessDenied
 from paperwatch.public_query_catalog import QUERY_KIND_CATEGORY, QUERY_KIND_KEYWORDS, PublicQuery
 from paperwatch.scholarly_identifiers import ARXIV_SCHEME, DOI_SCHEME, OPENALEX_SCHEME, NormalizedIdentifier
 
 OPERATION_SEARCH = "search"
+OPERATION_FEED = "feed"
 OPERATION_GET_WORK = "get_work"
 OPERATION_GET_TEXT = "get_text"
 OPERATION_LIST_SEED_ITEMS = "list_seed_items"
@@ -25,6 +27,11 @@ OPERATION_LIST_SEED_ITEMS = "list_seed_items"
 MAXIMUM_ARXIV_START_OFFSET = 100_000
 OPENALEX_CURSOR_PATTERN = re.compile(r"^(\*|[A-Za-z0-9+/=_-]{1,1024})$")
 EARLIEST_PUBLICATION_YEAR = 1900
+ARXIV_CATEGORY_PATTERN = re.compile(r"^[a-z][a-z-]*(\.[A-Za-z][A-Za-z-]*)?$")
+ENTITY_TAG_PATTERN = re.compile(r'^(W/)?"?[A-Za-z0-9._:+/=-]{1,200}"?$')  # an HTTP ETag as the server sent it
+# Only the fields the OpenAlex parser reads (paperwatch.sources.openalex_works); a smaller, cheaper response.
+OPENALEX_SELECTED_FIELDS = ("id,doi,display_name,title,publication_date,publication_year,authorships,"
+                            "abstract_inverted_index,ids,locations,is_retracted,type")
 
 
 @dataclass(frozen=True)
@@ -34,6 +41,22 @@ class ProviderRequest:
     path: str  # percent-encoded
     query_parameters: tuple[tuple[str, str], ...] = ()
     request_headers: tuple[tuple[str, str], ...] = ()  # e.g. a conditional header; names must be allowed by the rules
+
+
+class SearchResultOrder(StrEnum):
+    """How a provider orders search results. Only these fixed values can reach a request.
+
+    PROVIDER_DEFAULT  arXiv: newest submission first (complete paging of a date window); OpenAlex: relevance.
+    RELEVANCE         best text match first (arXiv sortBy=relevance; OpenAlex's default for `search`).
+    MOST_CITED        most cited first. OpenAlex: the EXACT phrase in title or abstract
+                      (filter title_and_abstract.search:"<phrase>") sorted by cited_by_count. The plain `search`
+                      parameter also matches full text loosely, so sorting it by citations returns famous but
+                      unrelated papers (checked live 2026-11-19). arXiv has no citation data, so it uses relevance.
+    """
+
+    PROVIDER_DEFAULT = "provider_default"
+    RELEVANCE = "relevance"
+    MOST_CITED = "most_cited"
 
 
 @dataclass(frozen=True)
@@ -54,16 +77,19 @@ class PublicationWindow:
 
 
 def build_search_request(public_query: PublicQuery, cursor: str | None, page_size: int,
-                         publication_window: PublicationWindow | None = None) -> ProviderRequest:
+                         publication_window: PublicationWindow | None = None,
+                         result_order: SearchResultOrder = SearchResultOrder.PROVIDER_DEFAULT) -> ProviderRequest:
+    result_order = SearchResultOrder(result_order)  # refuses anything but the fixed values
     if public_query.provider_name == "arxiv":
-        return _build_arxiv_search_request(public_query, cursor, page_size, publication_window)
+        return _build_arxiv_search_request(public_query, cursor, page_size, publication_window, result_order)
     if public_query.provider_name == "openalex":
-        return _build_openalex_search_request(public_query, cursor, page_size, publication_window)
+        return _build_openalex_search_request(public_query, cursor, page_size, publication_window, result_order)
     raise SourceAccessDenied(f"provider '{public_query.provider_name}' has no search operation")
 
 
 def _build_arxiv_search_request(public_query: PublicQuery, cursor: str | None, page_size: int,
-                                publication_window: PublicationWindow | None) -> ProviderRequest:
+                                publication_window: PublicationWindow | None,
+                                result_order: SearchResultOrder) -> ProviderRequest:
     if public_query.query_kind == QUERY_KIND_KEYWORDS:
         phrase_without_quotes = public_query.public_value.replace('"', " ").strip()
         search_expression = f'all:"{phrase_without_quotes}"'
@@ -77,22 +103,52 @@ def _build_arxiv_search_request(public_query: PublicQuery, cursor: str | None, p
     start_offset = _parse_arxiv_start_offset(cursor)
     return ProviderRequest("arxiv", OPERATION_SEARCH, "/api/query", (
         ("search_query", search_expression), ("start", str(start_offset)), ("max_results", str(page_size)),
-        ("sortBy", "submittedDate"), ("sortOrder", "descending")))
+        ("sortBy", "submittedDate" if result_order == SearchResultOrder.PROVIDER_DEFAULT else "relevance"),
+        ("sortOrder", "descending")))
 
 
 def _build_openalex_search_request(public_query: PublicQuery, cursor: str | None, page_size: int,
-                                   publication_window: PublicationWindow | None) -> ProviderRequest:
+                                   publication_window: PublicationWindow | None,
+                                   result_order: SearchResultOrder) -> ProviderRequest:
     if public_query.query_kind != QUERY_KIND_KEYWORDS:
         raise SourceAccessDenied(f"OpenAlex cannot search query kind '{public_query.query_kind}'")
     openalex_cursor = cursor or "*"
     if not OPENALEX_CURSOR_PATTERN.match(openalex_cursor):
         raise SourceAccessDenied("OpenAlex cursor has an unexpected form; refusing to send it")
-    query_parameters = [("search", public_query.public_value), ("per-page", str(page_size)),
-                        ("cursor", openalex_cursor)]
+    query_parameters = [("per-page", str(page_size)), ("cursor", openalex_cursor),
+                        ("select", OPENALEX_SELECTED_FIELDS)]
+    filter_parts = []
+    if result_order == SearchResultOrder.MOST_CITED:
+        filter_parts.append(f'title_and_abstract.search:"{_phrase_safe_inside_openalex_filter(public_query)}"')
+        query_parameters.append(("sort", "cited_by_count:desc"))
+    else:
+        query_parameters.insert(0, ("search", public_query.public_value))
     if publication_window is not None:
-        query_parameters.append(("filter", f"from_publication_date:{publication_window.first_date.isoformat()},"
-                                           f"to_publication_date:{publication_window.last_date.isoformat()}"))
+        filter_parts += [f"from_publication_date:{publication_window.first_date.isoformat()}",
+                         f"to_publication_date:{publication_window.last_date.isoformat()}"]
+    if filter_parts:
+        query_parameters.append(("filter", ",".join(filter_parts)))
     return ProviderRequest("openalex", OPERATION_SEARCH, "/works", tuple(query_parameters))
+
+
+def _phrase_safe_inside_openalex_filter(public_query: PublicQuery) -> str:
+    """The approved phrase with the characters that have meaning in an OpenAlex filter (',' '|' '"' ':') removed."""
+    cleaned_phrase = " ".join(re.sub(r'[,|":]', " ", public_query.public_value).split())
+    if not cleaned_phrase:
+        raise SourceAccessDenied("the approved phrase is empty once filter syntax is removed")
+    return cleaned_phrase
+
+
+def build_category_feed_request(arxiv_category: str, if_none_match_etag: str | None = None) -> ProviderRequest:
+    """arXiv's Atom announcement feed of one category (rss.arxiv.org/atom/<category>), optionally conditional."""
+    if not ARXIV_CATEGORY_PATTERN.match(arxiv_category):
+        raise SourceAccessDenied(f"'{arxiv_category}' is not an arXiv category")
+    request_headers: tuple[tuple[str, str], ...] = ()
+    if if_none_match_etag is not None:
+        if not ENTITY_TAG_PATTERN.match(if_none_match_etag):
+            raise SourceAccessDenied("stored feed ETag has an unexpected form; refusing to send it")
+        request_headers = (("If-None-Match", if_none_match_etag),)
+    return ProviderRequest("arxiv", OPERATION_FEED, f"/atom/{arxiv_category}", (), request_headers)
 
 
 def _parse_arxiv_start_offset(cursor: str | None) -> int:

@@ -24,7 +24,8 @@ connect_timeout_seconds = 10.0
 outage_backoff_initial_seconds = 300      # a provider-wide outage pauses that provider, doubling up to the maximum
 outage_backoff_max_seconds = 21600
 
-# ---- arXiv: legacy API (search, metadata) and versioned PDFs -----------------------------------------------------
+# ---- arXiv: legacy API (search, metadata), category announcement feeds, and versioned PDFs ------------------------
+# All arXiv operations share one spacing of 3 s, serialized across processes (plan part 5).
 [providers.arxiv]
 credential_kind = "none"
 daily_request_budget = 2000
@@ -49,8 +50,19 @@ max_response_bytes = 2_000_000
 max_decompressed_bytes = 10_000_000
 total_timeout_seconds = 60.0
 
-[providers.arxiv.operations.get_text]
-host = "arxiv.org"
+[providers.arxiv.operations.feed]                # daily announcement feed of ONE approved category (plan part 5)
+host = "rss.arxiv.org"
+path_pattern = '/atom/[a-z][a-z-]*(\.[A-Za-z][A-Za-z-]*)?'
+query_parameters = []
+request_headers = ["If-None-Match"]                       # 304 when the feed has not changed since the last poll
+response_headers = ["ETag"]
+content_types = ["application/atom+xml", "application/xml", "text/xml"]
+max_response_bytes = 20_000_000
+max_decompressed_bytes = 100_000_000
+total_timeout_seconds = 90.0
+
+[providers.arxiv.operations.get_text]             # export.arxiv.org is arXiv's host for programmatic access
+host = "export.arxiv.org"
 path_pattern = '/pdf/([0-9]{4}\.[0-9]{4,5}|[a-z][a-z-]*(\.[A-Z]{2})?/[0-9]{7})v[1-9][0-9]*'
 query_parameters = []
 content_types = ["application/pdf"]
@@ -63,7 +75,10 @@ total_timeout_seconds = 300.0
 credential_kind = "query_parameter"       # optional key from the credentials file, sent as ?api_key=...
 credential_name = "api_key"
 credential_required = false
-daily_request_budget = 5000
+# OpenAlex meters use in US dollars per day: a free key gets $1/day; without a key, every client on the same IP
+# address shares $0.10/day. A list or search request costs about $0.001, so these budgets stay inside each tier.
+daily_request_budget = 900
+daily_request_budget_without_credential = 80
 minimum_seconds_between_requests = 0.2    # OpenAlex allows about 10 requests per second
 search_page_size = 100
 
@@ -71,6 +86,7 @@ search_page_size = 100
 host = "api.openalex.org"
 path_pattern = '/works'
 query_parameters = ["search", "filter", "per-page", "cursor", "sort", "select"]
+cursor_paging_requires_credential = true  # without a key OpenAlex serves only the first page (HTTP 401 after it)
 content_types = ["application/json"]
 max_response_bytes = 10_000_000
 max_decompressed_bytes = 50_000_000

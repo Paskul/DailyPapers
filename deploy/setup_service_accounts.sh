@@ -64,7 +64,8 @@ STATE_DIR="$PAPERWATCH_HOME/state"
 CACHE_DIR="$STATE_DIR/cache"
 OUTPUT_DIR="$PAPERWATCH_HOME/output"
 CREDENTIALS_DIR="$PAPERWATCH_HOME/credentials"
-mkdir -p "$STATE_DIR" "$CACHE_DIR" "$OUTPUT_DIR/papers" "$OUTPUT_DIR/daily" "$CREDENTIALS_DIR"
+LOCAL_SOURCES_DIR="$PAPERWATCH_HOME/local_sources"
+mkdir -p "$STATE_DIR" "$CACHE_DIR" "$OUTPUT_DIR/papers" "$OUTPUT_DIR/daily" "$CREDENTIALS_DIR" "$LOCAL_SOURCES_DIR"
 
 # Home and config: owned by the operator, readable (not writable) by the services.
 chgrp "$SHARED_GROUP" "$PAPERWATCH_HOME" "$PAPERWATCH_HOME/config.toml" "$PAPERWATCH_HOME/topics.toml"
@@ -81,6 +82,11 @@ find "$STATE_DIR" -maxdepth 1 -type f \( -name '*.sqlite3*' -o -name 'inference.
 chown -R "$COLLECTOR_ACCOUNT:$SHARED_GROUP" "$CACHE_DIR"
 find "$CACHE_DIR" -type d -exec chmod 2750 {} +
 find "$CACHE_DIR" -type f -exec chmod 0640 {} +
+
+# local_sources/: PDFs/XML the operator places for papers (named by arXiv id or DOI); the collector only reads them.
+chgrp -R "$SHARED_GROUP" "$LOCAL_SOURCES_DIR"
+find "$LOCAL_SOURCES_DIR" -type d -exec chmod 2750 {} +
+find "$LOCAL_SOURCES_DIR" -type f -exec chmod 0640 {} +
 
 # output/: written by the worker (notes and reports) only, readable by the group.
 chown -R "$WORKER_ACCOUNT:$SHARED_GROUP" "$OUTPUT_DIR"

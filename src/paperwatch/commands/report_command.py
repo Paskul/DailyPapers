@@ -8,6 +8,8 @@ Publication order (so a crash at any point is recoverable and a rerun produces t
 A rerun for a `pending` date republishes the saved bytes; a rerun for a `published` date changes nothing.
 Step-1 selection: newest completed review per unreported paper, ordered by its best topic assessment. Plan part 9
 adds the reading-priority floor, the writer role, and the scheduled cutoff.
+Plan part 5: papers a provider reported withdrawn or retracted are never selected. If such a paper was recommended
+by an earlier report, the next report carries a correction (that earlier file is never altered), once.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from paperwatch.db import write_transaction
 from paperwatch.errors import ConfigurationError
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, read_service_health_state
 from paperwatch.rendering.file_output import write_bytes_atomically
-from paperwatch.rendering.notes import SelectedReview, render_daily_report, render_paper_note
+from paperwatch.rendering.notes import ReportCorrection, SelectedReview, render_daily_report, render_paper_note
 from paperwatch.review_store import load_latest_topic_assessments
 
 
@@ -48,12 +50,14 @@ def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
     else:
         cutoff_at = format_utc_timestamp(utc_now())
         selected_reviews = _select_reviews_for_report(app, cutoff_at)
+        corrections = _load_pending_corrections(app.connection)
         report_markdown = render_daily_report(
             report_date=report_date, timezone_name=app.config.report.timezone, cutoff_at=cutoff_at,
-            selected_reviews=selected_reviews, report_statistics=_collect_report_statistics(app))
+            selected_reviews=selected_reviews, report_statistics=_collect_report_statistics(app),
+            corrections=corrections)
         report_bytes = report_markdown.encode("utf-8")
         _save_pending_report(app.connection, report_date, cutoff_at, report_output_path, report_bytes,
-                             selected_reviews)
+                             selected_reviews, corrections)
 
     for selected_review in selected_reviews:
         note_path = (app.config.paper_notes_dir / selected_review.paper_row["paper_id"]
@@ -81,6 +85,7 @@ def _select_reviews_for_report(app: AppContext, cutoff_at: str) -> list[Selected
         """SELECT review.* FROM reviews AS review
            WHERE review.completed_at <= ?
              AND review.paper_id NOT IN (SELECT paper_id FROM report_items)
+             AND review.paper_id NOT IN (SELECT paper_id FROM paper_withdrawals)
              AND review.review_id = (SELECT newest.review_id FROM reviews AS newest
                                      WHERE newest.paper_id = review.paper_id
                                      ORDER BY newest.completed_at DESC, newest.review_id DESC LIMIT 1)""",
@@ -92,6 +97,20 @@ def _select_reviews_for_report(app: AppContext, cutoff_at: str) -> list[Selected
     chosen_reviews = unranked_reviews[:app.config.report.max_papers_per_report]
     return [_build_selected_review(app.connection, rank=position + 1, review_row=chosen.review_row)
             for position, chosen in enumerate(chosen_reviews)]
+
+
+def _load_pending_corrections(connection: sqlite3.Connection) -> tuple[ReportCorrection, ...]:
+    """Withdrawn or retracted papers that an earlier report recommended and no report has corrected yet."""
+    return tuple(ReportCorrection(paper_id=row["paper_id"], title=row["title"], notice_kind=row["notice_kind"],
+                                  first_reported_on=row["first_reported_on"], detected_at=row["detected_at"])
+                 for row in connection.execute(
+                     """SELECT withdrawal.paper_id, paper.title, withdrawal.notice_kind, withdrawal.detected_at,
+                               MIN(item.report_date) AS first_reported_on
+                        FROM paper_withdrawals AS withdrawal
+                        JOIN report_items AS item ON item.paper_id = withdrawal.paper_id
+                        JOIN papers AS paper ON paper.paper_id = withdrawal.paper_id
+                        WHERE withdrawal.correction_report_date IS NULL
+                        GROUP BY withdrawal.paper_id ORDER BY first_reported_on, withdrawal.paper_id"""))
 
 
 def _load_frozen_selection(connection: sqlite3.Connection, report_date: str) -> list[SelectedReview]:
@@ -131,8 +150,12 @@ def _collect_report_statistics(app: AppContext) -> dict:
 
 
 def _save_pending_report(connection: sqlite3.Connection, report_date: str, cutoff_at: str, report_output_path,
-                         report_bytes: bytes, selected_reviews: list[SelectedReview]) -> None:
+                         report_bytes: bytes, selected_reviews: list[SelectedReview],
+                         corrections: tuple[ReportCorrection, ...] = ()) -> None:
     with write_transaction(connection):
+        connection.executemany(
+            "UPDATE paper_withdrawals SET correction_report_date = ? WHERE paper_id = ? AND "
+            "correction_report_date IS NULL", [(report_date, correction.paper_id) for correction in corrections])
         connection.execute(
             """INSERT INTO reports (report_date, cutoff_at, status, output_path, rendered_sha256, rendered_bytes,
                    created_at) VALUES (?, ?, 'pending', ?, ?, ?, ?)""",

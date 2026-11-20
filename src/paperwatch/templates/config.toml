@@ -52,6 +52,26 @@ user_agent = "paperwatch/0.1 (local research monitor)"
 allow_lookup_by_seed_identifier = false   # true lets the collector look up a work by an identifier known only from
                                           # your seed library (e.g. a seed's DOI); that tells the provider you hold it
 
+# What one `collect` run may admit and fetch (plan part 5). Starting values; tune them after measuring (part 10).
+[collection]
+daily_new_candidate_budget = 500          # papers new to the catalog per UTC day, from arXiv / OpenAlex routes
+current_release_reserved_candidates = 200 # of those, kept for current releases; the historical search uses the rest
+historical_candidates_per_topic = 300     # per initial (or materially changed) historical search of a topic
+# The historical search weights publication years exponentially toward the present: candidates per year halve
+# every `historical_half_life_years`, down to `historical_earliest_year`. The curve is cut into
+# `historical_window_count` windows of equal weight (narrow recent ones, one wide old one), each with an equal share.
+historical_earliest_year = 1940
+historical_half_life_years = 6.0
+historical_window_count = 8
+historical_citation_ordering_min_age_years = 5.0  # windows at least this old take their most-cited papers first
+historical_pages_per_topic_per_run = 6    # bounds one run (arXiv needs 3 s between requests)
+pages_per_search_per_run = 10             # missed-release recovery and recent OpenAlex windows
+openalex_recent_window_days = 14          # recent window; also the overlap re-checked for late-indexed works
+openalex_recent_sweep_interval_hours = 12 # one recent OpenAlex sweep per query at most this often
+daily_source_text_budget = 30             # full-text downloads per UTC day for papers queued for review
+local_sources_dir = "local_sources"       # put PDFs here named by arXiv id or DOI (2401.01234v2.pdf,
+                                          #   10.1109_xyz.pdf); used before any download
+
 # PDF/XML text extraction runs in rootless Podman with no network, a read-only root, and one read-only input.
 [extractor]
 container_runtime = "podman"

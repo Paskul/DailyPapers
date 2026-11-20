@@ -1,4 +1,4 @@
-"""`paperwatch collect`: sync seed papers, pull records from sources into the catalog, and queue review jobs.
+"""`paperwatch collect`: sync seeds, collect current and older papers, acquire source text, and queue review jobs.
 
 The collector is the only component allowed to contact paper providers (its process arms the collector egress
 policy), and it does so only through paperwatch.network.provider_gateway.ProviderGateway's fixed operations.
@@ -6,57 +6,66 @@ policy), and it does so only through paperwatch.network.provider_gateway.Provide
 Stages of one run:
   1. Seeds (plan part 4): sync every configured Zotero collection and CSL JSON file (paperwatch.seeds.seed_sync).
      A source that cannot be read keeps its last successful seed set; collection continues either way.
-  2. Papers: recorded fixtures for now; arXiv and OpenAlex sources (plan part 5) will call the gateway and parse its
-     responses into the same PaperSource protocol. The CPU screening score (part 6) replaces
-     `should_promote_paper_for_review`.
-  3. Research profile: print each topic's input mode (keywords, seeds, or both) and anything missing.
+  2. Papers (plan part 5, paperwatch.collection): current releases first (arXiv category feeds, recovery of releases
+     missed during downtime, recent OpenAlex windows), then each topic's finite historical search, all within the
+     daily budget of new metadata candidates. `--fixture FILE` replaces these live searches with recorded records
+     (a replay); `--skip-searches` skips them.
+  3. Source text: for papers queued for review, a local file, else (live runs only) a capped download; then text
+     extraction in the sandbox when the extractor image is configured.
+  4. Research profile: print each topic's input mode (keywords, seeds, or both) and anything missing.
 
-Re-collecting is always safe: the catalog resolves each record to its canonical paper, and a reading is queued only
-when the paper's preferred edition has text that was never read (see paperwatch.readings).
+Re-collecting is always safe: the catalog resolves each record to its canonical paper, every page commits with its
+checkpoint, and a reading is queued only when the paper's preferred edition has text that was never read.
+The CPU screening score of part 6 replaces the placeholder promotion in paperwatch.collection.review_promotion.
 """
 
 from __future__ import annotations
 
 import argparse
-import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
 
 from paperwatch.app_context import AppContext
-from paperwatch.catalog import CatalogUpsertOutcome, load_paper_row, record_collected_paper, set_paper_status
-from paperwatch.db import write_transaction
-from paperwatch.jobs import JobPriorityClass
+from paperwatch.collection.collection_context import CollectionContext
+from paperwatch.collection.current_releases import collect_current_releases
+from paperwatch.collection.historical_search import run_historical_searches
+from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
+from paperwatch.collection.source_text import acquire_source_texts
 from paperwatch.network.provider_gateway import ProviderGateway
-from paperwatch.readings import ReadingEnqueueOutcome, enqueue_reading_if_needed
 from paperwatch.research_profile import (build_research_profiles, explain_empty_research_profile,
                                          load_active_seed_library_paper_ids)
 from paperwatch.seeds.seed_store import seed_sources_of_all_topics
 from paperwatch.seeds.seed_sync import synchronize_all_seed_sources
 from paperwatch.sources.fixture_source import RecordedFixtureSource
-from paperwatch.sources.types import PaperSource
-
-
-@dataclass
-class SourceCollectionCounts:
-    records: int = 0
-    new_papers: int = 0
-    already_known: int = 0
-    new_editions_of_known_papers: int = 0
-    review_jobs_queued: int = 0
-    possible_duplicates_flagged: int = 0
-
-    def describe(self, source_name: str) -> str:
-        return (f"{source_name}: {self.records} record(s), {self.new_papers} new, {self.already_known} already known, "
-                f"{self.review_jobs_queued} review job(s) queued, {self.new_editions_of_known_papers} new edition(s) "
-                f"of known papers, {self.possible_duplicates_flagged} possible duplicate(s) flagged")
 
 
 def run_collect_command(app: AppContext, arguments: argparse.Namespace, *,
                         build_gateway: Callable[[], ProviderGateway] | None = None) -> int:
-    """`build_gateway` lets tests inject a gateway with a recorded transport; production uses the collector's."""
-    _synchronize_seed_sources(app, build_gateway or (lambda: ProviderGateway.for_collector(app.connection,
-                                                                                            app.config)))
-    _collect_papers_from_sources(app, arguments)
+    """`build_gateway` lets tests inject a gateway with a recorded transport; production uses the collector's.
+    One gateway serves the whole run; it (and the credentials file) is created only if a stage needs a provider."""
+    shared_gateway: list[ProviderGateway] = []
+
+    def build_gateway_once() -> ProviderGateway:
+        if not shared_gateway:
+            shared_gateway.append(build_gateway() if build_gateway else
+                                  ProviderGateway.for_collector(app.connection, app.config))
+        return shared_gateway[0]
+
+    fixture_paths = getattr(arguments, "fixture_paths", None) or []
+    run_live_searches = not fixture_paths and not getattr(arguments, "skip_searches", False)
+
+    _synchronize_seed_sources(app, build_gateway_once)
+    collection_context = CollectionContext.start(
+        app.connection, app.config, build_gateway_once,
+        active_seed_paper_ids=load_active_seed_library_paper_ids(app.connection, app.config))
+    if fixture_paths:
+        _import_recorded_fixtures(collection_context, fixture_paths)
+    elif run_live_searches:
+        _print_lines(collect_current_releases(collection_context))
+        _print_lines(run_historical_searches(collection_context))
+        print(f"Candidates: {collection_context.candidate_budget.describe()}")
+    else:
+        print("Papers: live arXiv / OpenAlex searches skipped (--skip-searches)")
+    _print_lines(acquire_source_texts(collection_context, allow_network=run_live_searches))
     _print_research_profile_summary(app)
     return 0
 
@@ -69,24 +78,15 @@ def _synchronize_seed_sources(app: AppContext, build_gateway: Callable[[], Provi
         print(f"Seeds: {seed_sync_outcome.describe()}")
 
 
-def _collect_papers_from_sources(app: AppContext, arguments: argparse.Namespace) -> None:
-    paper_sources: list[PaperSource] = [RecordedFixtureSource(fixture_path)
-                                        for fixture_path in (getattr(arguments, "fixture_paths", None) or [])]
-    if not paper_sources:
-        print("Papers: no paper sources to collect from. Live arXiv / OpenAlex searches arrive in plan part 5; "
-              "pass --fixture FILE to import recorded papers.")
-        return
-
-    active_seed_paper_ids = load_active_seed_library_paper_ids(app.connection, app.config)
-    for paper_source in paper_sources:
-        collected_records = paper_source.fetch_records()
-        source_counts = SourceCollectionCounts(records=len(collected_records))
-        for collected_record in collected_records:
-            catalog_outcome = record_collected_paper(app.connection, collected_record)
-            _count_catalog_outcome(source_counts, catalog_outcome)
-            if _queue_review_if_promoted(app, catalog_outcome.paper_id, active_seed_paper_ids):
-                source_counts.review_jobs_queued += 1
-        print(source_counts.describe(paper_source.source_name))
+def _import_recorded_fixtures(collection_context: CollectionContext, fixture_paths: list) -> None:
+    """A replay: recorded records go through the same catalog, promotion, and queueing as live pages."""
+    for fixture_path in fixture_paths:
+        paper_source = RecordedFixtureSource(fixture_path)
+        page_result = ingest_records_with_checkpoints(
+            collection_context.connection, paper_source.fetch_records(), admission_limit=None,
+            active_seed_paper_ids=collection_context.active_seed_paper_ids,
+            max_attempts_per_job=collection_context.app_config.worker.max_attempts_per_job)
+        print(page_result.describe(paper_source.source_name))
 
 
 def _print_research_profile_summary(app: AppContext) -> None:
@@ -101,31 +101,6 @@ def _print_research_profile_summary(app: AppContext) -> None:
         print(empty_profile_explanation)
 
 
-def should_promote_paper_for_review(paper_row: sqlite3.Row, active_seed_paper_ids: frozenset[str]) -> bool:
-    """PLACEHOLDER until the screening score of plan part 6: every collected paper is promoted, except papers already
-    in the user's active seed library (they are comparison anchors, never recommendations; plan parts 4 and 9)."""
-    return paper_row["paper_id"] not in active_seed_paper_ids
-
-
-def _count_catalog_outcome(source_counts: SourceCollectionCounts, catalog_outcome: CatalogUpsertOutcome) -> None:
-    if catalog_outcome.was_newly_created:
-        source_counts.new_papers += 1
-    else:
-        source_counts.already_known += 1
-        if catalog_outcome.was_new_edition:
-            source_counts.new_editions_of_known_papers += 1
-    source_counts.possible_duplicates_flagged += len(catalog_outcome.possible_match_paper_ids)
-
-
-def _queue_review_if_promoted(app: AppContext, paper_id: str,
-                              active_seed_paper_ids: frozenset[str] = frozenset()) -> bool:
-    paper_row = load_paper_row(app.connection, paper_id)
-    if not should_promote_paper_for_review(paper_row, active_seed_paper_ids):
-        return False
-    with write_transaction(app.connection):
-        enqueue_outcome, _review_packet = enqueue_reading_if_needed(
-            app.connection, paper_id, priority=JobPriorityClass.NEW_RELEASE,
-            max_attempts=app.config.worker.max_attempts_per_job)
-        if enqueue_outcome == ReadingEnqueueOutcome.QUEUED:
-            set_paper_status(app.connection, paper_id, "queued")
-    return enqueue_outcome == ReadingEnqueueOutcome.QUEUED
+def _print_lines(report_lines: list[str]) -> None:
+    for report_line in report_lines:
+        print(report_line)

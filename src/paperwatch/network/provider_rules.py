@@ -43,6 +43,7 @@ class OperationRule:
     credential_required: bool
     request_header_names: frozenset[str] = frozenset()  # lowercase; extra headers a request may carry
     response_header_names: tuple[str, ...] = ()  # lowercase; response headers handed back to the caller
+    cursor_paging_requires_credential: bool = False  # pages after the first need the provider's credential
 
     def describe(self) -> str:
         return f"{self.provider_name}/{self.operation}"
@@ -58,6 +59,13 @@ class ProviderRule:
     minimum_seconds_between_requests: float
     search_page_size: int
     operations: dict[str, OperationRule]
+    # A smaller budget for days without the provider's credential (e.g. OpenAlex meters unkeyed use per IP address).
+    daily_request_budget_without_credential: int | None = None
+
+    def effective_daily_request_budget(self, has_credential: bool) -> int:
+        if has_credential or self.daily_request_budget_without_credential is None:
+            return self.daily_request_budget
+        return min(self.daily_request_budget, self.daily_request_budget_without_credential)
 
 
 @dataclass(frozen=True)
@@ -129,10 +137,11 @@ def load_provider_access_rules(rules_toml_text: str | None = None) -> ProviderAc
 # --------------------------------------------------------------------------------------------------------------------
 
 PROVIDER_KEYS = {"credential_kind", "credential_name", "credential_required", "fixed_headers", "daily_request_budget",
-                 "minimum_seconds_between_requests", "search_page_size", "operations"}
+                 "daily_request_budget_without_credential", "minimum_seconds_between_requests", "search_page_size",
+                 "operations"}
 OPERATION_KEYS = {"host", "path_pattern", "query_parameters", "content_types", "max_response_bytes",
                   "max_decompressed_bytes", "total_timeout_seconds", "redirect_hosts", "credential_required",
-                  "request_headers", "response_headers"}
+                  "request_headers", "response_headers", "cursor_paging_requires_credential"}
 
 
 def _build_provider_rule(provider_name: str, raw_provider: Any) -> ProviderRule:
@@ -162,7 +171,10 @@ def _build_provider_rule(provider_name: str, raw_provider: Any) -> ProviderRule:
                                                          f"{label} minimum_seconds_between_requests", float,
                                                          allow_zero=True),
         search_page_size=_require_number(raw_provider.get("search_page_size", 100), f"{label} search_page_size", int),
-        operations=operations)
+        operations=operations,
+        daily_request_budget_without_credential=None if "daily_request_budget_without_credential" not in raw_provider
+        else _require_number(raw_provider["daily_request_budget_without_credential"],
+                             f"{label} daily_request_budget_without_credential", int))
 
 
 def _build_operation_rule(provider_name: str, operation: str, raw_operation: Any,
@@ -195,7 +207,8 @@ def _build_operation_rule(provider_name: str, operation: str, raw_operation: Any
         request_header_names=frozenset(header_name.lower() for header_name in _require_string_list(
             raw_operation.get("request_headers", []), f"{label} request_headers")),
         response_header_names=tuple(header_name.lower() for header_name in _require_string_list(
-            raw_operation.get("response_headers", []), f"{label} response_headers")))
+            raw_operation.get("response_headers", []), f"{label} response_headers")),
+        cursor_paging_requires_credential=bool(raw_operation.get("cursor_paging_requires_credential", False)))
 
 
 def _validate_hostname(raw_host: Any, label: str) -> str:

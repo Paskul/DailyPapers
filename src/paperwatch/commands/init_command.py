@@ -25,7 +25,7 @@ def run_init_command(home_dir: Path, arguments: argparse.Namespace) -> int:
 
     app_config = load_app_config(home_dir)  # validates what is on disk, including user edits
     for directory_path in (app_config.state_dir, app_config.source_cache_dir, app_config.paper_notes_dir,
-                           app_config.daily_reports_dir):
+                           app_config.daily_reports_dir, app_config.local_sources_dir):
         directory_path.mkdir(parents=True, exist_ok=True)
 
     connection = connect_database(app_config.database_path)

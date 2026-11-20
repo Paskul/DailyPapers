@@ -124,6 +124,32 @@ class CollectorSettings:
 
 
 @dataclass(frozen=True)
+class CollectionSettings:
+    """What one `collect` run may admit and fetch (plan part 5). Starting values; measure them in part 10.
+
+    A "new metadata candidate" is a paper the catalog did not know, found by an arXiv or OpenAlex route. Current
+    releases (feeds, missed-release recovery, recent OpenAlex windows) run first; the historical search may use only
+    what is left after `current_release_reserved_candidates`, so it can never starve the day's new releases.
+    """
+
+    daily_new_candidate_budget: int = 500  # per UTC day, across all topics and routes
+    current_release_reserved_candidates: int = 200  # of the daily budget, kept for current releases
+    historical_candidates_per_topic: int = 300  # per initial (or materially changed) historical search of a topic
+    # Recency-weighted historical windows (paperwatch.collection.recency_schedule): candidates per publication year
+    # decay exponentially with age, halving every `historical_half_life_years`, down to the floor year.
+    historical_earliest_year: int = 1940
+    historical_half_life_years: float = 6.0
+    historical_window_count: int = 8  # equal-mass windows: each gets the same share of the topic's budget
+    historical_citation_ordering_min_age_years: float = 5.0  # older windows take their most-cited papers first
+    historical_pages_per_topic_per_run: int = 6  # bounds one run's time (arXiv needs 3 s between requests)
+    pages_per_search_per_run: int = 10  # missed-release recovery and recent OpenAlex windows
+    openalex_recent_window_days: int = 14  # recent window; also how far back each sweep re-checks late indexing
+    openalex_recent_sweep_interval_hours: int = 12  # a recent OpenAlex sweep per query at most this often
+    daily_source_text_budget: int = 30  # full-text DOWNLOADS per UTC day (local files are free)
+    local_sources_dir: str = "local_sources"  # PDFs/XML you place here, named by arXiv id or DOI
+
+
+@dataclass(frozen=True)
 class ExtractorSettings:
     """The PDF/XML text extractor runs in rootless Podman: no network, read-only root, one read-only input."""
 
@@ -212,6 +238,7 @@ class AppConfig:
     report: ReportSettings
     schedule: ScheduleSettings
     collector: CollectorSettings
+    collection: CollectionSettings
     extractor: ExtractorSettings
     access: AccessSettings
     topics: tuple[TopicDefinition, ...]
@@ -236,6 +263,10 @@ class AppConfig:
     @property
     def collector_credentials_path(self) -> Path:
         return _resolve_against_home(self.home_dir, self.collector.credentials_file)
+
+    @property
+    def local_sources_dir(self) -> Path:
+        return _resolve_against_home(self.home_dir, self.collection.local_sources_dir)
 
     def resolve_seed_file_path(self, configured_seed_file_path: str) -> Path:
         """A topic's `csl_json_files` entry as a path (relative entries resolve against the home directory)."""
@@ -274,7 +305,8 @@ def load_app_config(home_dir: Path) -> AppConfig:
     raw_config = _read_toml_file(home_dir / CONFIG_FILE_NAME)
     raw_topics = _read_toml_file(home_dir / TOPICS_FILE_NAME)
 
-    known_sections = {"paths", "model", "roles", "worker", "report", "schedule", "collector", "extractor", "access"}
+    known_sections = {"paths", "model", "roles", "worker", "report", "schedule", "collector", "collection",
+                      "extractor", "access"}
     unknown_sections = set(raw_config) - known_sections
     if unknown_sections:
         raise ConfigurationError(f"unknown section(s) {sorted(unknown_sections)} in {CONFIG_FILE_NAME}")
@@ -288,6 +320,7 @@ def load_app_config(home_dir: Path) -> AppConfig:
         report=_build_settings_section(ReportSettings, raw_config.get("report", {}), "report"),
         schedule=_build_settings_section(ScheduleSettings, raw_config.get("schedule", {}), "schedule"),
         collector=_build_settings_section(CollectorSettings, raw_config.get("collector", {}), "collector"),
+        collection=_build_settings_section(CollectionSettings, raw_config.get("collection", {}), "collection"),
         extractor=_build_settings_section(ExtractorSettings, raw_config.get("extractor", {}), "extractor"),
         access=_build_settings_section(AccessSettings, raw_config.get("access", {}), "access"),
         topics=_build_topics(raw_topics),
@@ -454,6 +487,7 @@ def _validate_cross_field_rules(app_config: AppConfig) -> None:
     if app_config.report.max_papers_per_report <= 0:
         raise ConfigurationError("report.max_papers_per_report must be positive")
     _validate_extractor_settings(app_config.extractor)
+    _validate_collection_settings(app_config.collection)
     worker_settings = app_config.worker
     if worker_settings.max_attempts_per_job <= 0:
         raise ConfigurationError("worker.max_attempts_per_job must be positive")
@@ -462,6 +496,26 @@ def _validate_cross_field_rules(app_config: AppConfig) -> None:
         raise ConfigurationError(
             "worker.lease_seconds must be at least twice worker.lease_renewal_interval_seconds (and both positive), "
             "so one missed renewal does not let another worker reclaim a live job")
+
+
+def _validate_collection_settings(collection_settings: CollectionSettings) -> None:
+    non_negative_limits = {name: value for name, value in dataclasses.asdict(collection_settings).items()
+                           if isinstance(value, int)}
+    for limit_name, limit_value in non_negative_limits.items():
+        if limit_value < 0:
+            raise ConfigurationError(f"collection.{limit_name} must not be negative")
+    if collection_settings.current_release_reserved_candidates > collection_settings.daily_new_candidate_budget:
+        raise ConfigurationError("collection.current_release_reserved_candidates cannot exceed "
+                                 "collection.daily_new_candidate_budget")
+    if not 1800 <= collection_settings.historical_earliest_year:
+        raise ConfigurationError("collection.historical_earliest_year must be 1800 or later")
+    if collection_settings.historical_half_life_years <= 0 or not 1 <= collection_settings.historical_window_count \
+            <= 50 or collection_settings.historical_citation_ordering_min_age_years < 0:
+        raise ConfigurationError("collection.historical_half_life_years must be positive, "
+                                 "collection.historical_window_count between 1 and 50, and "
+                                 "collection.historical_citation_ordering_min_age_years not negative")
+    if not collection_settings.local_sources_dir.strip():
+        raise ConfigurationError("collection.local_sources_dir must name a directory")
 
 
 def _validate_extractor_settings(extractor_settings: ExtractorSettings) -> None:

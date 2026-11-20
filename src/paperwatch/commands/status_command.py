@@ -14,7 +14,14 @@ from paperwatch.network.provider_gateway import PROVIDER_SERVICE_NAME_PREFIX
 from paperwatch.research_profile import (TopicResearchProfile, build_research_profiles,
                                          explain_empty_research_profile, load_active_seed_library_paper_ids)
 from paperwatch.seeds.seed_store import count_active_seeds_by_source, seed_sources_of_all_topics
-from paperwatch.source_checkpoints import load_source_checkpoint
+from paperwatch.collection.candidate_budget import CandidateAdmissionBudget
+from paperwatch.collection.current_releases import (ARXIV_FEED_CHECKPOINT_PREFIX, ARXIV_RECOVERY_CHECKPOINT_PREFIX,
+                                                    OPENALEX_RECENT_CHECKPOINT_PREFIX)
+from paperwatch.collection.historical_search import (history_plan_key, historical_queries_for_topic, plan_windows,
+                                                     recency_schedule_settings)
+from paperwatch.public_query_catalog import build_public_query_catalog
+from paperwatch.source_checkpoints import (SourceCheckpoint, load_source_checkpoint,
+                                           load_source_checkpoints_with_prefix)
 
 
 def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
@@ -84,6 +91,7 @@ def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
     else:
         print("Last successful model call: never")
 
+    _print_collection_coverage(app)
     _print_provider_access_summary(app)
 
     last_report = connection.execute(
@@ -154,3 +162,79 @@ def _print_provider_access_summary(app: AppContext) -> None:
         if provider_health.is_paused_at(utc_now()):
             print(f"Provider {paused_row['service'].removeprefix(PROVIDER_SERVICE_NAME_PREFIX)}: PAUSED until "
                   f"{format_utc_timestamp(provider_health.paused_until)}; last error: {provider_health.last_error}")
+
+
+def _print_collection_coverage(app: AppContext) -> None:
+    """Plan part 5: what each search covered, where it stopped and why, open gaps, budgets, and source text."""
+    connection, collection_settings = app.connection, app.config.collection
+    candidate_budget = CandidateAdmissionBudget.load_for_day(connection, collection_settings, utc_now())
+    print(f"Collection: {candidate_budget.describe()}")
+
+    for feed_checkpoint in load_source_checkpoints_with_prefix(connection, ARXIV_FEED_CHECKPOINT_PREFIX):
+        print(f"  arXiv feed {feed_checkpoint.search_key.removeprefix(ARXIV_FEED_CHECKPOINT_PREFIX)}: last complete "
+              f"poll {feed_checkpoint.last_completed_interval_end or 'never'}; {_describe_coverage(feed_checkpoint)}")
+    open_recoveries = [checkpoint for checkpoint in load_source_checkpoints_with_prefix(
+        connection, ARXIV_RECOVERY_CHECKPOINT_PREFIX) if checkpoint.coverage_status != "exhausted"]
+    if open_recoveries:
+        print(f"  Open coverage gaps: {len(open_recoveries)} missed-release recovery search(es)")
+        for recovery_checkpoint in open_recoveries:
+            print(f"    {recovery_checkpoint.search_key}: {recovery_checkpoint.candidates_admitted} recovered so far; "
+                  f"{_describe_coverage(recovery_checkpoint)}")
+    for recent_checkpoint in load_source_checkpoints_with_prefix(connection, OPENALEX_RECENT_CHECKPOINT_PREFIX):
+        window = (f"{recent_checkpoint.query_parameters.get('window_first_date')}.."
+                  f"{recent_checkpoint.query_parameters.get('window_last_date')}")
+        print(f"  OpenAlex recent \"{recent_checkpoint.query_parameters.get('public_value')}\" "
+              f"[{recent_checkpoint.topic_id}]: window {window}, last complete sweep "
+              f"{recent_checkpoint.last_completed_interval_end or 'never'}; {_describe_coverage(recent_checkpoint)}")
+
+    query_catalog = build_public_query_catalog(app.config.topics)
+    for topic in app.config.topics:
+        historical_queries = historical_queries_for_topic(topic.topic_id, query_catalog)
+        if not historical_queries:
+            continue
+        plan_checkpoint = load_source_checkpoint(connection, history_plan_key(
+            topic.topic_id, historical_queries, recency_schedule_settings(collection_settings)))
+        if plan_checkpoint is None:
+            print(f"  Historical search {topic.topic_id}: not started (runs on the next `collect`)")
+            continue
+        band_rows = connection.execute(
+            """SELECT coverage_status, COUNT(*) AS band_count FROM source_checkpoints
+               WHERE topic_id = ? AND search_key LIKE 'history:%' GROUP BY coverage_status ORDER BY coverage_status""",
+            (topic.topic_id,)).fetchall()
+        band_summary = ", ".join(f"{row['coverage_status']} {row['band_count']}" for row in band_rows) or "none yet"
+        print(f"  Historical search {topic.topic_id}: {plan_checkpoint.candidates_admitted} of "
+              f"{plan_checkpoint.candidate_budget} candidate(s); {_describe_coverage(plan_checkpoint)}; window "
+              f"searches: {band_summary}")
+        _print_admitted_by_window(connection, topic.topic_id, plan_checkpoint)
+
+    text_rows = connection.execute(
+        """SELECT acquisition_status, extraction_status, COUNT(*) AS edition_count FROM edition_source_texts
+           GROUP BY acquisition_status, extraction_status ORDER BY acquisition_status, extraction_status""").fetchall()
+    day_start = format_utc_timestamp(utc_now().replace(hour=0, minute=0, second=0, microsecond=0))
+    downloads_today = connection.execute(
+        "SELECT COUNT(*) FROM edition_source_texts WHERE downloaded_from_network = 1 AND acquired_at >= ?",
+        (day_start,)).fetchone()[0]
+    print("Source text: " + (", ".join(
+        f"{row['acquisition_status']}" + (f"/{row['extraction_status']}" if row["acquisition_status"] == "acquired"
+                                          else "") + f" {row['edition_count']}" for row in text_rows) or "none yet")
+          + f"; {downloads_today} of {collection_settings.daily_source_text_budget} download(s) used today; local "
+            f"files from {app.config.local_sources_dir}")
+    withdrawn_count = connection.execute("SELECT COUNT(*) FROM paper_withdrawals").fetchone()[0]
+    if withdrawn_count:
+        print(f"Withdrawn or retracted papers: {withdrawn_count} (never recommended; a previously reported one gets a "
+              "correction in the next report)")
+
+
+def _describe_coverage(checkpoint: SourceCheckpoint) -> str:
+    return f"{checkpoint.coverage_status}" + (f" ({checkpoint.stop_reason})" if checkpoint.stop_reason else "")
+
+
+def _print_admitted_by_window(connection, topic_id: str, plan_checkpoint: SourceCheckpoint) -> None:
+    """How the topic's historical candidates spread over its recency-weighted windows (newest first)."""
+    admitted_by_window = []
+    for window in plan_windows(plan_checkpoint):
+        admitted_count = connection.execute(
+            "SELECT COALESCE(SUM(candidates_admitted), 0) FROM source_checkpoints WHERE topic_id = ? AND "
+            "search_key LIKE 'history:%' AND search_key LIKE '%:' || ?", (topic_id, window.label)).fetchone()[0]
+        admitted_by_window.append(f"{window.first_date.year}-{window.last_date.year} {admitted_count}")
+    print("    admitted per window (newest first): " + ", ".join(admitted_by_window))

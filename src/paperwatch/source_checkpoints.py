@@ -74,6 +74,16 @@ def load_source_checkpoint(connection: sqlite3.Connection, search_key: str) -> S
         last_completed_interval_end=checkpoint_row["last_completed_interval_end"])
 
 
+def load_source_checkpoints_with_prefix(connection: sqlite3.Connection, search_key_prefix: str,
+                                        ) -> list[SourceCheckpoint]:
+    """All checkpoints whose key starts with the prefix, e.g. every 'arxiv-recovery:' search, ordered by key."""
+    escaped_prefix = search_key_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    key_rows = connection.execute(
+        "SELECT search_key FROM source_checkpoints WHERE search_key LIKE ? ESCAPE '\\' ORDER BY search_key",
+        (escaped_prefix + "%",)).fetchall()
+    return [load_source_checkpoint(connection, key_row["search_key"]) for key_row in key_rows]
+
+
 def save_source_checkpoint(connection: sqlite3.Connection, checkpoint: SourceCheckpoint) -> None:
     """Insert or replace the checkpoint row. Call inside the transaction that stores the page's records."""
     connection.execute(

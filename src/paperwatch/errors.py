@@ -116,6 +116,11 @@ class SourceAccessDenied(PaperwatchError):
     process_exit_code = 10
 
 
+class SourceCredentialRequired(SourceAccessDenied):
+    """The provider serves this request only with a credential the operator has not configured (e.g. OpenAlex
+    pages after the first). Refused locally, before anything is sent; not an outage, so nothing is paused."""
+
+
 class SourceRequestBudgetExhausted(SourceAccessDenied):
     """The provider's daily request budget is used up. Collection from it resumes the next UTC day."""
 

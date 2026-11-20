@@ -59,9 +59,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
     subcommands.add_parser("init", help="create config files, directories and the database (idempotent)")
     subcommands.add_parser("doctor", help="check config, database and the local model server")
-    collect_parser = subcommands.add_parser("collect", help="import papers from sources and queue reviews")
+    collect_parser = subcommands.add_parser("collect", help="collect current and older papers, acquire source text, "
+                                                            "and queue reviews")
     collect_parser.add_argument("--fixture", dest="fixture_paths", type=Path, action="append",
-                                metavar="FILE", help="import recorded papers from a JSON file (repeatable)")
+                                metavar="FILE", help="import recorded papers from a JSON file instead of the live "
+                                                     "arXiv / OpenAlex searches (repeatable)")
+    collect_parser.add_argument("--skip-searches", action="store_true",
+                                help="sync seeds and use local source files only: no arXiv / OpenAlex searches or "
+                                     "full-text downloads")
     work_parser = subcommands.add_parser("work", help="run queued jobs (loops until stopped)")
     work_parser.add_argument("--once", action="store_true", help="run at most one job, then exit")
     reread_parser = subcommands.add_parser("reread", help="queue a fresh reading of one paper (operator request)")
