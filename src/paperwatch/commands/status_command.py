@@ -1,4 +1,5 @@
-"""`paperwatch status`: a read-only summary of topics, catalog, queue, model health, and the last report."""
+"""`paperwatch status`: a read-only summary of the research profile (topics and seeds), catalog, queue, model health,
+provider access, and the last report."""
 
 from __future__ import annotations
 
@@ -10,18 +11,17 @@ from paperwatch.config import TOPICS_FILE_NAME
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, read_service_health_state
 from paperwatch.network.outbound_ledger import summarize_outbound_requests_today
 from paperwatch.network.provider_gateway import PROVIDER_SERVICE_NAME_PREFIX
+from paperwatch.research_profile import (TopicResearchProfile, build_research_profiles,
+                                         explain_empty_research_profile, load_active_seed_library_paper_ids)
+from paperwatch.seeds.seed_store import count_active_seeds_by_source, seed_sources_of_all_topics
+from paperwatch.source_checkpoints import load_source_checkpoint
 
 
 def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
     connection = app.connection
     print(f"paperwatch home: {app.config.home_dir}")
 
-    if app.config.topics:
-        print(f"Topics: {len(app.config.topics)} configured "
-              f"({', '.join(topic.topic_id for topic in app.config.topics)})")
-    else:
-        print(f"Topics: none configured. Add [[topics]] entries (a private research question plus public search "
-              f"terms) to {app.config.home_dir / TOPICS_FILE_NAME}. Zotero seeds arrive in plan part 4.")
+    _print_research_profile(app)
 
     paper_counts = connection.execute(
         "SELECT status, COUNT(*) AS paper_count FROM papers GROUP BY status ORDER BY status").fetchall()
@@ -32,6 +32,10 @@ def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
     edition_count = connection.execute("SELECT COUNT(*) FROM paper_editions").fetchone()[0]
     alias_count = connection.execute("SELECT COUNT(*) FROM paper_aliases").fetchone()[0]
     print(f"Identity: {edition_count} edition(s), {alias_count} identifier alias(es)")
+    active_seed_paper_count = len(load_active_seed_library_paper_ids(connection, app.config))
+    if active_seed_paper_count:
+        print(f"  of the papers, {active_seed_paper_count} are in your active seed library (comparison anchors; "
+              "never queued for review or recommended)")
     unresolved_match_rows = connection.execute(
         """SELECT first_paper_id, second_paper_id, match_reason FROM paper_possible_matches
            WHERE resolution = 'unresolved' ORDER BY detected_at, first_paper_id""").fetchall()
@@ -87,6 +91,49 @@ def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
     print(f"Last report: {last_report['report_date']} {last_report['status']} -> {last_report['output_path']}"
           if last_report else "Last report: none yet")
     return 0
+
+
+def _print_research_profile(app: AppContext) -> None:
+    """Topics with their input mode and anything missing, then each seed source's sync state (plan part 4)."""
+    if not app.config.topics:
+        print(f"Topics: none configured. Add [[topics]] entries to {app.config.home_dir / TOPICS_FILE_NAME}: a "
+              "private `question` with `public_queries` (keywords), and/or seed papers via `zotero_collections` or "
+              "`csl_json_files` (seeds), plus `arxiv_categories` to search.")
+        return
+    profiles = build_research_profiles(app.connection, app.config)
+    print(f"Topics: {len(profiles)} configured, all active")
+    for profile in profiles:
+        print(f"  {profile.topic_id} [{profile.input_mode}]: {_describe_topic_inputs(profile)}")
+        for explanation in profile.explain_missing_inputs():
+            print(f"    ! {explanation}")
+    empty_profile_explanation = explain_empty_research_profile(profiles)
+    if empty_profile_explanation:
+        print(f"  {empty_profile_explanation}")
+
+    for seed_source_reference in seed_sources_of_all_topics(app.config.topics):
+        active_count, title_only_count = count_active_seeds_by_source(app.connection, seed_source_reference)
+        checkpoint = load_source_checkpoint(app.connection, seed_source_reference.checkpoint_key)
+        if checkpoint is None:
+            sync_state = "never synced (run `paperwatch collect`)"
+        else:
+            last_complete = checkpoint.last_completed_interval_end or "never"
+            sync_state = f"last complete sync {last_complete}"
+            if checkpoint.cursor and seed_source_reference.seed_source == "zotero":
+                sync_state += f", library version {checkpoint.cursor}"
+            if checkpoint.coverage_status == "blocked":
+                sync_state += f"; LAST ATTEMPT FAILED: {checkpoint.stop_reason} (using the cached seed set)"
+        print(f"Seed source {seed_source_reference.display_label}: {active_count} active seed(s), "
+              f"{title_only_count} title-only; {sync_state}")
+
+
+def _describe_topic_inputs(profile: TopicResearchProfile) -> str:
+    topic = profile.topic
+    seed_part = f"{len(profile.active_seeds)} active seed(s)"
+    if profile.title_only_seed_count:
+        seed_part += f" ({profile.title_only_seed_count} title-only)"
+    return (f"question {'set' if topic.has_written_question else 'none'}; {len(topic.public_queries)} public "
+            f"quer(y/ies); {len(topic.arxiv_categories)} arXiv categor(y/ies); {seed_part} from "
+            f"{len(profile.seed_sources)} seed source(s)")
 
 
 def _print_provider_access_summary(app: AppContext) -> None:

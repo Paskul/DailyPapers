@@ -1,12 +1,18 @@
 # Research topics. The question is the unit of relevance.
 # Add one [[topics]] block per research interest. All topics are active and every one is considered in each run.
-# Write each question as a full sentence: the local model judges relevance against it.
 #
-#   question         PRIVATE. Given to the local model only; never sent to any paper provider.
-#   public_queries   Search terms the collector MAY send to arXiv / OpenAlex.
-#   arxiv_categories Public subject categories to watch.
-#   zotero_collections Optional Zotero collection keys used as seed papers.
+# A topic can be defined by keywords, by seed papers, or by both:
+#   question           PRIVATE. A full sentence for the local model only; never sent to any paper provider.
+#                      Optional for a seeds-only topic.
+#   public_queries     Search terms the collector MAY send to arXiv / OpenAlex.
+#   arxiv_categories   Public subject categories to watch. A seeds-only topic searches these and ranks the results
+#                      against its seeds locally.
+#   zotero_collections Zotero collection keys (8 characters, from the collection URL). Their items are seed papers,
+#                      synced live with the read-only key in the collector credentials file.
+#   csl_json_files     CSL JSON exports (e.g. Zotero "Export Collection..." -> CSL JSON). Their items are seed papers
+#                      too, with the same standing as a Zotero collection. Paths are relative to this directory.
 #
+# Collection names, notes and attachments are never read; seeds never become outbound search terms.
 # Uncomment and edit the example, or add your own [[topics]] blocks.
 
 # [[topics]]
@@ -15,4 +21,5 @@
 # public_queries = ["multi-robot runtime assurance", "multi-agent plan monitoring",
 #                   "runtime verification mobile robots"]
 # arxiv_categories = ["cs.RO", "cs.MA", "cs.LO"]
-# zotero_collections = []
+# zotero_collections = []           # e.g. ["ABCD2345"]
+# csl_json_files = []               # e.g. ["seeds/team-safety.json"]

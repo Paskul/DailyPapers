@@ -33,6 +33,7 @@ from paperwatch.jobs import (ATTEMPT_SETTLEMENT_FAILED_PERMANENTLY, ATTEMPT_SETT
 from paperwatch.lease_keeper import JobLeaseKeeper
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, ensure_model_service_available, read_service_health_state
 from paperwatch.readings import ReadingJobInput, refresh_paper_status_from_work
+from paperwatch.research_profile import compute_topic_profile_hashes
 from paperwatch.review_inputs import build_abstract_review_packet, build_reviewer_role_input
 from paperwatch.review_store import insert_review_with_topic_assessments
 from paperwatch.roles.base import run_role_once
@@ -101,7 +102,9 @@ def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHand
     def write_review_and_mark_paper_complete(connection: sqlite3.Connection) -> None:
         insert_review_with_topic_assessments(connection, paper_id=claimed_job.paper_id, job_id=claimed_job.job_id,
                                              review_packet=review_packet, role_result=role_result,
-                                             topics=app.config.topics)
+                                             topics=app.config.topics,
+                                             topic_profile_sha256_by_topic_id=compute_topic_profile_hashes(
+                                                 connection, app.config))
         set_paper_status(connection, claimed_job.paper_id, "complete")
 
     return JobHandlerResult(write_review_and_mark_paper_complete,

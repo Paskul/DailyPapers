@@ -42,6 +42,7 @@ CLOCK_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 MAXIMUM_PUBLIC_QUERY_CHARACTERS = 200
 ARXIV_CATEGORY_PATTERN = re.compile(r"^[a-z][a-z-]*(\.[A-Za-z][A-Za-z-]*)?$")  # cs.RO, math.OC, hep-th, q-bio.NC
 ZOTERO_COLLECTION_KEY_PATTERN = re.compile(r"^[A-Z0-9]{8}$")
+MAXIMUM_SEED_FILE_PATH_CHARACTERS = 400
 # The extractor image must be pinned: "name@sha256:<64 hex>" or a full 64-hex image id (content-addressed, and stable
 # across `podman save | podman load` into the collector account's storage).
 PINNED_IMAGE_REFERENCE_PATTERN = re.compile(r"^([a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}|[0-9a-f]{64})$")
@@ -117,6 +118,9 @@ class CollectorSettings:
 
     credentials_file: str = "credentials/collector.toml"  # collector-only; mode 0600, never readable by the worker
     user_agent: str = "paperwatch/0.1 (local research monitor)"  # generic: no name, e-mail, or host details
+    # Looking up a work by an identifier that is known ONLY from the private seed library (e.g. a seed's DOI) tells
+    # the provider which papers the user collects. Off unless the operator opts in (plan part 4).
+    allow_lookup_by_seed_identifier: bool = False
 
 
 @dataclass(frozen=True)
@@ -145,22 +149,56 @@ class AccessSettings:
 
 @dataclass(frozen=True)
 class TopicDefinition:
-    """One research question. `question` is private and never leaves the machine; `public_queries` may."""
+    """One research interest (plan part 4). The question is the unit of relevance.
+
+    Relevance inputs (at least one should be present; `status` explains what is missing):
+      question             PRIVATE sentence for the local model; never leaves the machine. Optional in seeds-only mode.
+      public_queries       phrases the collector MAY send to providers (keyword mode).
+      zotero_collections   Zotero collection keys whose items are seed papers (live Web API).
+      csl_json_files       CSL JSON exports whose items are seed papers (offline). Equal in standing to Zotero.
+    Search inputs: `public_queries` and `arxiv_categories` are the only topic terms that may leave the machine.
+    """
 
     topic_id: str
-    question: str
+    question: str = ""
     public_queries: tuple[str, ...] = ()
     arxiv_categories: tuple[str, ...] = ()
     zotero_collections: tuple[str, ...] = ()
+    csl_json_files: tuple[str, ...] = ()
 
-    def compute_profile_sha256(self) -> str:
-        """Fingerprint of what a topic assessment depends on: the topic id and its question (part 4 adds seeds).
+    @property
+    def has_written_question(self) -> bool:
+        return bool(self.question.strip())
 
-        Stored with every assessment, so a changed question is visible as a stale assessment, while the reading
-        itself is reused.
+    @property
+    def has_keyword_input(self) -> bool:
+        """Keyword mode: the topic has a private question or approved public phrases to judge relevance against."""
+        return self.has_written_question or bool(self.public_queries)
+
+    @property
+    def has_configured_seed_sources(self) -> bool:
+        return bool(self.zotero_collections or self.csl_json_files)
+
+    @property
+    def question_for_local_model(self) -> str:
+        """The question as given to the LOCAL model. A seeds-only topic has none, so describe what defines it."""
+        if self.has_written_question:
+            return self.question
+        if self.public_queries:
+            return f"(no written question; the topic is defined by these terms: {'; '.join(self.public_queries)})"
+        return "(no written question; the topic is defined by the seed papers in the user's library)"
+
+    def compute_profile_sha256(self, seed_fingerprints: tuple[str, ...] = ()) -> str:
+        """Fingerprint of what a topic assessment depends on: the topic id, its question, and its active seeds.
+
+        `seed_fingerprints` are "<seed id>:<metadata hash>" strings (paperwatch.research_profile builds them). Stored
+        with every assessment, so a changed question or seed set is visible as a stale assessment while the reading
+        itself is reused. A topic without seeds keeps the hash it had before seeds existed (plan part 2).
         """
-        profile_text = json.dumps({"topic_id": self.topic_id, "question": " ".join(self.question.split())},
-                                  ensure_ascii=False, sort_keys=True)
+        profile_fields: dict[str, Any] = {"topic_id": self.topic_id, "question": " ".join(self.question.split())}
+        if seed_fingerprints:
+            profile_fields["seed_fingerprints"] = sorted(seed_fingerprints)
+        profile_text = json.dumps(profile_fields, ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(profile_text.encode("utf-8")).hexdigest()
 
 
@@ -198,6 +236,10 @@ class AppConfig:
     @property
     def collector_credentials_path(self) -> Path:
         return _resolve_against_home(self.home_dir, self.collector.credentials_file)
+
+    def resolve_seed_file_path(self, configured_seed_file_path: str) -> Path:
+        """A topic's `csl_json_files` entry as a path (relative entries resolve against the home directory)."""
+        return _resolve_against_home(self.home_dir, configured_seed_file_path)
 
     @property
     def inference_lock_path(self) -> Path:
@@ -308,9 +350,9 @@ def _build_topics(raw_topics_file: dict[str, Any]) -> tuple[TopicDefinition, ...
             raise ConfigurationError(f"topic id '{topic.topic_id}' must match {TOPIC_ID_PATTERN.pattern}")
         if topic.topic_id in seen_topic_ids:
             raise ConfigurationError(f"duplicate topic id '{topic.topic_id}' in {TOPICS_FILE_NAME}")
-        if not topic.question.strip():
-            raise ConfigurationError(f"topic '{topic.topic_id}' has an empty question")
+        # An empty question is allowed (seeds-only mode, plan part 4); `status` explains a topic with no input at all.
         _validate_public_topic_terms(topic)
+        _validate_seed_file_paths(topic)
         seen_topic_ids.add(topic.topic_id)
         topics.append(topic)
     return tuple(topics)
@@ -333,6 +375,15 @@ def _validate_public_topic_terms(topic: TopicDefinition) -> None:
         if not ZOTERO_COLLECTION_KEY_PATTERN.match(collection_key):
             raise ConfigurationError(f"topic '{topic.topic_id}': '{collection_key}' is not a Zotero collection key "
                                      "(8 characters A-Z / 0-9, e.g. from the collection URL)")
+
+
+def _validate_seed_file_paths(topic: TopicDefinition) -> None:
+    """CSL JSON seed files are read locally by the collector; the path itself never leaves the machine."""
+    for seed_file_path in topic.csl_json_files:
+        if not seed_file_path.strip() or len(seed_file_path) > MAXIMUM_SEED_FILE_PATH_CHARACTERS or \
+                any(not character.isprintable() for character in seed_file_path):
+            raise ConfigurationError(f"topic '{topic.topic_id}': CSL JSON file path {seed_file_path!r} must be "
+                                     f"1-{MAXIMUM_SEED_FILE_PATH_CHARACTERS} printable characters")
 
 
 def _build_settings_section(settings_class: type, raw_section: Any, section_label: str):

@@ -353,6 +353,35 @@ CREATE TABLE provider_request_budgets (                        -- daily request 
 """
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# Migration 4 (plan part 4): the seed cache. Each seed's last successfully synced metadata, independent of the catalog
+# paper it maps to (the catalog never rewrites a title; a seed follows the library). Collection membership stays in
+# paper_seed_memberships (migration 2); a sync cursor per seed source lives in source_checkpoints.
+# --------------------------------------------------------------------------------------------------------------------
+MIGRATION_0004_SEED_CACHE = """
+CREATE TABLE seed_items (                                      -- last successfully synced metadata of each seed
+    seed_source         TEXT NOT NULL CHECK (seed_source IN ('zotero', 'csl_json')),
+    seed_item_key       TEXT NOT NULL,                         -- Zotero item key, or '<csl file key>#<CSL id>'
+    paper_id            TEXT NOT NULL REFERENCES papers(paper_id),
+    item_type           TEXT NOT NULL,
+    item_version        INTEGER,                               -- Zotero item version; NULL for CSL JSON
+    title               TEXT NOT NULL,
+    authors_json        TEXT NOT NULL DEFAULT '[]',
+    abstract            TEXT,                                  -- NULL: title-only seed (a recorded limitation)
+    publication_year    INTEGER,
+    identifiers_json    TEXT NOT NULL DEFAULT '[]',            -- ["doi:...", "arxiv:..."] as the library states them
+    matching_text_kind  TEXT NOT NULL CHECK (matching_text_kind IN ('title_and_abstract', 'title_only')),
+    metadata_sha256     TEXT NOT NULL,                         -- changes the topic profile hash when it changes
+    first_seen_at       TEXT NOT NULL,
+    last_synced_at      TEXT NOT NULL,
+    PRIMARY KEY (seed_source, seed_item_key)
+);
+CREATE INDEX seed_items_by_paper ON seed_items(paper_id);
+CREATE INDEX paper_seed_memberships_by_collection
+    ON paper_seed_memberships(seed_source, seed_collection_key, removed_at);
+"""
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("initial schema (plan part 1)", MIGRATION_0001_INITIAL_SCHEMA),
     SchemaMigration("paper identity, editions, reading identity and part-2 records",
@@ -360,4 +389,5 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
                     _backfill_schema_v1_rows_for_identity_and_editions),
     SchemaMigration("outbound request log and provider request budgets (plan part 3)",
                     MIGRATION_0003_OUTBOUND_REQUEST_LEDGER),
+    SchemaMigration("seed cache for Zotero and CSL JSON seeds (plan part 4)", MIGRATION_0004_SEED_CACHE),
 )

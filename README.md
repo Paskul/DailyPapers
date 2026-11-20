@@ -4,8 +4,9 @@ A local reading service that answers **"Which papers are worth my time today, an
 It collects papers, has the local llama.cpp model (Qwen, `qwen-local` at `http://127.0.0.1:8080/v1`) review them,
 and publishes one Markdown report per day. The full design is in [`Local_Paper_Monitor_Plan.md`](Local_Paper_Monitor_Plan.md).
 
-**Status:** parts 1-3 of 10 are implemented: the application skeleton and contracts; paper identity, editions,
-reading identity, and crash-safe jobs; and the access limits on what can reach the internet.
+**Status:** parts 1-4 of 10 are implemented: the application skeleton and contracts; paper identity, editions,
+reading identity, and crash-safe jobs; the access limits on what can reach the internet; and the research profile
+built from topics, Zotero, and CSL JSON seeds.
 
 ## Project decisions (confirmed by the owner)
 
@@ -15,7 +16,7 @@ These answer open questions from the plan. Later build steps must follow them.
 | --- | --- | --- |
 | **Many topics, all active** | `topics.toml` will hold several `[[topics]]` entries. Each `question` is a full sentence. Every topic is accounted for in every run. Collection, screening, review slots, and report selection must cover all topics; none is a "primary" topic. | Parts 4, 6, 7, 9 |
 | **Output stays local for now** | `output_dir = "output"` inside the paperwatch home. Once the pipeline is trusted, `output_dir` will point into an Obsidian vault. Keep note links relative and Obsidian-safe so the move is only a config change. `state/` never moves into the vault. | Parts 7, 9 |
-| **Zotero via live API key** | Seeds come from the Zotero Web API with a read-only key, not a CSL JSON export. Per plan part 3, the key goes in a collector-only credentials file, never in `config.toml` or `topics.toml`. Support for CSL JSON import is optional. | Parts 3, 4 |
+| **Zotero API and CSL JSON are equal seed sources** | A topic's seeds come from Zotero collections (live Web API, read-only key) and/or CSL JSON exports (`csl_json_files`). Both are first-class: same record type, same tables, same role in relevance, same fallback to the last good seed set. Per plan part 3, the Zotero key goes in the collector-only credentials file, never in `config.toml` or `topics.toml`. | Parts 3, 4, 6, 7 |
 | **OS controls applied by the operator** | Service accounts, nftables egress rules, and the Podman extractor image ship as scripts in `deploy/`. The owner runs them with sudo. `paperwatch access-check` verifies them from each service account. | Parts 3, 10 |
 | **llama-server stays a desktop process for now** | It keeps running as the desktop user. No model-account egress rule is loaded, because that UID is the desktop session. `access-check` reports this as a WARN. `deploy/nftables/paperwatch-model-egress.nft` is ready for a later move to its own account. | Parts 3, 10 |
 | **Extractor = poppler `pdftotext`** | PDF text comes from `pdftotext` (reading order, form feeds between pages) in a Debian-slim image pinned by image id. XML (JATS/TEI) comes from a small stdlib dumper in the same image. | Parts 3, 5, 7 |
@@ -29,6 +30,10 @@ $EDITOR ~/paperwatch/topics.toml               # add your research questions
 uv run paperwatch --home ~/paperwatch doctor   # checks config, DB, and the llama.cpp server
 ```
 
+**Your settings live in [`settings/`](settings/README.md)** (topics, config, Zotero/OpenAlex keys, CSL JSON seeds).
+Real files there are gitignored; only `*.example.toml` is committed. After editing, run `deploy/apply_settings.sh`
+to validate them and install them into the deployed home (`/srv/paperwatch`) with the right owners and permissions.
+
 `--home` defaults to `$PAPERWATCH_HOME`, then the current directory. Keep `state/` outside any synced notes folder;
 `output_dir` in `config.toml` may point into a notes vault.
 
@@ -38,11 +43,11 @@ uv run paperwatch --home ~/paperwatch doctor   # checks config, DB, and the llam
 | --- | --- |
 | `init` | Create the home layout and database; never overwrites existing config files. Safe to rerun (migrates the DB). |
 | `doctor` | PASS/WARN/FAIL per component: config, paths, database, model health, alias, context budget, reasoning levels, a schema-constrained request with reasoning. |
-| `collect [--fixture FILE]` | Import papers and queue review jobs. Only recorded fixtures for now (arXiv/OpenAlex/Zotero come in parts 4-5). |
+| `collect [--fixture FILE]` | Sync seed papers (Zotero collections, CSL JSON files), import papers, queue review jobs, and print each topic's input mode. Paper sources are recorded fixtures for now (arXiv/OpenAlex come in part 5). |
 | `work --once` / `work` | Run one job / loop until SIGTERM. Idle = zero inference calls. Several workers may run at once. |
 | `reread PAPER_ID [--reason TEXT]` | Operator request for a fresh reading; gets its own generation id and a separate review. |
 | `report [--date YYYY-MM-DD]` | Publish `output/daily/<date>.md` plus per-paper notes. One report per date; reruns produce identical bytes. |
-| `status` | Topics, papers by status, editions/aliases, unresolved possible duplicates, jobs by kind/status (incl. expired leases), reviews by coverage, model pause state, last model call, outbound requests today and paused providers, last report. |
+| `status` | Topics with their input mode (keywords / seeds / both) and what is missing, seed sources and their last sync, papers by status, editions/aliases, unresolved possible duplicates, jobs by kind/status (incl. expired leases), reviews by coverage, model pause state, last model call, outbound requests today and paused providers, last report. |
 | `access-check --component collector\|worker` | Run as a service account. Verifies the account and group; the read-only provider rules; the private credentials; the output, state, WAL, and cache permissions; the egress probes; llama-server flags and account; and the extractor sandbox (smoke test). |
 
 Failures always print `paperwatch: FAILED [<component>] ...` with a component-specific exit code
@@ -79,6 +84,47 @@ Failures always print `paperwatch: FAILED [<component>] ...` with a component-sp
   stale worker can never overwrite a newer result. A crashed worker's job is reclaimed when its lease expires.
 - **Records for later parts:** `citation_edges` and `comparisons` (`research_graph.py`, part 8),
   `source_checkpoints` (`source_checkpoints.py`, part 5), and `paper_seed_memberships` (part 4).
+
+## Research profile (plan part 4)
+
+The question is the unit of relevance, and every topic is defined by keywords, seeds, or both:
+
+```toml
+[[topics]]
+id = "team-safety"
+question = "Can a runtime monitor reject a joint robot plan before it blocks a human exit?"  # private; optional
+public_queries = ["multi-robot runtime assurance"]        # may be sent to arXiv / OpenAlex
+arxiv_categories = ["cs.RO", "cs.MA"]                     # may be sent; enough for a seeds-only topic
+zotero_collections = ["ABCD2345"]                         # live Zotero seeds (key in the credentials file)
+csl_json_files = ["seeds/team-safety.json"]               # offline CSL JSON seeds, equal standing
+```
+
+- **Modes** (`research_profile.py`): *keywords* (a question and/or public queries), *seeds* (active seeds, no
+  question: the topic searches its categories and ranks results against its seeds locally in part 6), or *both*. If
+  a seed source is empty or offline, the topic keeps working from its keywords. `status` explains a topic with no
+  input, a topic with nothing to search, and title-only seeds.
+- **Seeds** (`seeds/`): Zotero items and CSL JSON items become one `SeedItem` type. Only bibliographic fields are
+  read. Notes, attachments, annotations, and trashed items are dropped. Free-text fields such as Zotero's Extra and
+  CSL's `note` are used only for structured `DOI:` / `arXiv:` lines. A seed without an abstract is stored as
+  `title_only`, a recorded limitation. Each seed keeps its id (`zotero:<item key>` or `csl_json:<file key>#<id>`),
+  so a review can name the seed that matched.
+- **Sync** (`seeds/seed_sync.py`): each source is read completely before anything is committed. Then the seed set,
+  memberships, and checkpoint (`source_checkpoints`) commit in one transaction.
+  - **Zotero:** sends `If-Modified-Since-Version`, so an unchanged library costs one request (HTTP 304). Every page
+    must report the same library version; if the library changes mid-sync, the sync is retried once, then left for
+    the next run. Deleted, trashed, and moved items drop out of the full listing and are marked removed.
+  - **CSL JSON:** a file is re-imported only when its SHA-256 changes.
+  - **Failures:** a missing key, an outage, or a missing or invalid file marks the source blocked, and its last
+    successful seed set stays in use.
+- **Seeds in the catalog:** every seed is also a catalog paper (route `zotero-seed:` / `csl-seed:`), so a seed and
+  the same work found on arXiv are one paper. Active seed papers are never queued for review; they serve as
+  comparison anchors (parts 7 and 9).
+- **What may leave the machine:** only the approved public queries and categories, and for Zotero only the collection
+  key, library id, and paging values. Seed titles, notes, collection names, and the question never become a request.
+  Looking up a work by an identifier known *only* from the seed library (e.g. a seed's DOI) discloses interest in it,
+  so `get_work` refuses unless `[collector] allow_lookup_by_seed_identifier = true`.
+- **Profile hash:** a topic assessment's profile hash now covers the active seeds' metadata too. A changed seed set
+  makes old assessments visibly stale; the reading is reused. A topic without seeds keeps its previous hash.
 
 ## Access limits (plan part 3)
 
@@ -158,6 +204,8 @@ src/paperwatch/
   review_inputs.py, readings.py # reading packet + key; when a (re)reading is queued
   review_store.py               # immutable reviews + separate topic assessments
   jobs.py, lease_keeper.py      # queue with short leases, renewal thread, lease-checked completion
+  research_profile.py           # per-topic input mode (keywords / seeds / both), active seeds, profile hash
+  seeds/                        # Zotero + CSL JSON seed parsers, seed cache, complete-snapshot sync
   research_graph.py             # citation edges and comparison keys (used from part 8)
   source_checkpoints.py         # per-search cursor, budget, coverage (used from part 5)
   public_query_catalog.py       # approved public queries with stable ids: the only searchable terms
@@ -170,9 +218,12 @@ src/paperwatch/
   sources/                      # PaperSource protocol + recorded fixture source
   rendering/                    # Markdown escaping, notes, daily report, atomic writes
   commands/                     # one module per CLI command
-deploy/                         # install, service accounts, nftables egress rules, extractor image, access checks
+settings/                       # operator settings (gitignored) + committed *.example.toml; see settings/README.md
+deploy/                         # install, service accounts, nftables egress rules, extractor image, access checks,
+                                #   apply_settings.sh (install settings/ into the paperwatch home)
 tests/                          # step 1 vertical slice; step 2 identity/readings and worker crash/race tests;
-                                #   step 3 prompt injection, provider gateway, sandbox and egress tests
+                                #   step 3 prompt injection, provider gateway, sandbox and egress tests;
+                                #   step 4 input modes, Zotero/CSL seed sync, outbound-parameter checks
 ```
 
 ## Tests

@@ -7,6 +7,8 @@
 # The collector can make only the requests described here:
 #   * HTTPS GET only, to the `host` of an operation, on a path that fully matches `path_pattern` (a Python regular
 #     expression over the percent-encoded path), with query parameter NAMES from `query_parameters` only.
+#   * Extra request headers (beyond the fixed ones and the credential) only from `request_headers`, e.g. a
+#     conditional "only if changed" header. Only the response headers named in `response_headers` reach the caller.
 #   * Redirects are refused unless the target is HTTPS on a host listed in that operation's `redirect_hosts`.
 #     Provider credentials are attached only on the operation's own host and are dropped on any host change.
 #   * Every connection target is checked against private, loopback, link-local, and reserved addresses, on every hop.
@@ -106,7 +108,9 @@ search_page_size = 100
 [providers.zotero.operations.list_seed_items]
 host = "api.zotero.org"
 path_pattern = '/(users|groups)/[0-9]{1,12}/collections/[A-Z0-9]{8}/items/top'
-query_parameters = ["format", "include", "itemType", "start", "limit", "since"]
+query_parameters = ["format", "include", "itemType", "start", "limit", "sort", "direction"]
+request_headers = ["If-Modified-Since-Version"]          # 304 when the library has not changed since the last sync
+response_headers = ["Last-Modified-Version", "Total-Results"]
 content_types = ["application/json"]
 max_response_bytes = 10_000_000
 max_decompressed_bytes = 50_000_000

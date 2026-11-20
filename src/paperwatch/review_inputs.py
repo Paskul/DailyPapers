@@ -75,5 +75,6 @@ def build_reviewer_role_input(review_packet: ReviewPacket, topics: tuple[TopicDe
     return {
         "coverage": review_packet.coverage,
         "paper": review_packet.paper_payload,
-        "research_topics": [{"topic_id": topic.topic_id, "question": topic.question} for topic in topics],
+        "research_topics": [{"topic_id": topic.topic_id, "question": topic.question_for_local_model}
+                            for topic in topics],
     }

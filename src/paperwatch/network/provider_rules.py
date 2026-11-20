@@ -41,6 +41,8 @@ class OperationRule:
     total_timeout_seconds: float  # wall-clock limit for one hop, headers and body
     redirect_hosts: frozenset[str]  # empty: every redirect is refused
     credential_required: bool
+    request_header_names: frozenset[str] = frozenset()  # lowercase; extra headers a request may carry
+    response_header_names: tuple[str, ...] = ()  # lowercase; response headers handed back to the caller
 
     def describe(self) -> str:
         return f"{self.provider_name}/{self.operation}"
@@ -129,7 +131,8 @@ def load_provider_access_rules(rules_toml_text: str | None = None) -> ProviderAc
 PROVIDER_KEYS = {"credential_kind", "credential_name", "credential_required", "fixed_headers", "daily_request_budget",
                  "minimum_seconds_between_requests", "search_page_size", "operations"}
 OPERATION_KEYS = {"host", "path_pattern", "query_parameters", "content_types", "max_response_bytes",
-                  "max_decompressed_bytes", "total_timeout_seconds", "redirect_hosts", "credential_required"}
+                  "max_decompressed_bytes", "total_timeout_seconds", "redirect_hosts", "credential_required",
+                  "request_headers", "response_headers"}
 
 
 def _build_provider_rule(provider_name: str, raw_provider: Any) -> ProviderRule:
@@ -188,7 +191,11 @@ def _build_operation_rule(provider_name: str, operation: str, raw_operation: Any
         redirect_hosts=frozenset(_validate_hostname(redirect_host, f"{label} redirect_hosts") for redirect_host in
                                  _require_string_list(raw_operation.get("redirect_hosts", []),
                                                       f"{label} redirect_hosts")),
-        credential_required=bool(raw_operation.get("credential_required", provider_credential_required)))
+        credential_required=bool(raw_operation.get("credential_required", provider_credential_required)),
+        request_header_names=frozenset(header_name.lower() for header_name in _require_string_list(
+            raw_operation.get("request_headers", []), f"{label} request_headers")),
+        response_header_names=tuple(header_name.lower() for header_name in _require_string_list(
+            raw_operation.get("response_headers", []), f"{label} response_headers")))
 
 
 def _validate_hostname(raw_host: Any, label: str) -> str:

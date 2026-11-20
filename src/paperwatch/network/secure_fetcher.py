@@ -28,6 +28,7 @@ from paperwatch.network.egress_guard import HTTPS_PORT, EgressBlocked, is_public
 
 ALLOWED_CONTENT_ENCODINGS = ("", "identity", "gzip", "x-gzip", "deflate")
 REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+NOT_MODIFIED_STATUS_CODE = 304  # answer to a conditional request: the resource has not changed
 MAXIMUM_RETRY_AFTER_SECONDS = 7 * 24 * 3600
 
 AddressResolver = Callable[[str, int], list[str]]
@@ -68,10 +69,15 @@ class HopResult:
     body_bytes: bytes  # decoded body of a 2xx response; b"" otherwise
     wire_bytes: int
     connected_address: str | None
+    response_headers: tuple[tuple[str, str], ...] = ()  # (lowercase name, value); the gateway exposes allowed ones
 
     @property
     def is_redirect(self) -> bool:
         return self.status_code in REDIRECT_STATUS_CODES
+
+    @property
+    def is_not_modified(self) -> bool:
+        return self.status_code == NOT_MODIFIED_STATUS_CODE
 
 
 def resolve_public_addresses_only(host: str, port: int) -> list[str]:
@@ -162,7 +168,9 @@ class SecureHttpsFetcher:
         result_without_body = dict(status_code=response.status_code, content_type=content_type,
                                    location_header=response.headers.get("location"),
                                    retry_after_seconds=parse_retry_after_seconds(response.headers.get("retry-after")),
-                                   connected_address=connected_address)
+                                   connected_address=connected_address,
+                                   response_headers=tuple((name.lower(), value)
+                                                          for name, value in response.headers.items()))
         if not 200 <= response.status_code < 300:
             return HopResult(body_bytes=b"", wire_bytes=0, **result_without_body)  # body never read
 

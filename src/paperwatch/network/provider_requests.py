@@ -33,6 +33,7 @@ class ProviderRequest:
     operation: str
     path: str  # percent-encoded
     query_parameters: tuple[tuple[str, str], ...] = ()
+    request_headers: tuple[tuple[str, str], ...] = ()  # e.g. a conditional header; names must be allowed by the rules
 
 
 @dataclass(frozen=True)
@@ -144,16 +145,24 @@ def build_get_text_request(edition_identifier: NormalizedIdentifier) -> Provider
 
 
 def build_seed_items_request(*, library_type: str, library_id: str, collection_key: str, start: int,
-                             page_size: int, since_library_version: int | None = None) -> ProviderRequest:
-    """Top-level items of one approved collection: bibliographic data only (attachments and notes are excluded)."""
+                             page_size: int, if_modified_since_library_version: int | None = None) -> ProviderRequest:
+    """One page of the top-level items of one approved collection: bibliographic data only.
+
+    Pages are ordered by date added (oldest first) so paging is stable while the library version stays the same.
+    With `if_modified_since_library_version`, Zotero answers 304 Not Modified if nothing in the library changed.
+    """
     if library_type not in ("user", "group") or not library_id.isdigit() or start < 0:
         raise SourceAccessDenied("invalid Zotero library or paging values")
-    # "-attachment || note" asks Zotero to leave out attachments and notes; the part-4 seed parser must still drop
-    # any note or attachment item it receives (private notes are skipped by default, plan part 4).
-    query_parameters = [("format", "json"), ("include", "data"), ("itemType", "-attachment || note"),
-                        ("start", str(start)), ("limit", str(page_size))]
-    if since_library_version is not None:
-        query_parameters.append(("since", str(int(since_library_version))))
+    # "-attachment || note" asks Zotero to leave out attachments and notes; the seed parser
+    # (paperwatch.seeds.zotero_items) still drops any note or attachment item it receives.
+    query_parameters = (("format", "json"), ("include", "data"), ("itemType", "-attachment || note"),
+                        ("sort", "dateAdded"), ("direction", "asc"), ("start", str(start)),
+                        ("limit", str(page_size)))
+    request_headers: tuple[tuple[str, str], ...] = ()
+    if if_modified_since_library_version is not None:
+        if isinstance(if_modified_since_library_version, bool) or int(if_modified_since_library_version) < 0:
+            raise SourceAccessDenied("invalid Zotero library version")
+        request_headers = (("If-Modified-Since-Version", str(int(if_modified_since_library_version))),)
     return ProviderRequest("zotero", OPERATION_LIST_SEED_ITEMS,
                            f"/{library_type}s/{library_id}/collections/{collection_key}/items/top",
-                           tuple(query_parameters))
+                           query_parameters, request_headers)

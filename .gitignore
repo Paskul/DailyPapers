@@ -13,3 +13,9 @@ build/
 /topics.toml
 /state/
 /output/
+
+# Operator settings (installed into the paperwatch home by deploy/apply_settings.sh). They hold private research
+# questions and API keys, so only the examples and the README are committed.
+/settings/*
+!/settings/*.example.toml
+!/settings/README.md

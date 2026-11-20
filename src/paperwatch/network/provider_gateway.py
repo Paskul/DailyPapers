@@ -9,14 +9,16 @@ It offers a handful of FIXED operations; callers never supply a URL, host, or fr
 
 For every operation, code:
   1. re-checks the id against source records at dispatch (known alias / citation edge / catalog entry / approved
-     collection), so a stale or invented id from a queue never reaches a provider;
+     collection), so a stale or invented id from a queue never reaches a provider. An identifier known ONLY from the
+     private seed library is refused unless collector.allow_lookup_by_seed_identifier is set (plan part 4);
   2. constructs the request (provider_requests.py) and checks it against the read-only provider rules;
   3. refuses while the provider is paused after an outage, and reserves one request from its budget and spacing;
   4. attaches that provider's credential only for its own host, sends one bounded hop (secure_fetcher.py), and
      follows a redirect only to an allowed host, dropping credentials on any host change;
   5. logs every hop, with credentials redacted, to `outbound_requests`.
 Network calls happen outside write transactions; each budget reservation and log row is its own short write.
-Response parsing (Atom, OpenAlex JSON, Zotero JSON) belongs to the source modules of parts 4-5.
+Response parsing belongs to the source modules: Zotero JSON in paperwatch.seeds (part 4), Atom and OpenAlex JSON in
+part 5. A conditional request (Zotero's If-Modified-Since-Version) may come back as `was_not_modified`.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -48,6 +50,7 @@ from paperwatch.network.secure_fetcher import (AddressResolver, HopResult, Https
 from paperwatch.public_query_catalog import build_public_query_catalog, find_public_query
 from paperwatch.scholarly_identifiers import ARXIV_SCHEME, NormalizedIdentifier, normalize_identifier, \
     parse_version_number
+from paperwatch.seeds.seed_items import SEED_DISCOVERY_ROUTE_PREFIXES
 from paperwatch.source_cache import INTERNAL_ID_PATTERN, CachedSourceFile, store_source_bytes
 
 PROVIDER_SERVICE_NAME_PREFIX = "provider:"
@@ -63,6 +66,8 @@ class ProviderResponse:
     content_type: str
     body_bytes: bytes
     final_host: str
+    response_headers: dict[str, str] = field(default_factory=dict)  # only those the operation rule exposes
+    was_not_modified: bool = False  # a conditional request found nothing changed; body_bytes is empty
 
 
 def provider_service_name(provider_name: str) -> str:
@@ -118,7 +123,7 @@ class ProviderGateway:
                                   provider_response.content_type)
 
     def list_seed_items(self, collection_key: str, start: int = 0, *,
-                        since_library_version: int | None = None) -> ProviderResponse:
+                        if_modified_since_library_version: int | None = None) -> ProviderResponse:
         approved_collection_keys = {collection_key for topic in self._app_config.topics
                                     for collection_key in topic.zotero_collections}
         if collection_key not in approved_collection_keys:
@@ -132,17 +137,28 @@ class ProviderGateway:
             library_type=self._credentials.get("zotero", "library_type") or "user", library_id=library_id,
             collection_key=collection_key, start=start,
             page_size=self._rules.provider_rule("zotero").search_page_size,
-            since_library_version=since_library_version))
+            if_modified_since_library_version=if_modified_since_library_version))
 
     # ---- dispatch-time checks against source records ----------------------------------------------------------
 
     def _is_known_source_identifier(self, identifier: NormalizedIdentifier) -> bool:
+        """Known = a provider supplied it (a citation edge or a paper found by a public route), or it is a seed's
+        identifier and the operator explicitly allowed seed lookups (looking it up discloses interest in it)."""
         version_free_identifier = identifier.without_version()
-        if find_paper_id_by_identifier(self._connection, version_free_identifier) is not None:
+        if self._connection.execute(
+                "SELECT 1 FROM citation_edges WHERE cited_scheme = ? AND cited_value = ? LIMIT 1",
+                (version_free_identifier.scheme, version_free_identifier.value)).fetchone() is not None:
             return True
-        return self._connection.execute(
-            "SELECT 1 FROM citation_edges WHERE cited_scheme = ? AND cited_value = ? LIMIT 1",
-            (version_free_identifier.scheme, version_free_identifier.value)).fetchone() is not None
+        paper_id = find_paper_id_by_identifier(self._connection, version_free_identifier)
+        if paper_id is None:
+            return False
+        if self._app_config.collector.allow_lookup_by_seed_identifier or \
+                _paper_was_found_by_a_public_route(self._connection, paper_id):
+            return True
+        raise SourceAccessDenied(
+            f"'{identifier.scheme_and_value}' is known only from the private seed library; looking it up would "
+            "disclose interest in that paper",
+            operator_hint="set collector.allow_lookup_by_seed_identifier = true in config.toml to permit this")
 
     def _identifier_of_catalogued_edition(self, edition_row: sqlite3.Row) -> NormalizedIdentifier:
         """The edition's own identifier (with version), re-checked against the paper's aliases."""
@@ -170,14 +186,16 @@ class ProviderGateway:
                                 total_timeout_seconds=operation_rule.total_timeout_seconds)
         current_hop = HttpsHop(provider_rule.provider_name, operation_rule.host, provider_request.path,
                                provider_request.query_parameters + credential_parameters,
-                               provider_rule.fixed_headers + credential_headers)
+                               provider_rule.fixed_headers + provider_request.request_headers + credential_headers)
 
         for hop_number in range(self._rules.max_redirect_hops + 1):
             hop_result = self._send_one_hop(provider_rule, operation_rule, current_hop, hop_number, bounds)
-            if 200 <= hop_result.status_code < 300:
+            was_not_modified = hop_result.is_not_modified and bool(provider_request.request_headers)
+            if 200 <= hop_result.status_code < 300 or was_not_modified:
                 record_service_success(self._connection, provider_service_name(provider_rule.provider_name))
                 return ProviderResponse(provider_rule.provider_name, operation_rule.operation,
-                                        hop_result.content_type, hop_result.body_bytes, current_hop.host)
+                                        hop_result.content_type, hop_result.body_bytes, current_hop.host,
+                                        _exposed_response_headers(hop_result, operation_rule), was_not_modified)
             if hop_result.is_redirect:
                 current_hop = self._next_hop_after_redirect(provider_rule, operation_rule, current_hop, hop_result,
                                                             hop_number)
@@ -223,6 +241,7 @@ class ProviderGateway:
             self._pause_provider(outage)
             raise
         outcome = ("ok" if 200 <= hop_result.status_code < 300 else "redirect" if hop_result.is_redirect else
+                   "not_modified" if hop_result.is_not_modified else
                    "not_found" if hop_result.status_code in STATUS_CODES_MEANING_RECORD_NOT_FOUND else "error")
         log_hop(outcome, status_code=hop_result.status_code, response_bytes=len(hop_result.body_bytes))
         return hop_result
@@ -342,6 +361,26 @@ def _require_request_within_rule(provider_request: ProviderRequest, operation_ru
     for name, value in provider_request.query_parameters:
         if any(not character.isprintable() for character in value):
             raise SourceAccessDenied(f"{operation_rule.describe()}: parameter '{name}' contains control characters")
+    for header_name, header_value in provider_request.request_headers:
+        if header_name.lower() not in operation_rule.request_header_names:
+            raise SourceAccessDenied(f"{operation_rule.describe()}: request header '{header_name}' is not allowed by "
+                                     "the provider rules")
+        if any(not character.isprintable() for character in header_value):
+            raise SourceAccessDenied(f"{operation_rule.describe()}: header '{header_name}' contains control "
+                                     "characters")
+
+
+def _exposed_response_headers(hop_result: HopResult, operation_rule: OperationRule) -> dict[str, str]:
+    """Only the response headers the operation rule names (lowercase keys), e.g. Zotero's Last-Modified-Version."""
+    return {name: value for name, value in hop_result.response_headers if name in operation_rule.response_header_names}
+
+
+def _paper_was_found_by_a_public_route(connection: sqlite3.Connection, paper_id: str) -> bool:
+    """True if any discovery route of the paper is a public provider route rather than the private seed library."""
+    for discovery_row in connection.execute("SELECT route FROM paper_discoveries WHERE paper_id = ?", (paper_id,)):
+        if not discovery_row["route"].startswith(SEED_DISCOVERY_ROUTE_PREFIXES):
+            return True
+    return False
 
 
 def _without_credential(query_parameters: tuple[tuple[str, str], ...],

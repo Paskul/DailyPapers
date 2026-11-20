@@ -33,8 +33,12 @@ class TopicAssessment:
 
 def insert_review_with_topic_assessments(connection: sqlite3.Connection, *, paper_id: str, job_id: str,
                                          review_packet: ReviewPacket, role_result: RoleRunResult,
-                                         topics: tuple[TopicDefinition, ...]) -> str:
+                                         topics: tuple[TopicDefinition, ...],
+                                         topic_profile_sha256_by_topic_id: dict[str, str] | None = None) -> str:
     """Insert the reading once and its topic assessments. Returns the review id that now holds this input.
+
+    `topic_profile_sha256_by_topic_id` (paperwatch.research_profile) includes each topic's active seeds; without it
+    the hash covers the topic id and question only.
 
     UNIQUE(paper_id, review_input_key) keeps the first accepted review if the same input was somehow read twice.
     """
@@ -61,19 +65,20 @@ def insert_review_with_topic_assessments(connection: sqlite3.Connection, *, pape
                                 topic_score=topic_relevance["relevance_rating"],
                                 score_scale=SCORE_SCALE_RATING_0_TO_4, assessment=topic_relevance,
                                 role_name=role_result.role_name, prompt_version=role_result.prompt_version,
-                                assessed_at=completed_at)
+                                assessed_at=completed_at,
+                                topic_profile_sha256=(topic_profile_sha256_by_topic_id or {}).get(topic.topic_id))
     return new_review_id
 
 
 def insert_topic_assessment(connection: sqlite3.Connection, *, review_id: str, topic: TopicDefinition,
                             topic_score: int, score_scale: str, assessment: dict[str, Any], role_name: str,
-                            prompt_version: str, assessed_at: str) -> bool:
+                            prompt_version: str, assessed_at: str, topic_profile_sha256: str | None = None) -> bool:
     """One assessment per (review, topic, topic profile). Returns False if that exact assessment already exists."""
     insert_cursor = connection.execute(
         """INSERT OR IGNORE INTO review_topic_assessments (review_id, topic_id, topic_profile_sha256, topic_score,
                score_scale, assessment_json, role_name, prompt_version, assessed_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (review_id, topic.topic_id, topic.compute_profile_sha256(), topic_score, score_scale,
+        (review_id, topic.topic_id, topic_profile_sha256 or topic.compute_profile_sha256(), topic_score, score_scale,
          json.dumps(assessment, ensure_ascii=False), role_name, prompt_version, assessed_at))
     return insert_cursor.rowcount == 1
 

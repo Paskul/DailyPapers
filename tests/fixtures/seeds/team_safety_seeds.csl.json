@@ -1,0 +1,34 @@
+[
+  {
+    "id": "http://zotero.org/users/local/abc/items/CSL00001",
+    "type": "article-journal",
+    "title": "Runtime Verification of Multi-Robot Plans (synthetic seed)",
+    "author": [{"family": "Seedwright", "given": "Ada"}, {"literal": "Synthetic Lab"}],
+    "abstract": "SYNTHETIC SEED. A monitor checks joint plans against exit-clearance constraints before dispatch.",
+    "DOI": "10.5555/synthetic.seed.0001",
+    "issued": {"date-parts": [[2021, 6, 1]]},
+    "note": "PRIVATE-CSL-NOTE: my reading notes about this paper must never leave the machine"
+  },
+  {
+    "id": "csl-seed-2",
+    "type": "article",
+    "title": "Plan Monitoring for Robot Teams (synthetic arXiv seed)",
+    "author": [{"family": "Example", "given": "Bo"}],
+    "abstract": "SYNTHETIC SEED. A preprint about monitoring multi-agent plans.",
+    "number": "arXiv:2105.01234",
+    "publisher": "arXiv",
+    "issued": {"raw": "2021-05"}
+  },
+  {
+    "id": "csl-seed-3",
+    "type": "paper-conference",
+    "title": "Exit Clearance Under Uncertain Travel Times (synthetic title-only seed)",
+    "author": [{"family": "Notext", "given": "Cy"}],
+    "issued": {"literal": "Spring 2019"}
+  },
+  {
+    "id": "csl-seed-4",
+    "type": "article-journal",
+    "author": [{"family": "Untitled", "given": "Dee"}]
+  }
+]

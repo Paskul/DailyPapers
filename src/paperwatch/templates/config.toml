@@ -49,6 +49,8 @@ collect_times = ["00:30", "06:30", "12:30", "18:30"]
 [collector]
 credentials_file = "credentials/collector.toml"   # API keys (Zotero, OpenAlex). Collector account only, mode 0600.
 user_agent = "paperwatch/0.1 (local research monitor)"
+allow_lookup_by_seed_identifier = false   # true lets the collector look up a work by an identifier known only from
+                                          # your seed library (e.g. a seed's DOI); that tells the provider you hold it
 
 # PDF/XML text extraction runs in rootless Podman with no network, a read-only root, and one read-only input.
 [extractor]
