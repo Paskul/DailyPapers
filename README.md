@@ -4,12 +4,12 @@ A local reading service that answers **"Which papers are worth my time today, an
 It collects papers, has the local llama.cpp model (Qwen, `qwen-local` at `http://127.0.0.1:8080/v1`) review them,
 and publishes one Markdown report per day. The full design is in [`Local_Paper_Monitor_Plan.md`](Local_Paper_Monitor_Plan.md).
 
-**Status:** parts 1-8 of 10 are implemented: the application skeleton and contracts; paper identity, editions,
+**Status:** parts 1-9 of 10 are implemented, and part 10 is under way (a one-day pilot; see below): the application skeleton and contracts; paper identity, editions,
 reading identity, and crash-safe jobs; the access limits on what can reach the internet; the research profile
 built from topics, Zotero, and CSL JSON seeds; collection of current papers plus a finite historical search; cheap
 CPU screening of every candidate with ordered dispatch of the readings; and evidence-backed reading with
 passage-level citations, a 0-100 reading-priority rubric per topic, and a permanent note per review; and following
-the important references of reviewed papers plus comparisons of reviews that address the same question.
+the important references of reviewed papers plus comparisons of reviews that address the same question; and one daily Markdown report.
 
 ## Project decisions (confirmed by the owner)
 
@@ -38,6 +38,9 @@ These answer open questions from the plan. Later build steps must follow them.
 | **References are followed for relevant reviews only** | A reviewed paper's references are fetched only if its review rated question_fit >= 2 ("addresses part of the question") for some topic, the same bar as comparison anchors. Owner decision, 2026-11-20. | Part 8 |
 | **Report writer at medium reasoning, 30-minute deadline** | The writer role uses reasoning `medium` (`[roles.writer]`). Getting the inference slot, the call, its one repair, and validation must finish within `report.writer_deadline_minutes` (30), or the report is rendered from the saved summaries and labelled as a fallback. Owner decision, 2026-11-20. | Parts 9, 10 |
 | **Updates are decided by a deterministic rule** | A reported paper comes back as an "update" only if its newer review read different text AND its numeric results, its supported assumptions, its insufficient-evidence verdict, or (by at least 10 points) its best score changed. No model call; a purely verbal change is not detected. Owner decision, 2026-11-20. | Part 9 |
+| **Pilot timers run once** | Plan part 10's 24-hour pilot uses one-shot systemd timers with absolute dates (collections the evening and night of the pilot day, the report at 07:00 the next morning). They can never run again: absolute times only, an expiry condition in every service, no unit enabled for boot, and a finish step that deletes every pilot unit. No recurring timers are installed until the owner reviews the pilot. Owner decision, 2026-11-20. | Part 10 |
+| **Section reader at medium reasoning** | `[roles.section_reader] reasoning_effort = "medium"` so long papers cost less; the reviewer synthesis and the topic assessor stay at the server default (xhigh). Owner decision, 2026-11-20 (pilot). | Parts 7, 10 |
+| **llama-server runs with `--offline`** | The model server (the owner's user unit `qwen.service`) never downloads or fetches anything at run time. It still runs as the desktop user. Owner decision, 2026-11-20. | Parts 3, 10 |
 | **Extractor = poppler `pdftotext`** | PDF text comes from `pdftotext` (reading order, form feeds between pages) in a Debian-slim image pinned by image id. XML (JATS/TEI) comes from a small stdlib dumper in the same image. | Parts 3, 5, 7 |
 
 ## Setup
@@ -373,6 +376,54 @@ A second `report` while one runs exits with code 13 (`state/report-publication.l
 publishes it with its own scheduled cutoff. A date whose cutoff is still ahead is refused, unless `--early` (today
 only) publishes it with "now" as the cutoff and says so in the opening.
 
+## Deployment and the one-day pilot (plan part 10)
+
+The first unattended run is a **one-day pilot** that starts and ends by itself:
+
+```bash
+sudo env "PATH=$PATH" deploy/pilot/install_one_day_pilot.sh      # reinstall /opt, migrate, access-check, doctor,
+                                                                 # render + enable the one-shot timers, collect now
+paperwatch --home /srv/paperwatch status                         # progress (as yourself)
+journalctl -u 'paperwatch-pilot-*' -f                            # live service logs (redacted)
+sudo deploy/pilot/stop_one_day_pilot.sh                          # optional: end the pilot early
+```
+
+| Unit | When | What |
+| --- | --- | --- |
+| `paperwatch-pilot-collect` (collector account) | at install, then each `schedule.collect_times` still ahead before the cutoff (e.g. 18:30, 00:30, 06:30) | `collect`; also starts the worker |
+| `paperwatch-pilot-worker` (worker account) | from the first collection until the report cutoff (07:00 the next day) | `work` |
+| `paperwatch-pilot-report` (worker account) | 07:00:30 the next day; stops the worker first; retried until 07:35 | `report --date <next day>` |
+| `paperwatch-pilot-finish` (root) | 08:40 the next day | stops the worker, disables every pilot timer, **deletes every pilot unit file** |
+
+**Why it runs once** (`src/paperwatch/deployment/one_day_pilot.py`, tested in
+`tests/test_step10_one_day_pilot_schedule.py`):
+1. every `OnCalendar=` is one absolute instant with its timezone; `systemd-analyze calendar` finds no second elapse;
+2. no relative or boot trigger (`OnBootSec=`, `OnUnitActiveSec=`, ...), and no service has an `[Install]` section;
+3. every service has an `ExecCondition=` with a fixed Unix-time deadline, so it is skipped afterwards even if started
+   by hand (the test runs the condition and checks that it skips);
+4. the finish step deletes all seven unit files and the timer stamps, then reloads systemd.
+
+**Sandbox of the processes that talk to the model** (worker and report units), on top of the nftables rule and the
+in-process egress guard: `IPAddressDeny=any` + `IPAddressAllow=localhost`, `ProtectSystem=strict` with write access
+only to `state/` and `output/`, `ProtectHome=yes`, private `/tmp` and `/dev`, no capabilities, no new privileges,
+no namespaces. The collector keeps a lighter sandbox (`ProtectSystem=full`) because rootless Podman needs setuid id
+mapping and `/run/user`; it relies on nftables (DNS + public HTTPS only), the egress guard, and file permissions.
+
+**Service logs are redacted** (`service_log_redaction.py`): credential-like URL parameters and headers become
+`[redacted]`, long quotes of paper or model text become `[text omitted]`, lines are bounded, tracebacks are dropped,
+and the HTTP libraries never log request URLs (an OpenAlex key travels as `?api_key=`). Full details stay in the
+database.
+
+**Adversarial fixture day** (`tests/test_step10_hostile_model_day.py`): a paper tells the AI to fetch an invented
+work, upload a private note, search a private phrase, read `/etc/passwd`, run a shell command, and award full
+marks; the model is assumed fully compromised in every role. Over a whole day (`collect` -> worker -> `collect` ...
+-> `report`) the test proves: every provider request is a GET built by host code from approved queries,
+provider-supplied citation ids, and catalogued editions, with nothing from the paper or the model in it; stored
+research choices are exactly ids the host offered (also rechecked where they are persisted:
+`reference_selection.only_offered_choices`); no socket, no program, files only in `state/` and `output/` under
+internal-id names; hostile text is inert in notes and the report. 1,500 random hostile research answers never get an
+unoffered id past the checks.
+
 ## Research profile (plan part 4)
 
 The question is the unit of relevance, and every topic is defined by keywords, seeds, or both:
@@ -528,10 +579,13 @@ src/paperwatch/
                                 #   comparisons shown, writer synthesis with deadline and fallback, publication lock
   rendering/                    # Markdown escaping, evidence notes, comparison notes, daily report, atomic writes
   commands/                     # one module per CLI command
+  deployment/                   # part 10: systemd units of the one-day pilot (one-shot timers)
+  service_log_redaction.py      # part 10: no keys, signed URLs, or paper/model text in service logs
 settings/                       # operator settings (gitignored) + committed *.example.toml; see settings/README.md
 deploy/                         # install, service accounts, nftables egress rules, extractor image, embedding model,
                                 #   access checks,
-                                #   apply_settings.sh (install settings/ into the paperwatch home)
+                                #   apply_settings.sh (install settings/ into the paperwatch home),
+                                #   pilot/ (start and stop the one-day pilot)
 tests/                          # step 1 vertical slice; step 2 identity/readings and worker crash/race tests;
                                 #   step 3 prompt injection, provider gateway, sandbox and egress tests;
                                 #   step 4 input modes, Zotero/CSL seed sync, outbound-parameter checks;

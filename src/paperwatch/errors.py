@@ -202,8 +202,12 @@ class UnexpectedWorkerError(PaperwatchError):
 
 
 def describe_failure_for_operator(failure: PaperwatchError, *, message_override: str | None = None) -> str:
-    """One consistent line (plus an optional hint line) naming the failed component."""
-    description = f"paperwatch: FAILED [{failure.failed_component}] {message_override or failure}"
+    """One consistent line (plus an optional hint line) naming the failed component. Redacted for service logs
+    (plan part 10): no credentials, no long quotes of paper or model text; the full message stays in the database."""
+    from paperwatch.service_log_redaction import redact_service_log_text  # local import: errors.py has no deps
+
+    description = f"paperwatch: FAILED [{failure.failed_component}] " \
+                  f"{redact_service_log_text(str(message_override or failure))}"
     if failure.operator_hint:
-        description += f"\n  hint: {failure.operator_hint}"
+        description += f"\n  hint: {redact_service_log_text(failure.operator_hint)}"
     return description

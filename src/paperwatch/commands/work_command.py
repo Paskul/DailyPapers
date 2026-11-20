@@ -33,6 +33,7 @@ from paperwatch.app_context import AppContext
 from paperwatch.catalog import load_edition_row, set_paper_status
 from paperwatch.clock import utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
+from paperwatch.service_log_redaction import redact_service_log_text
 from paperwatch.errors import (InferenceLockTimeout, ModelServerUnavailable, PaperwatchError, SourceInputError,
                                UnexpectedWorkerError, describe_failure_for_operator)
 from paperwatch.comparisons.comparison_job import prepare_comparison, write_comparison
@@ -400,4 +401,4 @@ def _print_cycle_report(cycle_report: WorkCycleReport) -> None:
         print(describe_failure_for_operator(cycle_report.failure, message_override=cycle_report.message),
               file=sys.stderr, flush=True)
     else:
-        print(f"work: {cycle_report.message}", flush=True)
+        print(f"work: {redact_service_log_text(cycle_report.message)}", flush=True)

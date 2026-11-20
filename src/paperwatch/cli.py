@@ -32,6 +32,7 @@ from paperwatch.errors import PaperwatchError, describe_failure_for_operator
 from paperwatch.network.egress_guard import (arm_egress_policy, build_collector_policy, build_local_model_policy,
                                              build_no_network_policy)
 from paperwatch.network.provider_rules import load_provider_access_rules
+from paperwatch.service_log_redaction import install_service_log_redaction
 
 HOME_ENVIRONMENT_VARIABLE = "PAPERWATCH_HOME"
 
@@ -106,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_argument_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO if arguments.verbose else logging.WARNING,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    install_service_log_redaction()  # plan part 10: no keys, signed URLs, or paper text in service logs
     try:
         if arguments.command_name == "init":
             arm_egress_policy(build_no_network_policy("init"))

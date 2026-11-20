@@ -176,7 +176,7 @@ def write_reference_selection_outcome(connection: sqlite3.Connection, app_config
          role_result.model_response.server_build if role_result else None, utc_now_timestamp()))
     summary = SelectionWriteSummary()
     child_hop_depth = prepared.parent_hop_depth + 1
-    for selection in research_output.get("selected_references", [])[:app_config.references.references_per_paper]:
+    for selection in only_offered_choices(research_output, prepared)[0][:app_config.references.references_per_paper]:
         connection.execute(
             """INSERT OR IGNORE INTO reference_selections (parent_review_id, cited_paper_id, parent_paper_id,
                    citation_hop_depth, role_in_parent, importance, explanation, admission_status, selected_at)
@@ -190,11 +190,32 @@ def write_reference_selection_outcome(connection: sqlite3.Connection, app_config
                                                           only_parent_review_id=job_input.parent_review_id)
     summary.admitted, summary.waiting, summary.skipped = admission_counts
     branch_by_id = {branch.branch_id: branch for branch in prepared.branches}
-    for gap in research_output.get("search_gap", []):
+    for gap in only_offered_choices(research_output, prepared)[1][:1]:
         summary.branch_recorded = record_branch_request(connection, branch_by_id[gap["branch_id"]],
                                                         parent_review_id=job_input.parent_review_id,
                                                         gap_statement=f"{gap['gap']} — {gap['explanation']}")
     return summary
+
+
+def only_offered_choices(research_output: dict[str, Any], prepared: PreparedReferenceSelection
+                         ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(selections, gaps) whose ids the host itself offered in this job, each id at most once.
+
+    The role's own check (roles/research.py) already rejects any other id before this point. This repeats it where
+    the choice is persisted (plan part 10, defence in depth): even if validation were skipped or changed, a model
+    answer can only ever name a catalog paper the parent cites, or an unused branch of an approved search plan."""
+    offered_candidate_ids = {candidate.paper_id for candidate in prepared.candidates}
+    offered_branch_ids = {branch.branch_id for branch in prepared.branches}
+    chosen_candidate_ids: set[str] = set()
+    selections = []
+    for selection in research_output.get("selected_references", []) or []:
+        candidate_id = selection.get("candidate_id") if isinstance(selection, dict) else None
+        if candidate_id in offered_candidate_ids and candidate_id not in chosen_candidate_ids:
+            chosen_candidate_ids.add(candidate_id)
+            selections.append(selection)
+    gaps = [gap for gap in research_output.get("search_gap", []) or []
+            if isinstance(gap, dict) and gap.get("branch_id") in offered_branch_ids]
+    return selections, gaps
 
 
 def count_reference_admissions_today(connection: sqlite3.Connection, moment: datetime) -> int:
