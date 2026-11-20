@@ -3,7 +3,7 @@
 
 [paths]
 state_dir = "state"     # SQLite database + source cache. Keep OUTSIDE any synced notes folder.
-output_dir = "output"   # Markdown notes (papers/) and daily reports (daily/). Local for now; later an Obsidian vault.
+output_dir = "output"   # Markdown notes (papers/) and daily reports (daily/). May point into an Obsidian vault.
 
 [model]
 backend = "llama_cpp"                    # "llama_cpp" (real local server) or "fake" (offline tests)
@@ -17,13 +17,13 @@ outage_backoff_max_seconds = 1800
 inference_lock_wait_seconds = 3600       # one inference request at a time across all roles
 
 # Hard limits per model role. Reasoning tokens count toward max_output_tokens.
-# reasoning_effort: "server-default" or a level the server supports (this server: low, medium, xhigh).
+# reasoning_effort: "server-default" or a level the server supports (e.g. low, medium, high).
 [roles.healthcheck]
 max_output_tokens = 2048
 timeout_seconds = 120
 reasoning_effort = "low"
 
-[roles.section_reader]                    # reads one bounded section of a long paper (plan part 7)
+[roles.section_reader]                    # reads one bounded section of a long paper
 max_output_tokens = 16384
 timeout_seconds = 1800
 reasoning_effort = "server-default"
@@ -38,20 +38,20 @@ max_output_tokens = 12288
 timeout_seconds = 1200
 reasoning_effort = "server-default"
 
-[roles.research]                          # picks the references worth reading, and a gap search (plan part 8)
+[roles.research]                          # picks the references worth reading, and a gap search
 max_output_tokens = 8192
 timeout_seconds = 1200
 reasoning_effort = "server-default"
 
-[roles.comparison]                        # compares two saved reviews on the same question (plan part 8)
+[roles.comparison]                        # compares two saved reviews on the same question
 max_output_tokens = 12288
 timeout_seconds = 1200
 reasoning_effort = "server-default"
 
-[roles.writer]                            # writes the daily report's overview from the frozen reviews (plan part 9)
+[roles.writer]                            # writes the daily report's overview from the frozen reviews
 max_output_tokens = 8192
 timeout_seconds = 1500
-reasoning_effort = "medium"               # owner decision 2026-11-20; also bounded by report.writer_deadline_minutes
+reasoning_effort = "medium"               # also bounded by report.writer_deadline_minutes
 
 [worker]
 max_attempts_per_job = 3      # paper-specific failures only; outages never consume attempts
@@ -79,7 +79,7 @@ user_agent = "paperwatch/0.1 (local research monitor)"
 allow_lookup_by_seed_identifier = false   # true lets the collector look up a work by an identifier known only from
                                           # your seed library (e.g. a seed's DOI); that tells the provider you hold it
 
-# What one `collect` run may admit and fetch (plan part 5). Starting values; tune them after measuring (part 10).
+# What one `collect` run may admit and fetch Starting values; tune them with `paperwatch capacity`.
 [collection]
 daily_new_candidate_budget = 500          # papers new to the catalog per UTC day, from arXiv / OpenAlex routes
 current_release_reserved_candidates = 200 # of those, kept for current releases; the historical search uses the rest
@@ -102,19 +102,19 @@ source_text_hold_minutes = 60             # new readings wait until this run has
 source_cache_limit_megabytes = 4096       # downloads above this are removed (oldest first) once their text is
                                           #   extracted; extracted text, reviews, and reports are always kept
 
-# Cheap CPU screening of every candidate, then the daily promotion of the best ones to a reading (plan part 6).
+# Cheap CPU screening of every candidate, then the daily promotion of the best ones to a reading.
 # Score per topic, 0-1 = weighted mean of the AVAILABLE signals (a missing one is left out, the rest renormalized):
 #   question similarity  max(0, cosine) of the paper to the topic's question (or its phrases when it has none)
 #   seed similarity      mean max(0, cosine) to the `closest_seed_count` most similar active seeds
 #   phrase match         fraction of the topic's approved public phrases found verbatim in title + abstract
 # Promotion first replaces each signal by its percentile among the topic's unpromoted candidates, so raw cosines and
 # the 0/1 phrase signal share one scale and topics compare fairly. A paper's screening score is its best topic's
-# score. Starting values; calibrate them in part 10.
+# score. Starting values; check them with `paperwatch label-sample`.
 [screening]
 embedding_backend = "onnx"                     # "onnx" (pinned local model, CPU) or "hashing" (offline tests only)
 embedding_model = "bge-base-en-v1.5"           # pinned in paperwatch/screening/embedding_model_registry.py
 embedding_model_dir = "models/bge-base-en-v1.5"  # install with deploy/install_embedding_model.sh
-embedding_threads = 16                         # CPU threads; 425 real abstracts took 30 s at 16 threads
+embedding_threads = 16                         # CPU threads used for embedding
 embedding_batch_size = 32
 question_similarity_weight = 0.5
 seed_similarity_weight = 0.3
@@ -122,9 +122,9 @@ phrase_match_weight = 0.2
 closest_seed_count = 3
 daily_promotion_limit = 30      # readings promoted per UTC day; slots are divided across topics first
 near_cutoff_promotions = 3      # of those, the best candidates just below the cutoff (to see what it misses)
-minimum_screening_score = 0.0   # a pool percentile (0.8 = top fifth); 0 = rank only, until part 10 calibrates it
+minimum_screening_score = 0.0   # a pool percentile (0.8 = top fifth); 0 = promote by rank only
 
-# How a promoted paper is read (plan part 7). Its text becomes passages with stable ids (A1.. abstract, P1.. full
+# How a promoted paper is read. Its text becomes passages with stable ids (A1.. abstract, P1.. full
 # text) and page/section names; a long text is read in bounded sections (methods and results first), one model call
 # each, then one synthesis call and one topic-assessment call. `full_text` only when every substantive section was
 # read; otherwise `partial_text`. A section plus its prompt plus the role's max_output_tokens must fit
@@ -138,10 +138,10 @@ closest_seeds_per_topic = 3      # seed papers from your library attached to eac
 comparison_reviews_per_topic = 3 # earlier reviews on the same question attached as comparison anchors
 anchor_abstract_characters = 800
 
-# Following important references of completed reviews (plan part 8). After a review that addresses part of some
+# Following important references of completed reviews. After a review that addresses part of some
 # topic's question, `collect` fetches the paper's OpenAlex reference list (and confirms identifiers found in its own
 # bibliography with a provider record). The research role picks up to `references_per_paper` cited works that the
-# paper's method, theorem, data, or baseline depends on; each becomes a class-3 reading that waits for the next
+# paper's method, theorem, data, or baseline depends on; each becomes a lower-priority reading that waits for the next
 # `collect` to fetch its full text. It may also pick one unused approved search (query + year window) to fill a gap.
 [references]
 follow_references = true
@@ -157,7 +157,7 @@ reference_reading_hold_minutes = 360  # a chosen reference waits up to this long
 research_branches_per_day = 3         # gap searches the research role may request per UTC day
 branches_offered_per_selection = 12
 
-# Comparisons of two completed reviews on the same question (plan part 8): queued when both rate question_fit >= 2
+# Comparisons of two completed reviews on the same question: queued when both rate question_fit >= 2
 # for a topic and share comparable assumptions, guarantees, or evaluation settings; the closest neighbour first.
 [comparisons]
 daily_comparison_jobs = 5
@@ -180,4 +180,4 @@ cpu_limit = 1.0
 collector_account = "paperwatch-collector"
 worker_account = "paperwatch-worker"      # runs `work` and `report`
 shared_state_group = "paperwatch-state"   # owns state/ so both accounts can use SQLite and its WAL files
-model_server_account = ""                 # empty: llama-server still runs as a desktop user (not isolated yet)
+model_server_account = ""                 # empty: llama-server runs as a regular user account
