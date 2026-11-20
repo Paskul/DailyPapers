@@ -669,6 +669,76 @@ CREATE INDEX research_branches_by_request_time ON research_branches(requested_at
 """
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# Migration 9 (plan part 9): one coherent daily report.
+#   reports                 rebuilt (SQLite cannot alter a CHECK): a report is first `writing` (snapshot and
+#                           selection frozen, no bytes yet), then `pending` (exact bytes saved), then `published`.
+#                           It keeps the scheduled cutoff and the eligibility cutoff apart (they differ only for an
+#                           operator's early publication), the frozen snapshot, and how the synthesis was made.
+#   report_items            rebuilt with the entry label (new release / older / reference / update / undated), the
+#                           frozen score, and for an update the previously reported review and what changed.
+#   inference_reservations  the report reserves the next inference slot at its cutoff; the worker checks for an
+#                           unexpired reservation before it takes the inference lock for another call.
+# report_items_v9 references reports_v9; renaming reports_v9 to reports rewrites that reference (SQLite >= 3.26),
+# and no row ever references a dropped table, so the rebuild is safe with foreign keys enabled.
+# --------------------------------------------------------------------------------------------------------------------
+MIGRATION_0009_DAILY_REPORT = """
+CREATE TABLE reports_v9 (                                      -- one report per local reporting date
+    report_date          TEXT PRIMARY KEY,                     -- YYYY-MM-DD in the report timezone
+    scheduled_cutoff_at  TEXT NOT NULL,                        -- publish_time on report_date, as UTC
+    cutoff_at            TEXT NOT NULL,                        -- eligibility cutoff (the scheduled one, or the
+                                                               -- moment of an early publication)
+    published_early      INTEGER NOT NULL DEFAULT 0,
+    status               TEXT NOT NULL CHECK (status IN ('writing', 'pending', 'published')),
+    output_path          TEXT NOT NULL,
+    snapshot_json        TEXT NOT NULL DEFAULT '{}',           -- frozen statistics, comparisons, corrections
+    synthesis_status     TEXT CHECK (synthesis_status IN ('model', 'fallback', 'not_needed')),
+    synthesis_json       TEXT,                                 -- validated writer output (model synthesis only)
+    fallback_reason      TEXT,
+    rendered_sha256      TEXT,
+    rendered_bytes       BLOB,                                 -- exact bytes, so a rerun republishes identically
+    created_at           TEXT NOT NULL,
+    published_at         TEXT,
+    CHECK (status = 'writing' OR rendered_bytes IS NOT NULL)
+);
+INSERT INTO reports_v9 (report_date, scheduled_cutoff_at, cutoff_at, status, output_path, rendered_sha256,
+        rendered_bytes, created_at, published_at)
+    SELECT report_date, cutoff_at, cutoff_at, status, output_path, rendered_sha256, rendered_bytes, created_at,
+           published_at FROM reports;
+
+CREATE TABLE report_items_v9 (
+    report_date            TEXT NOT NULL REFERENCES reports_v9(report_date),
+    rank                   INTEGER NOT NULL,
+    paper_id               TEXT NOT NULL REFERENCES papers(paper_id),
+    review_id              TEXT NOT NULL REFERENCES reviews(review_id),
+    entry_label            TEXT NOT NULL DEFAULT 'legacy',     -- new_release | older | reference | update |
+                                                               -- undated | legacy (reported before part 9)
+    reading_priority       INTEGER,                            -- frozen best score (0-100) at the snapshot
+    best_topic_id          TEXT,
+    previous_review_id     TEXT REFERENCES reviews(review_id), -- update: the review an earlier report used
+    previous_report_date   TEXT,
+    revision_changes_json  TEXT NOT NULL DEFAULT '[]',         -- update: what changed (host-computed)
+    PRIMARY KEY (report_date, rank),
+    UNIQUE (report_date, paper_id)
+);
+INSERT INTO report_items_v9 (report_date, rank, paper_id, review_id)
+    SELECT report_date, rank, paper_id, review_id FROM report_items;
+
+DROP TABLE report_items;
+DROP TABLE reports;
+ALTER TABLE reports_v9 RENAME TO reports;
+ALTER TABLE report_items_v9 RENAME TO report_items;
+CREATE INDEX report_items_by_paper ON report_items(paper_id);
+
+CREATE TABLE inference_reservations (                          -- a holder that gets the next inference slot
+    reservation_name  TEXT PRIMARY KEY,                        -- e.g. 'report:2026-11-20'
+    purpose           TEXT NOT NULL,
+    reserved_at       TEXT NOT NULL,
+    reserved_until    TEXT NOT NULL                            -- expires by itself if the holder crashed
+);
+"""
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("initial schema (plan part 1)", MIGRATION_0001_INITIAL_SCHEMA),
     SchemaMigration("paper identity, editions, reading identity and part-2 records",
@@ -685,4 +755,6 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
                     MIGRATION_0007_EVIDENCE_BACKED_READING, _backfill_full_text_reading_identity),
     SchemaMigration("important references, research branches, and comparisons (plan part 8)",
                     MIGRATION_0008_REFERENCES_AND_COMPARISONS),
+    SchemaMigration("daily report: report states, frozen snapshot, entry labels, inference reservation (plan part 9)",
+                    MIGRATION_0009_DAILY_REPORT),
 )

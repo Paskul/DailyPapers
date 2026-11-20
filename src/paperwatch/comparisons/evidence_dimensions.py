@@ -33,7 +33,8 @@ show shows shown study studies propose proposed approach method methods using us
 SUPPORTED_EVIDENCE_STATUS = "supported"
 
 
-def _content_words(text: str) -> set[str]:
+def content_words(text: str) -> set[str]:
+    """Lower-case content words (4+ letters, no stopwords, a plural "s" dropped) for word-overlap tests."""
     words = set()
     for word in CONTENT_WORD_PATTERN.findall(text.lower()):
         if word in STOPWORDS:
@@ -52,10 +53,10 @@ def evidence_dimension_words(review_content: dict[str, Any]) -> dict[str, set[st
     """Content words per dimension of one validated part-7 review (a legacy review yields empty sets)."""
     results = [finding for finding in review_content.get("results", []) if isinstance(finding, dict)]
     return {
-        DIMENSION_ASSUMPTIONS: _content_words(" ".join(_supported_statement(statement)
+        DIMENSION_ASSUMPTIONS: content_words(" ".join(_supported_statement(statement)
                                                        for statement in review_content.get("assumptions", []))),
-        DIMENSION_GUARANTEES: _content_words(" ".join(str(finding.get("claim", "")) for finding in results)),
-        DIMENSION_EVALUATION_SETTING: _content_words(
+        DIMENSION_GUARANTEES: content_words(" ".join(str(finding.get("claim", "")) for finding in results)),
+        DIMENSION_EVALUATION_SETTING: content_words(
             _supported_statement(review_content.get("evaluation_setting")) + " "
             + " ".join(str(finding.get("conditions", "")) for finding in results)),
     }

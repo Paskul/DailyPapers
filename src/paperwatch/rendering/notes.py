@@ -1,4 +1,4 @@
-"""Render the permanent per-paper reading note and the daily report from validated, saved data.
+"""Render the permanent per-paper reading note from validated, saved data (the daily report: daily_report.py).
 
 Notes live at output/papers/<paper_id>/<review_id>.md: a stable, revision-specific file named only by internal ids.
 A part-7 note shows (plan part 7: "render the permanent note from validated fields and trusted metadata"):
@@ -9,7 +9,7 @@ A part-7 note shows (plan part 7: "render the permanent note from validated fiel
   * the reading coverage: sections read and not read, why the coverage is partial, table/equation recovery;
   * the cited passages themselves, from the saved review (not the cache), so the note can always be rebuilt.
 All paper and model text is escaped (rendering/markdown_safety.py). Reviews saved before part 7 keep their older,
-simpler layout. Part 9 replaces the deterministic report with the model-written overview.
+simpler layout.
 """
 
 from __future__ import annotations
@@ -28,19 +28,6 @@ SCORE_MEANING_NOTE = ("Scores are a reading priority for your research question,
                       "ratings; they are not a judgement of the paper's novelty in its field.")
 ATTRIBUTION_NOTE = ("Each excerpt was checked to occur verbatim in the cited passage of the saved edition. That "
                     "shows attribution; it cannot show that the interpretation is sound.")
-
-
-@dataclass(frozen=True)
-class ReportCorrection:
-    """A previously reported paper that a provider now reports withdrawn or retracted (plan part 5).
-
-    The historical report file is never altered; the next report carries this correction instead."""
-
-    paper_id: str
-    title: str
-    notice_kind: str  # withdrawn | retracted
-    first_reported_on: str  # report date (YYYY-MM-DD) that recommended it
-    detected_at: str  # UTC timestamp of the provider notice
 
 
 @dataclass(frozen=True)
@@ -293,59 +280,8 @@ def _render_legacy_paper_note(selected_review: SelectedReview) -> str:
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# The daily report (deterministic until the writer role of part 9)
+# Shared helpers (also used by the daily report, rendering/daily_report.py, and the comparison notes)
 # --------------------------------------------------------------------------------------------------------------------
-
-
-def render_daily_report(*, report_date: str, timezone_name: str, cutoff_at: str,
-                        selected_reviews: list[SelectedReview], report_statistics: dict[str, Any],
-                        corrections: tuple[ReportCorrection, ...] = ()) -> str:
-    report_lines = [
-        f"# Paper report for {report_date}",
-        "",
-        f"- Cutoff: {cutoff_at} (UTC) · reporting timezone: {timezone_name}",
-        f"- Papers in catalog: {report_statistics['papers_in_catalog']} · reviews completed so far: "
-        f"{report_statistics['reviews_completed']} · selected today: {len(selected_reviews)}",
-        f"- Backlog: {report_statistics['jobs_queued']} queued job(s), {report_statistics['jobs_failed']} failed",
-    ]
-    if report_statistics.get("model_outage_note"):
-        report_lines.append(f"- Model server: {report_statistics['model_outage_note']}")
-    if report_statistics.get("topics_configured", 0) == 0:
-        report_lines.append("- No research topics are configured yet; relevance ratings are unavailable.")
-    report_lines += ["", "## Ranked papers", ""]
-
-    if not selected_reviews:
-        report_lines.append("No newly completed reviews since the previous report." +
-                            (" (Model server outage, see above.)" if report_statistics.get("model_outage_note")
-                             else " Quiet day."))
-    for selected_review in selected_reviews:
-        paper_row, review_content = selected_review.paper_row, selected_review.review_content
-        best_assessment = selected_review.best_topic_assessment
-        relevance_label = (f"{_format_topic_score(best_assessment)} for "
-                           f"{escape_untrusted_inline_text(best_assessment.topic_id)}"
-                           if best_assessment is not None else "relevance not rated")
-        published_label = escape_untrusted_inline_text(paper_row["first_published_date"]) or "date unknown"
-        report_lines += [
-            f"### {selected_review.rank}. {escape_untrusted_inline_text(paper_row['title'])}",
-            "",
-            f"{escape_untrusted_inline_text(', '.join(json.loads(paper_row['authors_json'])))} · {published_label}"
-            f" · {relevance_label} · {selected_review.review_row['coverage']}",
-            "",
-            escape_untrusted_inline_text(review_content["one_sentence_summary"]),
-            "",
-            f"[Reading note]({selected_review.note_relative_path_from_daily_dir}) · "
-            f"Source: {_render_source_links(selected_review.paper_aliases)}",
-            "",
-        ]
-    if corrections:
-        report_lines += ["## Corrections", ""]
-        for correction in corrections:
-            report_lines.append(
-                f"- **{escape_untrusted_inline_text(correction.title)}** (recommended on "
-                f"{correction.first_reported_on}): the provider now reports it {correction.notice_kind} "
-                f"(noticed {correction.detected_at[:10]}). It is no longer recommended.")
-        report_lines.append("")
-    return "\n".join(report_lines).rstrip() + "\n"
 
 
 def _format_topic_score(topic_assessment: TopicAssessment) -> str:

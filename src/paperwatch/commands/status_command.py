@@ -110,8 +110,11 @@ def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
     _print_provider_access_summary(app)
 
     last_report = connection.execute(
-        "SELECT report_date, status, output_path FROM reports ORDER BY report_date DESC LIMIT 1").fetchone()
-    print(f"Last report: {last_report['report_date']} {last_report['status']} -> {last_report['output_path']}"
+        """SELECT report.report_date, report.status, report.output_path, report.synthesis_status,
+                  (SELECT COUNT(*) FROM report_items AS item WHERE item.report_date = report.report_date) AS papers
+           FROM reports AS report ORDER BY report.report_date DESC LIMIT 1""").fetchone()
+    print(f"Last report: {last_report['report_date']} {last_report['status']}, {last_report['papers']} paper(s), "
+          f"synthesis {last_report['synthesis_status'] or 'not made yet'} -> {last_report['output_path']}"
           if last_report else "Last report: none yet")
     return 0
 

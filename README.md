@@ -36,6 +36,8 @@ These answer open questions from the plan. Later build steps must follow them.
 | **Reference readings wait for their full text** | A chosen reference is held up to 6 h (`references.reference_reading_hold_minutes`) so the next `collect` can fetch its PDF from the same 30/day download budget; it is read from the abstract only when no full text exists. Owner decision, 2026-11-20. | Parts 5, 8 |
 | **Comparisons get their own note** | Each comparison is written once to `output/comparisons/<comparison id>.md`, linking both reading notes relatively; `report` restores a missing one. Part 9 links to it. Owner decision, 2026-11-20. | Parts 8, 9 |
 | **References are followed for relevant reviews only** | A reviewed paper's references are fetched only if its review rated question_fit >= 2 ("addresses part of the question") for some topic, the same bar as comparison anchors. Owner decision, 2026-11-20. | Part 8 |
+| **Report writer at medium reasoning, 30-minute deadline** | The writer role uses reasoning `medium` (`[roles.writer]`). Getting the inference slot, the call, its one repair, and validation must finish within `report.writer_deadline_minutes` (30), or the report is rendered from the saved summaries and labelled as a fallback. Owner decision, 2026-11-20. | Parts 9, 10 |
+| **Updates are decided by a deterministic rule** | A reported paper comes back as an "update" only if its newer review read different text AND its numeric results, its supported assumptions, its insufficient-evidence verdict, or (by at least 10 points) its best score changed. No model call; a purely verbal change is not detected. Owner decision, 2026-11-20. | Part 9 |
 | **Extractor = poppler `pdftotext`** | PDF text comes from `pdftotext` (reading order, form feeds between pages) in a Debian-slim image pinned by image id. XML (JATS/TEI) comes from a small stdlib dumper in the same image. | Parts 3, 5, 7 |
 
 ## Setup
@@ -64,13 +66,14 @@ to validate them and install them into the deployed home (`/srv/paperwatch`) wit
 | `collect [--fixture FILE] [--skip-searches]` | Sync seed papers, then collect current releases (arXiv feeds, missed-release recovery, recent OpenAlex windows) and each topic's finite historical search, run requested gap searches, fetch the references of relevant reviewed papers, screen every candidate and promote today's papers to review jobs, acquire their full text, and print each topic's input mode. `--fixture` replays recorded records instead of the live searches; `--skip-searches` runs no arXiv/OpenAlex requests. |
 | `work --once` / `work` | Run one job / loop until SIGTERM. A review job reads the paper in bounded sections, validates every citation, scores it per topic, commits, then writes its note (and queues its comparison). A `select_references` job lets the research role choose which cited works to read; a `compare_reviews` job compares two saved reviews and writes `output/comparisons/<id>.md`. Idle = zero inference calls. Several workers may run at once. |
 | `reread PAPER_ID [--reason TEXT]` | Operator request for a fresh reading; gets its own generation id and a separate review. |
-| `report [--date YYYY-MM-DD]` | Publish `output/daily/<date>.md` plus per-paper notes. One report per date; reruns produce identical bytes. |
+| `report [--date YYYY-MM-DD] [--early]` | Publish `output/daily/<date>.md` (default: the latest date whose 07:00 cutoff has passed). Freezes the eligible reviews at the cutoff, lets the writer explain them (or labels a fallback), restores missing notes, then writes atomically. One report per date and one publishing process at a time; reruns produce identical bytes. `--early` publishes today's report before its cutoff and says so. |
 | `status` | Topics with their input mode (keywords / seeds / both) and what is missing, seed sources and their last sync, papers by status, editions/aliases, unresolved possible duplicates, jobs by kind/status (incl. expired leases), queued jobs per priority class with the oldest one's age, the screening model and today's promotions by reason and topic, reviews by coverage, model pause state, last model call, new candidates today, each feed / recent window / historical search with its coverage and stopping reason, open coverage gaps, source text, withdrawals, outbound requests today and paused providers, last report. |
 | `access-check --component collector\|worker` | Run as a service account. Verifies the account and group; the read-only provider rules; the private credentials; the output, state, WAL, and cache permissions; the egress probes; llama-server flags and account; and the extractor sandbox (smoke test). |
 
 Failures always print `paperwatch: FAILED [<component>] ...` with a component-specific exit code
 (2 config, 3 model-server unavailable, 4 database, 5 model call/output, 6 inference lock, 7 source, 8 output, 9 worker,
-10 source-access: refused by the access rules, 11 extractor, 12 screening: the embedding model is missing or altered).
+10 source-access: refused by the access rules, 11 extractor, 12 screening: the embedding model is missing or altered,
+13 report: not due yet, or another `report` is publishing).
 
 ## How the model is used
 
@@ -79,7 +82,8 @@ Failures always print `paperwatch: FAILED [<component>] ...` with a component-sp
   time/token limits (`[roles.<name>]` in `config.toml`).
 - Requests are schema-constrained (`response_format: json_schema`); the final answer is parsed separately from
   `reasoning_content`. Model identity, server build, and prompt version are stored with every call and review.
-- One inference request at a time across all roles and processes (`state/inference.lock`).
+- One inference request at a time across all roles and processes (`state/inference.lock`). At the report cutoff the
+  report reserves the next slot (`inference_reservations`); the worker finishes its current call, then waits.
 - If the server is down, all model jobs pause together, health checks back off exponentially, the job goes back to the
   queue without using an attempt, and there is never a fallback to a hosted model.
 
@@ -320,6 +324,55 @@ limit, the daily limits, and cycles before anything is queued or searched (`refe
 - `status` shows fetched references, citation edges, unresolved bibliography identifiers, choices admitted / waiting /
   skipped against today's limit, gap searches, and comparisons against today's limit.
 
+## The daily report (plan part 9)
+
+`paperwatch report` runs in four recoverable stages (`commands/report_command.py`, `reporting/`):
+
+1. **Freeze** (`reporting/report_snapshot.py`). One short transaction reads and saves everything the report needs;
+   the report row becomes `writing`.
+   - **Cutoff** (`report_schedule.py`): `report.publish_time` (07:00) on the reporting date in `report.timezone`
+     (America/New_York), converted with that day's daylight-saving offset. Reviews completed later belong to a later
+     report.
+   - **Eligible** (`report_selection.py`): the latest review per paper completed by the cutoff, if its best topic
+     score (assessed by the cutoff) is at least `report.minimum_reading_priority` (65). Withdrawn papers and papers
+     in your active seed library are left out (seeds stay comparison anchors). So is any paper an earlier report
+     recommended, unless the newer review is an update (`revision_changes.py`: different text, and a changed result,
+     assumption, verdict, or score).
+   - **Order**: score, then coverage (full > partial > abstract), then paper id. Up to `max_papers_per_report` (15)
+     are chosen; the rest stay for later days.
+   - **Also saved**: the opening's statistics since the previous report (papers found, screened, reviewed; backlog;
+     provider, search, and model outages; hours since the previous report), the comparisons involving a selected
+     review, and the corrections for earlier recommendations that were withdrawn.
+2. **Synthesize** (`report_synthesis.py`, `roles/writer.py`). The report reserves the next inference slot until its
+   deadline; the worker checks for that reservation before each call. The writer sees the frozen reviews, the
+   passages they cite (bounded to the context budget), and the comparisons. It returns an overview, up to three
+   connected findings, what to read first, and one reason per paper. Every claim is `{review_id, passage_id,
+   excerpt}`-backed, and the host checks every one: the review must be selected, the passage must be that review's,
+   the excerpt must be a contiguous quotation, any number must occur in a cited passage, and comparison ids must come
+   from the input. The writer cannot add, drop, or reorder papers, or state scores. If the server is down, the slot
+   is not free in time, the deadline (30 min) passes, or the answer is still invalid after one repair, the same
+   selection is rendered from the saved summaries and topic rationales, with a "Fallback report" label and the
+   reason. With nothing selected the writer is not called: a quiet day is told apart from an outage.
+3. **Render** (`rendering/daily_report.py`). The renderer has four sections: opening, what matters today, ranked
+   papers, and comparisons and corrections.
+   - It supplies ranks, dates, scores, coverage, labels (new release / older paper / reference / update), source
+     links from trusted identifiers, and relative note links.
+   - A citation reads `[#2 · P12 (p. 4, Results)](<../papers/<paper>/<review>.md>)`.
+   - An update links the earlier review's note and lists what changed.
+   - All paper and model text is escaped.
+   - The exact bytes and the synthesis are saved (`pending`).
+4. **Publish**. Missing reading and comparison notes are restored from the database first. Then the file is written
+   through a temp file and an atomic rename, and the row becomes `published`.
+
+A rerun resumes:
+- `writing`: synthesizes again over the same frozen selection.
+- `pending`: writes the saved bytes again. A kill between the rename and the database update gives identical bytes.
+- `published`: changes nothing, or restores a deleted file from the saved bytes.
+
+A second `report` while one runs exits with code 13 (`state/report-publication.lock`). `--date D` for a missed date
+publishes it with its own scheduled cutoff. A date whose cutoff is still ahead is refused, unless `--early` (today
+only) publishes it with "now" as the cutoff and says so in the opening.
+
 ## Research profile (plan part 4)
 
 The question is the unit of relevance, and every topic is defined by keywords, seeds, or both:
@@ -461,14 +514,18 @@ src/paperwatch/
   sandboxed_extractor.py        # rootless Podman runner for the pinned pdftotext/XML extractor
   network/                      # collector only: provider rules, gateway, secure fetcher, ledger, credentials,
                                 #   and the per-process egress guard
-  llm/                          # model client contract, llama.cpp client, fake client, lock, outage guard
+  llm/                          # model client contract, llama.cpp client, fake client, lock, slot reservation,
+                                #   outage guard
   reading/                      # part 7: passages, reading plan, parser recovery, review packet, evidence checks,
                                 #   saved stage results, comparison anchors, rubric, the reading pipeline
-  roles/                        # healthcheck, section_reader, reviewer, topic_assessor, research, comparison;
+  roles/                        # healthcheck, section_reader, reviewer, topic_assessor, research, comparison,
+                                #   writer;
                                 #   shared evidence fields;
                                 #   output guards
   sources/                      # record types, discovery route names, parsers: arXiv Atom (feed + API), OpenAlex
                                 #   works JSON, recorded fixtures
+  reporting/                    # part 9: cutoff schedule, report selection and update rule, frozen snapshot,
+                                #   comparisons shown, writer synthesis with deadline and fallback, publication lock
   rendering/                    # Markdown escaping, evidence notes, comparison notes, daily report, atomic writes
   commands/                     # one module per CLI command
 settings/                       # operator settings (gitignored) + committed *.example.toml; see settings/README.md
@@ -487,7 +544,11 @@ tests/                          # step 1 vertical slice; step 2 identity/reading
                                 #   anchors, held readings, switch to full text, fallback when the cache is gone;
                                 #   step 8 mutual citations with a shared reference (search ends, one review each,
                                 #   one comparison), hop limit, daily limit, bibliography confirmation, citation
-                                #   contexts, research-role id checks, gap search, incompatible-ranking rejection
+                                #   contexts, research-role id checks, gap search, incompatible-ranking rejection;
+                                #   step 9 0 / 6 / 20 qualifying papers, late completion, missing note restored,
+                                #   model outage fallback, kill between rename and DB update, crash before render,
+                                #   updates vs re-reads, writer evidence checks, slot reservation, writer deadline,
+                                #   DST cutoffs, early publication, one publication process
 ```
 
 ## Tests

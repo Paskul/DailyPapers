@@ -26,9 +26,10 @@ def test_recorded_paper_flows_through_cli_with_fake_model(initialized_home: Pape
     idle_work_result = initialized_home.run_cli("work", "--once")
     assert idle_work_result.exit_code == 0 and "no job is due" in idle_work_result.stdout
 
-    report_result = initialized_home.run_cli("report", "--date", "2026-11-19")
+    report_date = initialized_home.make_todays_report_publishable_early()
+    report_result = initialized_home.run_cli("report", "--date", report_date, "--early")
     assert report_result.exit_code == 0, report_result.stderr
-    report_path = initialized_home.home_dir / "output" / "daily" / "2026-11-19.md"
+    report_path = initialized_home.home_dir / "output" / "daily" / f"{report_date}.md"
     report_text = report_path.read_text()
     assert "Runtime Monitoring of Joint Multi\\-Robot Plans" not in report_text  # '-' is not escaped
     assert "Runtime Monitoring of Joint Multi-Robot Plans" in report_text
@@ -48,7 +49,7 @@ def test_recorded_paper_flows_through_cli_with_fake_model(initialized_home: Pape
 
     # Re-running the report for the same date changes nothing.
     report_bytes_before = report_path.read_bytes()
-    assert initialized_home.run_cli("report", "--date", "2026-11-19").exit_code == 0
+    assert initialized_home.run_cli("report", "--date", report_date, "--early").exit_code == 0
     assert report_path.read_bytes() == report_bytes_before
 
     status_result = initialized_home.run_cli("status")

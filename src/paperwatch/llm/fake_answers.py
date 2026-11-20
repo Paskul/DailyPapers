@@ -106,10 +106,34 @@ def build_fake_comparison(role_input: Mapping[str, Any]) -> dict[str, Any]:
             "insufficient_evidence": not both_cited}
 
 
+def build_fake_report_synthesis(role_input: Mapping[str, Any]) -> dict[str, Any]:
+    """Part 9 writer: quote the first passage of each paper; one connected finding over the first two papers."""
+    evidence_by_review_id: dict[str, list[dict[str, str]]] = {}
+    for paper in role_input["papers"]:
+        quotable = _first_quotable_passage(paper["passages"])
+        evidence_by_review_id[paper["review_id"]] = [] if quotable is None else [
+            {"review_id": paper["review_id"], "passage_id": quotable[0], "excerpt": quotable[1]}]
+    all_evidence = [item for items in evidence_by_review_id.values() for item in items]
+    first_review_id = role_input["papers"][0]["review_id"]
+    return {
+        "overview": {"statement": "Offline fake overview of today's papers.", "evidence": all_evidence[:2]},
+        "connected_findings": [{"statement": "Offline fake finding that connects the first papers.",
+                                "evidence": all_evidence[:2],
+                                "comparison_ids": [comparison["comparison_id"]
+                                                   for comparison in role_input["comparisons"][:1]]}]
+        if all_evidence else [],
+        "read_first": {"review_id": first_review_id, "explanation": "Offline fake: read the first paper first.",
+                       "evidence": evidence_by_review_id[first_review_id]},
+        "paper_reasons": [{"review_id": review_id, "reason_to_read": "Offline fake reason to read this paper.",
+                           "evidence": evidence} for review_id, evidence in evidence_by_review_id.items()],
+    }
+
+
 FAKE_ANSWER_BUILDERS_BY_ROLE: dict[str, Callable[[Mapping[str, Any]], dict[str, Any]]] = {
     "section_reader": build_fake_section_notes,
     "reviewer": build_fake_review,
     "topic_assessor": build_fake_topic_assessments,
     "research": build_fake_reference_selection,
     "comparison": build_fake_comparison,
+    "writer": build_fake_report_synthesis,
 }

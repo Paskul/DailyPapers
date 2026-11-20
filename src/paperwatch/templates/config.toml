@@ -48,6 +48,11 @@ max_output_tokens = 12288
 timeout_seconds = 1200
 reasoning_effort = "server-default"
 
+[roles.writer]                            # writes the daily report's overview from the frozen reviews (plan part 9)
+max_output_tokens = 8192
+timeout_seconds = 1500
+reasoning_effort = "medium"               # owner decision 2026-11-20; also bounded by report.writer_deadline_minutes
+
 [worker]
 max_attempts_per_job = 3      # paper-specific failures only; outages never consume attempts
 retry_delay_seconds = 600     # multiplied by the attempt number
@@ -57,8 +62,10 @@ lease_renewal_interval_seconds = 60  # a live worker renews its lease this often
 
 [report]
 timezone = "America/New_York"
-publish_time = "07:00"
+publish_time = "07:00"            # the cutoff: reviews completed later belong to the next report
 max_papers_per_report = 15
+minimum_reading_priority = 65     # 0-100: the best topic score a review needs to be recommended
+writer_deadline_minutes = 30      # slot + writer call + repair + validation; after that, the saved-summary fallback
 
 [schedule]
 collect_times = ["00:30", "06:30", "12:30", "18:30"]

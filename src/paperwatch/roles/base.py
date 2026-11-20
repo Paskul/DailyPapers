@@ -7,13 +7,16 @@ receives plain data and has zero tools.
 `run_role_once` is the only place that sends inference requests. It
   1. refuses a prompt that would not leave the role's output limit (reasoning + final answer) free inside
      model.required_context_tokens (plan part 7: "reserve context space for reasoning and the final answer"),
-  2. takes the shared inference lock (one request at a time across roles and processes),
+  2. waits while another holder (the daily report, plan part 9) has reserved the next inference slot, then takes
+     the shared inference lock (one request at a time across roles and processes),
   3. sends one fresh-context request with the role's hard time and output limits,
   4. parses the final answer (never the reasoning) as JSON and validates schema + semantics,
   5. logs the call (role, prompt version, model identity, server build, outcome) to `model_calls`.
 `run_role_with_one_repair` adds the plan's single bounded repair attempt: an invalid answer is sent back once, in a
 new fresh context, with the problems listed; a second invalid answer ends the job (ModelOutputRejectedAfterRepair).
 Persisting the validated output is the caller's job, inside its own lease-checked transaction.
+A caller with an overall deadline (the report writer) passes `deadline_monotonic`: the lock wait and the call's time
+limit shrink to the time left, and no call starts after the deadline (ModelCallDeadlineExceeded).
 """
 
 from __future__ import annotations
@@ -28,11 +31,12 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from paperwatch.clock import utc_now_timestamp
-from paperwatch.config import AppConfig
-from paperwatch.errors import (ModelOutputInvalid, ModelOutputRejectedAfterRepair, ModelPromptExceedsContextBudget,
-                               PaperwatchError)
+from paperwatch.config import AppConfig, RoleLimits
+from paperwatch.errors import (ModelCallDeadlineExceeded, ModelOutputInvalid, ModelOutputRejectedAfterRepair,
+                               ModelPromptExceedsContextBudget, PaperwatchError)
 from paperwatch.identifiers import MODEL_CALL_ID_PREFIX, new_internal_id
 from paperwatch.llm.inference_lock import hold_inference_lock
+from paperwatch.llm.inference_reservation import wait_while_inference_is_reserved
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, record_service_outage, record_service_success
 from paperwatch.llm.types import ModelClient, StructuredChatRequest, StructuredChatResponse
 
@@ -79,17 +83,19 @@ def estimate_prompt_tokens(*texts: str) -> int:
 
 def run_role_with_one_repair(*, role_definition: RoleDefinition, role_input: RoleInput, app_config: AppConfig,
                              model_client: ModelClient, connection: sqlite3.Connection,
-                             job_id: str | None = None) -> RoleRunResult:
+                             job_id: str | None = None, deadline_monotonic: float | None = None,
+                             holds_inference_reservation: bool = False) -> RoleRunResult:
     """Run the role; if its answer is invalid, ask once more with the problems listed. Outages, timeouts and lock
     waits propagate unchanged (they are retried by the worker). Two invalid answers end the job with both reasons."""
+    call_options = dict(role_definition=role_definition, role_input=role_input, app_config=app_config,
+                        model_client=model_client, connection=connection, job_id=job_id,
+                        deadline_monotonic=deadline_monotonic,
+                        holds_inference_reservation=holds_inference_reservation)
     try:
-        return run_role_once(role_definition=role_definition, role_input=role_input, app_config=app_config,
-                             model_client=model_client, connection=connection, job_id=job_id)
+        return run_role_once(**call_options)
     except ModelOutputInvalid as first_rejection:
         try:
-            return run_role_once(role_definition=role_definition, role_input=role_input, app_config=app_config,
-                                 model_client=model_client, connection=connection, job_id=job_id,
-                                 rejected_first_answer=first_rejection)
+            return run_role_once(**call_options, rejected_first_answer=first_rejection)
         except ModelOutputInvalid as second_rejection:
             raise ModelOutputRejectedAfterRepair(
                 f"role '{role_definition.role_name}' answer still invalid after one repair attempt: "
@@ -100,9 +106,12 @@ def run_role_with_one_repair(*, role_definition: RoleDefinition, role_input: Rol
 
 def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app_config: AppConfig,
                   model_client: ModelClient, connection: sqlite3.Connection,
-                  job_id: str | None = None, rejected_first_answer: ModelOutputInvalid | None = None) -> RoleRunResult:
+                  job_id: str | None = None, rejected_first_answer: ModelOutputInvalid | None = None,
+                  deadline_monotonic: float | None = None,
+                  holds_inference_reservation: bool = False) -> RoleRunResult:
     """One request. With `rejected_first_answer` it is the repair request: the same input plus the rejected answer
-    and its problems, in a new fresh context."""
+    and its problems, in a new fresh context. `holds_inference_reservation` is True only for the holder of the
+    reservation (the report writer); every other caller yields to a reservation before taking the lock."""
     role_limits = app_config.limits_for_role(role_definition.role_name)
     user_message = role_definition.render_user_message(role_input)
     logged_prompt_version = role_definition.prompt_version
@@ -117,24 +126,30 @@ def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app
             f"model.required_context_tokens = {app_config.model.required_context_tokens}",
             operator_hint="lower reading.section_max_characters, or raise model.required_context_tokens if the "
                           "server's per-slot context allows it")
-    chat_request = StructuredChatRequest(
-        role_name=role_definition.role_name,
-        system_prompt=role_definition.system_prompt,
-        user_message=user_message,
-        output_schema_name=f"{role_definition.role_name}_output",
-        output_schema=role_definition.output_schema,
-        max_output_tokens=role_limits.max_output_tokens,
-        timeout_seconds=role_limits.timeout_seconds,
-        reasoning_effort=role_limits.reasoning_effort,
-        role_input=role_input,
-    )
+    lock_wait_seconds = float(app_config.model.inference_lock_wait_seconds)
+    call_timeout_seconds = float(role_limits.timeout_seconds)
 
     call_started_at = utc_now_timestamp()
     call_started_monotonic = time.monotonic()
     model_response: StructuredChatResponse | None = None
     try:
-        with hold_inference_lock(app_config.inference_lock_path, app_config.model.inference_lock_wait_seconds):
-            model_response = model_client.request_structured_completion(chat_request)
+        if not holds_inference_reservation:
+            wait_while_inference_is_reserved(connection)  # plan part 9: the report gets the next slot
+        if deadline_monotonic is not None:
+            seconds_left = deadline_monotonic - time.monotonic()
+            if seconds_left <= 0:
+                raise ModelCallDeadlineExceeded(f"role '{role_definition.role_name}': the caller's deadline passed "
+                                                "before the call could start")
+            lock_wait_seconds = min(lock_wait_seconds, seconds_left)
+            call_timeout_seconds = min(call_timeout_seconds, seconds_left)
+        with hold_inference_lock(app_config.inference_lock_path, lock_wait_seconds):
+            if deadline_monotonic is not None:  # the wait for the lock used part of the time left
+                call_timeout_seconds = min(call_timeout_seconds, deadline_monotonic - time.monotonic())
+                if call_timeout_seconds <= 0:
+                    raise ModelCallDeadlineExceeded(f"role '{role_definition.role_name}': the caller's deadline "
+                                                    "passed while waiting for the inference slot")
+            model_response = model_client.request_structured_completion(
+                _build_chat_request(role_definition, role_input, user_message, role_limits, call_timeout_seconds))
         validated_output = parse_and_validate_role_output(role_definition, model_response.final_answer_text,
                                                           role_input)
     except PaperwatchError as call_error:
@@ -150,6 +165,21 @@ def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app
     record_service_success(connection, MODEL_SERVICE_NAME)
     return RoleRunResult(validated_output=validated_output, model_response=model_response,
                          role_name=role_definition.role_name, prompt_version=role_definition.prompt_version)
+
+
+def _build_chat_request(role_definition: RoleDefinition, role_input: RoleInput, user_message: str,
+                        role_limits: RoleLimits, call_timeout_seconds: float) -> StructuredChatRequest:
+    return StructuredChatRequest(
+        role_name=role_definition.role_name,
+        system_prompt=role_definition.system_prompt,
+        user_message=user_message,
+        output_schema_name=f"{role_definition.role_name}_output",
+        output_schema=role_definition.output_schema,
+        max_output_tokens=role_limits.max_output_tokens,
+        timeout_seconds=call_timeout_seconds,
+        reasoning_effort=role_limits.reasoning_effort,
+        role_input=role_input,
+    )
 
 
 def parse_and_validate_role_output(role_definition: RoleDefinition, final_answer_text: str,

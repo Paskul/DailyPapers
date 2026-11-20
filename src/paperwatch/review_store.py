@@ -110,15 +110,22 @@ def insert_topic_assessment(connection: sqlite3.Connection, *, review_id: str, t
     return insert_cursor.rowcount == 1
 
 
-def load_latest_topic_assessments(connection: sqlite3.Connection, review_id: str) -> list[TopicAssessment]:
-    """The newest assessment per topic for one review, ordered by topic id (deterministic rendering)."""
+def load_latest_topic_assessments(connection: sqlite3.Connection, review_id: str, *,
+                                  assessed_no_later_than: str | None = None) -> list[TopicAssessment]:
+    """The newest assessment per topic for one review, ordered by topic id (deterministic rendering).
+
+    `assessed_no_later_than` (a stored UTC timestamp) ignores assessments made after a report's cutoff (plan
+    part 9), so a frozen report selection never depends on later re-assessments."""
+    latest_allowed_time = assessed_no_later_than or "9999"
     assessment_rows = connection.execute(
         """SELECT * FROM review_topic_assessments AS assessment
-           WHERE assessment.review_id = ?
+           WHERE assessment.review_id = ? AND assessment.assessed_at <= ?
              AND assessment.assessed_at = (SELECT MAX(newer.assessed_at) FROM review_topic_assessments AS newer
                                            WHERE newer.review_id = assessment.review_id
-                                             AND newer.topic_id = assessment.topic_id)
-           ORDER BY assessment.topic_id, assessment.topic_profile_sha256""", (review_id,)).fetchall()
+                                             AND newer.topic_id = assessment.topic_id
+                                             AND newer.assessed_at <= ?)
+           ORDER BY assessment.topic_id, assessment.topic_profile_sha256""",
+        (review_id, latest_allowed_time, latest_allowed_time)).fetchall()
     latest_by_topic: dict[str, TopicAssessment] = {}
     for assessment_row in assessment_rows:
         assessment_record = json.loads(assessment_row["assessment_json"])

@@ -8,7 +8,9 @@ import sqlite3
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -80,6 +82,17 @@ class PaperwatchHome:
 
     def use_unreachable_model_endpoint(self) -> None:
         self.replace_in_config('"http://127.0.0.1:8080/v1"', f'"http://127.0.0.1:{find_unused_local_port()}/v1"')
+
+    def make_todays_report_publishable_early(self) -> str:
+        """Plan part 9 publishes a date only after its cutoff, or early (`--early`) for today's date. A subprocess
+        test cannot move the clock, so pick a report timezone in which today's 23:59 cutoff is still at least an
+        hour ahead, and a floor of 0 (the fake model's ratings stay below 65). Returns today's date there."""
+        utc_moment = datetime.now(timezone.utc)
+        timezone_name = "UTC" if utc_moment.hour < 22 else "Etc/GMT+12"  # UTC-12: about 10:00-11:59 then
+        self.replace_in_config('timezone = "America/New_York"', f'timezone = "{timezone_name}"')
+        self.replace_in_config('publish_time = "07:00"', 'publish_time = "23:59"')
+        self.replace_in_config("minimum_reading_priority = 65", "minimum_reading_priority = 0")
+        return utc_moment.astimezone(ZoneInfo(timezone_name)).date().isoformat()
 
     def add_example_topic(self) -> None:
         with (self.home_dir / "topics.toml").open("a") as topics_file:

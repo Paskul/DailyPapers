@@ -33,6 +33,7 @@ CONFIG_FILE_NAME = "config.toml"
 TOPICS_FILE_NAME = "topics.toml"
 DATABASE_FILE_NAME = "paperwatch.sqlite3"
 INFERENCE_LOCK_FILE_NAME = "inference.lock"
+REPORT_PUBLICATION_LOCK_FILE_NAME = "report-publication.lock"
 
 SUPPORTED_MODEL_BACKENDS = ("llama_cpp", "fake")
 # "onnx" runs the pinned sentence-embedding model in-process on the CPU; "hashing" is a deterministic word-hashing
@@ -93,6 +94,9 @@ DEFAULT_ROLE_LIMITS: dict[str, RoleLimits] = {
     # Plan part 8 roles, also at the server's default reasoning (the same choice as the reading roles).
     "research": RoleLimits(max_output_tokens=8192, timeout_seconds=1200),  # chooses references and gap searches
     "comparison": RoleLimits(max_output_tokens=12288, timeout_seconds=1200),  # compares two saved reviews
+    # Plan part 9: the report writer runs once per day under report.writer_deadline_minutes. Owner decision
+    # (2026-11-20): medium reasoning, so the report usually appears 15-30 minutes after the cutoff.
+    "writer": RoleLimits(max_output_tokens=8192, timeout_seconds=1500, reasoning_effort="medium"),
 }
 # Room the reading roles need besides the passages themselves: system prompt, orientation (title + abstract), JSON
 # keys. Used by the load-time check that a reading section fits the context budget.
@@ -112,8 +116,13 @@ class WorkerSettings:
 @dataclass(frozen=True)
 class ReportSettings:
     timezone: str = "America/New_York"
-    publish_time: str = "07:00"
+    publish_time: str = "07:00"  # the cutoff: reviews completed later belong to the next report
     max_papers_per_report: int = 15
+    # Plan part 9: only reviews whose best topic score reaches this reading priority (0-100) are recommended.
+    minimum_reading_priority: int = 65
+    # Plan part 9: obtaining the inference slot, the writer call, its one repair, and validation must all finish
+    # within this many minutes of the start of the synthesis, or the report falls back to the saved summaries.
+    writer_deadline_minutes: int = 30
 
 
 @dataclass(frozen=True)
@@ -393,6 +402,11 @@ class AppConfig:
         return self.output_dir / "daily"
 
     @property
+    def report_publication_lock_path(self) -> Path:
+        """One publication process at a time (plan part 9); a second `report` refuses instead of racing."""
+        return self.state_dir / REPORT_PUBLICATION_LOCK_FILE_NAME
+
+    @property
     def report_timezone(self) -> ZoneInfo:
         return ZoneInfo(self.report.timezone)
 
@@ -598,6 +612,10 @@ def _validate_cross_field_rules(app_config: AppConfig) -> None:
             raise ConfigurationError(f"time '{clock_time}' must be in 24-hour HH:MM form")
     if app_config.report.max_papers_per_report <= 0:
         raise ConfigurationError("report.max_papers_per_report must be positive")
+    if not 0 <= app_config.report.minimum_reading_priority <= 100:
+        raise ConfigurationError("report.minimum_reading_priority must be between 0 and 100")
+    if app_config.report.writer_deadline_minutes <= 0:
+        raise ConfigurationError("report.writer_deadline_minutes must be positive")
     _validate_extractor_settings(app_config.extractor)
     _validate_collection_settings(app_config.collection)
     _validate_screening_settings(app_config.screening)

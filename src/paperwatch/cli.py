@@ -74,7 +74,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
     reread_parser.add_argument("--reason", help="why the paper should be read again (stored with the job)")
     report_parser = subcommands.add_parser("report", help="publish the daily Markdown report")
     report_parser.add_argument("--date", dest="report_date", metavar="YYYY-MM-DD",
-                               help="reporting date (default: today in the report timezone)")
+                               help="reporting date (default: the latest date whose cutoff has passed)")
+    report_parser.add_argument("--early", dest="publish_early", action="store_true",
+                               help="publish today's report now, before its scheduled cutoff (the cutoff becomes "
+                                    "the current time; the opening says so)")
     subcommands.add_parser("status", help="show catalog, queue, model and report state")
     access_check_parser = subcommands.add_parser(
         "access-check", help="verify accounts, permissions, egress rules and the extractor sandbox (plan part 3)")

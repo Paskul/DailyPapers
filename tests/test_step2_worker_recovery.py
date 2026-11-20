@@ -73,8 +73,9 @@ def test_paper_imported_by_two_routes_is_one_canonical_paper_with_one_review(ini
     assert "Possible duplicate papers (not merged): 1 unresolved" in initialized_home.run_cli("status").stdout
 
     # Report links use the trusted, normalized identifiers.
-    initialized_home.run_cli("report", "--date", "2026-11-19")
-    report_text = (initialized_home.home_dir / "output" / "daily" / "2026-11-19.md").read_text()
+    report_date = initialized_home.make_todays_report_publishable_early()
+    assert initialized_home.run_cli("report", "--date", report_date, "--early").exit_code == 0
+    report_text = (initialized_home.home_dir / "output" / "daily" / f"{report_date}.md").read_text()
     assert "https://arxiv.org/abs/2411.01234" in report_text and "https://openalex.org/W4400000001" in report_text
 
 

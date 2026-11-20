@@ -102,6 +102,26 @@ class InferenceLockTimeout(PaperwatchError):
     model_call_outcome = "lock_timeout"
 
 
+class ModelCallDeadlineExceeded(ModelCallTimedOut):
+    """A caller's overall deadline (e.g. the report writer's, plan part 9) ran out before or during a model call."""
+
+    model_call_outcome = "deadline_exceeded"
+
+
+class ReportNotDueYet(PaperwatchError):
+    """`report --date D` asked for a report whose scheduled cutoff has not passed (plan part 9)."""
+
+    failed_component = "report"
+    process_exit_code = 13
+
+
+class ReportPublicationInProgress(PaperwatchError):
+    """Another `report` process holds the publication lock; one publication process at a time (plan part 9)."""
+
+    failed_component = "report"
+    process_exit_code = 13
+
+
 class SourceInputError(PaperwatchError):
     failed_component = "source"
     process_exit_code = 7
