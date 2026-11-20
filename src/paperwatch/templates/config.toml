@@ -99,6 +99,8 @@ daily_source_text_budget = 30             # full-text downloads per UTC day for 
 local_sources_dir = "local_sources"       # put PDFs here named by arXiv id or DOI (2401.01234v2.pdf,
                                           #   10.1109_xyz.pdf); used before any download
 source_text_hold_minutes = 60             # new readings wait until this run has fetched their PDFs (at most this long)
+source_cache_limit_megabytes = 4096       # downloads above this are removed (oldest first) once their text is
+                                          #   extracted; extracted text, reviews, and reports are always kept
 
 # Cheap CPU screening of every candidate, then the daily promotion of the best ones to a reading (plan part 6).
 # Score per topic, 0-1 = weighted mean of the AVAILABLE signals (a missing one is left out, the rest renormalized):

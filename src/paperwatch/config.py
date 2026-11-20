@@ -172,6 +172,9 @@ class CollectionSettings:
     # Readings that `collect` queues wait until the same run has acquired their source text (so the worker does not
     # read an abstract seconds before the PDF arrives). If that stage never finishes, they become due after this.
     source_text_hold_minutes: int = 60
+    # Plan part 10: raw downloads (.pdf/.xml) above this total are removed oldest first once their text is extracted
+    # and no reading of the paper is pending; the extracted text, the reviews, and the reports are always kept.
+    source_cache_limit_megabytes: int = 4096
 
 
 @dataclass(frozen=True)

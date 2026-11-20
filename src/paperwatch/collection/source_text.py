@@ -27,6 +27,7 @@ from datetime import timedelta
 
 from paperwatch.catalog import load_paper_aliases
 from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp
+from paperwatch.collection.source_cache_limit import prune_replaceable_downloads
 from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.local_source_files import (LocalSourceFolder, file_stems_for_edition, file_stems_for_paper,
                                                       read_local_source_bytes)
@@ -104,7 +105,8 @@ def acquire_source_texts(context: CollectionContext, *, allow_network: bool) -> 
             run_counts.unavailable += 1
 
     _extract_pending_texts(context, run_counts)
-    return [run_counts.describe(downloads_remaining)]
+    cache_summary = prune_replaceable_downloads(context.connection, context.app_config)
+    return [run_counts.describe(downloads_remaining), cache_summary.describe()]
 
 
 # --------------------------------------------------------------------------------------------------------------------

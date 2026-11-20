@@ -71,12 +71,15 @@ to validate them and install them into the deployed home (`/srv/paperwatch`) wit
 | `reread PAPER_ID [--reason TEXT]` | Operator request for a fresh reading; gets its own generation id and a separate review. |
 | `report [--date YYYY-MM-DD] [--early]` | Publish `output/daily/<date>.md` (default: the latest date whose 07:00 cutoff has passed). Freezes the eligible reviews at the cutoff, lets the writer explain them (or labels a fallback), restores missing notes, then writes atomically. One report per date and one publishing process at a time; reruns produce identical bytes. `--early` publishes today's report before its cutoff and says so. |
 | `status` | Topics with their input mode (keywords / seeds / both) and what is missing, seed sources and their last sync, papers by status, editions/aliases, unresolved possible duplicates, jobs by kind/status (incl. expired leases), queued jobs per priority class with the oldest one's age, the screening model and today's promotions by reason and topic, reviews by coverage, model pause state, last model call, new candidates today, each feed / recent window / historical search with its coverage and stopping reason, open coverage gaps, source text, withdrawals, outbound requests today and paused providers, last report. |
+| `capacity [--hours 24]` | Measured model time per role (median, p90, tokens/s, outcomes incl. rejected answers) and per completed review by coverage; queue growth; the plan's estimate of readings per day after reserving research, comparison, and report time, flagged when the configured limits exceed it. Read-only. |
+| `backup DESTINATION` / `backup --check-restore DIR` | Write `DESTINATION/paperwatch-backup-<UTC time>/`: a complete home (SQLite online backup, settings, extracted text, output, manifest; no credentials, no raw PDFs). `--check-restore` loads a copy in a fresh directory and compares it with the manifest. |
+| `label-sample OUTPUT.csv [--size 40] [--seed N]` | A reproducible, shuffled sample of screened candidates (promoted, near misses, the rest) with NO scores, for marking "would read" and why (ranking-quality check). Never overwrites a file. |
 | `access-check --component collector\|worker` | Run as a service account. Verifies the account and group; the read-only provider rules; the private credentials; the output, state, WAL, and cache permissions; the egress probes; llama-server flags and account; and the extractor sandbox (smoke test). |
 
 Failures always print `paperwatch: FAILED [<component>] ...` with a component-specific exit code
 (2 config, 3 model-server unavailable, 4 database, 5 model call/output, 6 inference lock, 7 source, 8 output, 9 worker,
 10 source-access: refused by the access rules, 11 extractor, 12 screening: the embedding model is missing or altered,
-13 report: not due yet, or another `report` is publishing).
+13 report: not due yet, or another `report` is publishing, 14 backup or restore check, 15 label sample).
 
 ## How the model is used
 
@@ -424,6 +427,23 @@ research choices are exactly ids the host offered (also rechecked where they are
 internal-id names; hostile text is inert in notes and the report. 1,500 random hostile research answers never get an
 unoffered id past the checks.
 
+### Operating and measuring (plan part 10)
+
+```bash
+paperwatch --home /srv/paperwatch capacity                      # minutes per paper, readings/day estimate
+paperwatch --home /srv/paperwatch backup ~/paperwatch-backups   # consistent snapshot while services run
+cp -a ~/paperwatch-backups/paperwatch-backup-<time> /tmp/fresh-home
+paperwatch --home /srv/paperwatch backup --check-restore /tmp/fresh-home   # restore check (plan: "once")
+paperwatch --home /srv/paperwatch label-sample ~/labels.csv     # 40 candidates to label, no scores shown
+```
+
+- **Source-cache limit** (`collection.source_cache_limit_megabytes`, 4096): after each `collect`, raw downloads above
+  the limit are removed oldest first, only once their text is extracted and no reading of the paper is pending.
+  Extracted text (what reviews cite), reviews, and reports are always kept. `status` shows the cache size.
+- **`status`** also shows the last successful fetch per source (and a later failure, if any).
+- **Backups** never contain the provider credentials or raw PDFs, and are private (mode 0700/0600).
+- The new commands run under the no-network egress policy.
+
 ## Research profile (plan part 4)
 
 The question is the unit of relevance, and every topic is defined by keywords, seeds, or both:
@@ -580,6 +600,9 @@ src/paperwatch/
   rendering/                    # Markdown escaping, evidence notes, comparison notes, daily report, atomic writes
   commands/                     # one module per CLI command
   deployment/                   # part 10: systemd units of the one-day pilot (one-shot timers)
+  measurement/                  # part 10: capacity from recorded model calls; ranking-quality label sample
+  maintenance/                  # part 10: backup (SQLite online backup API) and restore check
+  collection/source_cache_limit.py  # part 10: remove extracted raw downloads above the cache limit
   service_log_redaction.py      # part 10: no keys, signed URLs, or paper/model text in service logs
 settings/                       # operator settings (gitignored) + committed *.example.toml; see settings/README.md
 deploy/                         # install, service accounts, nftables egress rules, extractor image, embedding model,

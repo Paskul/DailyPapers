@@ -1,11 +1,11 @@
 """Command-line entry point: paperwatch [--home DIR] {init, doctor, collect, work, reread, report, status,
-access-check}.
+access-check, capacity, backup, label-sample}.
 
 Every failure is printed as `paperwatch: FAILED [<component>] <message>` with a component-specific exit code
 (see paperwatch.errors), so the operator and systemd logs show which part broke.
 
 Before a command runs, its process arms one egress policy (paperwatch.network.egress_guard): only `collect` may
-reach paper providers; every other command may reach only the local model server; `init` may reach nothing.
+reach paper providers; every other command may reach only the local model server; `init`, `capacity`, `backup`, and `label-sample` may reach nothing.
 """
 
 from __future__ import annotations
@@ -19,6 +19,9 @@ from pathlib import Path
 
 from paperwatch import __version__
 from paperwatch.app_context import AppContext
+from paperwatch.commands.backup_command import run_backup_command
+from paperwatch.commands.capacity_command import run_capacity_command
+from paperwatch.commands.label_sample_command import run_label_sample_command
 from paperwatch.commands.access_check_command import COMPONENT_COLLECTOR, COMPONENT_WORKER, run_access_check_command
 from paperwatch.commands.collect_command import run_collect_command
 from paperwatch.commands.doctor_command import run_doctor_command
@@ -29,8 +32,8 @@ from paperwatch.commands.status_command import run_status_command
 from paperwatch.commands.work_command import run_work_command
 from paperwatch.config import AppConfig
 from paperwatch.errors import PaperwatchError, describe_failure_for_operator
-from paperwatch.network.egress_guard import (arm_egress_policy, build_collector_policy, build_local_model_policy,
-                                             build_no_network_policy)
+from paperwatch.network.egress_guard import (EgressPolicy, arm_egress_policy, build_collector_policy,
+                                             build_local_model_policy, build_no_network_policy)
 from paperwatch.network.provider_rules import load_provider_access_rules
 from paperwatch.service_log_redaction import install_service_log_redaction
 
@@ -44,8 +47,12 @@ COMMAND_RUNNERS: dict[str, Callable[[AppContext, argparse.Namespace], int]] = {
     "report": run_report_command,
     "status": run_status_command,
     "access-check": run_access_check_command,
+    "capacity": run_capacity_command,
+    "backup": run_backup_command,
+    "label-sample": run_label_sample_command,
 }
 COLLECTOR_COMMAND_NAME = "collect"
+NO_NETWORK_COMMAND_NAMES = frozenset({"capacity", "backup", "label-sample"})  # local files and the database only
 UNGUARDED_COMMAND_NAMES = frozenset({"access-check"})  # must try forbidden connections to prove the OS blocks them
 
 
@@ -89,18 +96,42 @@ def build_argument_parser() -> argparse.ArgumentParser:
     access_check_parser.add_argument("--public-probe-address", dest="public_probe_addresses", action="append",
                                      metavar="IP", help="public IP of the probe host, resolved by the caller; the "
                                      "worker must not be able to connect to it directly (repeatable)")
+    capacity_parser = subcommands.add_parser("capacity", help="measured model time per role and per review, and "
+                                                               "the daily capacity estimate (plan part 10)")
+    capacity_parser.add_argument("--hours", dest="window_hours", type=float, default=24.0,
+                                 help="how far back to measure (default 24)")
+    backup_parser = subcommands.add_parser("backup", help="back up the home (SQLite online backup, settings, "
+                                                          "extracted text, output), or check a restored backup")
+    backup_parser.add_argument("destination_dir", type=Path, nargs="?", metavar="DESTINATION",
+                               help="directory that receives paperwatch-backup-<UTC time>/ (outside the home)")
+    backup_parser.add_argument("--check-restore", dest="check_restore_dir", type=Path, metavar="BACKUP_DIR",
+                               help="check a backup copied to a fresh directory against its manifest")
+    label_parser = subcommands.add_parser("label-sample", help="write a shuffled sample of candidates, without "
+                                                              "scores, for hand labels (plan part 10)")
+    label_parser.add_argument("output_path", type=Path, metavar="OUTPUT.csv", help="new CSV file (never overwritten)")
+    label_parser.add_argument("--size", dest="sample_size", type=int, default=40, help="at least 40 (default 40)")
+    label_parser.add_argument("--seed", dest="sample_seed", type=int, default=20261121,
+                              help="the draw is reproducible for a given seed")
     return parser
+
+
+def select_egress_policy_for_command(command_name: str, app_config: AppConfig) -> EgressPolicy | None:
+    """The one egress policy a command's process runs under (None: unguarded, access-check only)."""
+    if command_name in UNGUARDED_COMMAND_NAMES:
+        return None
+    if command_name in NO_NETWORK_COMMAND_NAMES:
+        return build_no_network_policy(command_name)
+    if command_name == COLLECTOR_COMMAND_NAME:
+        return build_collector_policy(load_provider_access_rules().all_permitted_hosts(),
+                                      app_config.extractor.container_runtime)
+    return build_local_model_policy(app_config.model.base_url, component_label=command_name)
 
 
 def arm_egress_policy_for_command(command_name: str, app_config: AppConfig) -> None:
     """Defence in depth behind nftables: limit what this process may resolve, connect to, and launch."""
-    if command_name in UNGUARDED_COMMAND_NAMES:
-        return
-    if command_name == COLLECTOR_COMMAND_NAME:
-        arm_egress_policy(build_collector_policy(load_provider_access_rules().all_permitted_hosts(),
-                                                 app_config.extractor.container_runtime))
-    else:
-        arm_egress_policy(build_local_model_policy(app_config.model.base_url, component_label=command_name))
+    selected_policy = select_egress_policy_for_command(command_name, app_config)
+    if selected_policy is not None:
+        arm_egress_policy(selected_policy)
 
 
 def main(argv: list[str] | None = None) -> int:

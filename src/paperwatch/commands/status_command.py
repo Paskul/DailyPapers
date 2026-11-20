@@ -18,6 +18,7 @@ from paperwatch.research_profile import (TopicResearchProfile, build_research_pr
                                          explain_empty_research_profile, load_active_seed_library_paper_ids)
 from paperwatch.seeds.seed_store import count_active_seeds_by_source, seed_sources_of_all_topics
 from paperwatch.collection.candidate_budget import CandidateAdmissionBudget
+from paperwatch.collection.source_cache_limit import measure_source_cache
 from paperwatch.collection.current_releases import (ARXIV_FEED_CHECKPOINT_PREFIX, ARXIV_RECOVERY_CHECKPOINT_PREFIX,
                                                     OPENALEX_RECENT_CHECKPOINT_PREFIX)
 from paperwatch.collection.historical_search import (history_plan_key, historical_queries_for_topic, plan_windows,
@@ -217,6 +218,18 @@ def _print_provider_access_summary(app: AppContext) -> None:
     else:
         print("Outbound requests today: " + ", ".join(
             f"{row['provider_name']} {row['outcome']} {row['request_count']}" for row in outbound_rows))
+    # Plan part 10: the last successful fetch per source, so a silent outage is visible even on a quiet day.
+    for last_fetch_row in app.connection.execute(
+            """SELECT provider_name, MAX(started_at) AS last_success,
+                      (SELECT MAX(failure.started_at) FROM outbound_requests AS failure
+                       WHERE failure.provider_name = request.provider_name
+                         AND failure.outcome NOT IN ('ok', 'redirect', 'not_modified', 'not_found')) AS last_failure
+               FROM outbound_requests AS request WHERE outcome IN ('ok', 'not_modified')
+               GROUP BY provider_name ORDER BY provider_name"""):
+        failure_text = f"; last failure {last_fetch_row['last_failure']}" if last_fetch_row["last_failure"] and \
+            last_fetch_row["last_failure"] > last_fetch_row["last_success"] else ""
+        print(f"  Last successful fetch from {last_fetch_row['provider_name']}: {last_fetch_row['last_success']}"
+              f"{failure_text}")
     blocked_count = sum(row["request_count"] for row in outbound_rows if row["outcome"] == "blocked")
     if blocked_count:
         print(f"  {blocked_count} request(s) refused by the access rules today (see the outbound_requests table)")
@@ -330,6 +343,7 @@ def _print_collection_coverage(app: AppContext) -> None:
                                           else "") + f" {row['edition_count']}" for row in text_rows) or "none yet")
           + f"; {downloads_today} of {collection_settings.daily_source_text_budget} download(s) used today; local "
             f"files from {app.config.local_sources_dir}")
+    print(measure_source_cache(app.config).describe())
     withdrawn_count = connection.execute("SELECT COUNT(*) FROM paper_withdrawals").fetchone()[0]
     if withdrawn_count:
         print(f"Withdrawn or retracted papers: {withdrawn_count} (never recommended; a previously reported one gets a "
