@@ -11,7 +11,8 @@ receives plain data and has zero tools.
      the shared inference lock (one request at a time across roles and processes),
   3. sends one fresh-context request with the role's hard time and output limits,
   4. parses the final answer (never the reasoning) as JSON and validates schema + semantics,
-  5. logs the call (role, prompt version, model identity, server build, outcome) to `model_calls`.
+  5. logs the call (role, prompt version, model identity, server build, outcome) to `model_calls`, and records it
+     in the activity log while it runs (the monitor shows the call in progress, including the wait for the lock).
 `run_role_with_one_repair` adds the plan's single bounded repair attempt: an invalid answer is sent back once, in a
 new fresh context, with the problems listed; a second invalid answer ends the job (ModelOutputRejectedAfterRepair).
 Persisting the validated output is the caller's job, inside its own lease-checked transaction.
@@ -30,6 +31,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from paperwatch.activity_log import finish_activity, start_activity
 from paperwatch.clock import utc_now_timestamp
 from paperwatch.config import AppConfig, RoleLimits
 from paperwatch.errors import (ModelCallDeadlineExceeded, ModelOutputInvalid, ModelOutputRejectedAfterRepair,
@@ -132,6 +134,9 @@ def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app
     call_started_at = utc_now_timestamp()
     call_started_monotonic = time.monotonic()
     model_response: StructuredChatResponse | None = None
+    activity_id = start_activity(connection, "model_call", {
+        "role": role_definition.role_name, "repair": rejected_first_answer is not None, "job_id": job_id,
+        "estimated_prompt_tokens": estimated_prompt_tokens, "timeout_seconds": int(call_timeout_seconds)})
     try:
         if not holds_inference_reservation:
             wait_while_inference_is_reserved(connection)  # plan part 9: the report gets the next slot
@@ -158,10 +163,15 @@ def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app
                         outcome=call_error.model_call_outcome, error_message=str(call_error))
         if call_error.is_service_outage:
             record_service_outage(connection, MODEL_SERVICE_NAME, str(call_error), app_config.model)
+        finish_activity(connection, activity_id, call_error.model_call_outcome, note=str(call_error))
+        raise
+    except BaseException:  # e.g. the worker was stopped during the call; the model_calls row is not written
+        finish_activity(connection, activity_id, "stopped")
         raise
 
     _log_model_call(connection, role_definition.role_name, logged_prompt_version, job_id, call_started_at,
                     time.monotonic() - call_started_monotonic, model_response, outcome="ok", error_message=None)
+    finish_activity(connection, activity_id, "ok", detail_update={"completion_tokens": model_response.completion_tokens})
     record_service_success(connection, MODEL_SERVICE_NAME)
     return RoleRunResult(validated_output=validated_output, model_response=model_response,
                          role_name=role_definition.role_name, prompt_version=role_definition.prompt_version)

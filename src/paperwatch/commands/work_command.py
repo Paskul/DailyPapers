@@ -29,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
+from paperwatch.activity_log import COMPONENT_WORKER, recorded_activity
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import load_edition_row, set_paper_status
 from paperwatch.clock import utc_now, utc_now_timestamp
@@ -275,7 +276,29 @@ def run_single_work_cycle(app: AppContext, *, probe_paused_model_now: bool) -> W
         set_paper_status(app.connection, claimed_job.paper_id, "reviewing")
     LOGGER.info("claimed %s (%s, attempt %d/%d)", claimed_job.job_id, claimed_job.kind,
                 claimed_job.attempts_including_this_one, claimed_job.max_attempts)
+    job_detail = {"job_id": claimed_job.job_id, "kind": claimed_job.kind, "paper_id": claimed_job.paper_id,
+                  "attempt": claimed_job.attempts_including_this_one, "max_attempts": claimed_job.max_attempts}
+    with recorded_activity(app.connection, "job", job_detail, component=COMPONENT_WORKER) as job_activity:
+        cycle_report = _run_claimed_job(app, claimed_job)
+        job_activity.end_as(ACTIVITY_OUTCOME_BY_CYCLE_OUTCOME.get(cycle_report.outcome, cycle_report.outcome.value),
+                            note=None if cycle_report.outcome == WorkCycleOutcome.JOB_COMPLETED
+                            else cycle_report.message)
+    return cycle_report
 
+
+# How a job's activity-log row ends (the monitor shows it next to the job).
+ACTIVITY_OUTCOME_BY_CYCLE_OUTCOME = {
+    WorkCycleOutcome.JOB_COMPLETED: "ok",
+    WorkCycleOutcome.JOB_RETRY_SCHEDULED: "retry",
+    WorkCycleOutcome.JOB_FAILED_PERMANENTLY: "failed",
+    WorkCycleOutcome.JOB_RELEASED_UNCHARGED: "released",
+    WorkCycleOutcome.MODEL_SERVICE_PAUSED: "paused",
+    WorkCycleOutcome.LEASE_LOST: "lease_lost",
+}
+
+
+def _run_claimed_job(app: AppContext, claimed_job: ClaimedJob) -> WorkCycleReport:
+    """Run the handler under a renewed lease, then commit its writes, or settle the failure."""
     try:
         job_handler = JOB_HANDLERS_BY_KIND.get(claimed_job.kind)
         if job_handler is None:
@@ -370,11 +393,15 @@ def _run_worker_loop(app: AppContext) -> int:
     signal.signal(signal.SIGINT, request_stop)
     print("paperwatch worker started; Ctrl+C or SIGTERM stops it after the current job", flush=True)
 
-    while not stop_requested.is_set():
-        cycle_report = run_single_work_cycle(app, probe_paused_model_now=False)
-        if cycle_report.outcome != WorkCycleOutcome.NO_JOB_DUE:
-            _print_cycle_report(cycle_report)
-        stop_requested.wait(_seconds_until_next_cycle(app, cycle_report))
+    with recorded_activity(app.connection, "run", {"mode": "loop"}, component=COMPONENT_WORKER) as run_activity:
+        completed_job_count = 0
+        while not stop_requested.is_set():
+            cycle_report = run_single_work_cycle(app, probe_paused_model_now=False)
+            if cycle_report.outcome != WorkCycleOutcome.NO_JOB_DUE:
+                _print_cycle_report(cycle_report)
+            completed_job_count += cycle_report.outcome == WorkCycleOutcome.JOB_COMPLETED
+            stop_requested.wait(_seconds_until_next_cycle(app, cycle_report))
+        run_activity.add_detail(completed_jobs=completed_job_count)
     print("paperwatch worker stopped", flush=True)
     return 0
 

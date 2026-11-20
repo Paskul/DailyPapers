@@ -124,6 +124,12 @@ def build_local_model_policy(model_base_url: str, component_label: str) -> Egres
                         allowed_non_loopback_endpoints=resolved_endpoints)
 
 
+def build_monitor_policy(systemctl_path: str = "/usr/bin/systemctl") -> EgressPolicy:
+    """`monitor`: no outbound connection at all (it only accepts the page's requests), and exactly one program, the
+    read-only `systemctl show` query for the services' states."""
+    return EgressPolicy(component_label="monitor", allowed_executables=frozenset({systemctl_path}))
+
+
 def build_collector_policy(permitted_provider_hosts: frozenset[str], container_runtime: str) -> EgressPolicy:
     return EgressPolicy(component_label="collector", resolvable_host_names=permitted_provider_hosts,
                         allow_public_internet_https=True, allowed_executables=frozenset({container_runtime}))

@@ -39,6 +39,7 @@ import argparse
 import sys
 from collections.abc import Callable
 
+from paperwatch.activity_log import COMPONENT_COLLECT, prune_old_activity, recorded_activity
 from paperwatch.app_context import AppContext
 from paperwatch.clock import utc_now
 from paperwatch.db import write_transaction
@@ -77,30 +78,56 @@ def run_collect_command(app: AppContext, arguments: argparse.Namespace, *,
 
     fixture_paths = getattr(arguments, "fixture_paths", None) or []
     run_live_searches = not fixture_paths and not getattr(arguments, "skip_searches", False)
+    run_mode = "fixture" if fixture_paths else ("live" if run_live_searches else "skip_searches")
 
-    _synchronize_seed_sources(app, build_gateway_once)
+    prune_old_activity(app.connection)
+    with recorded_activity(app.connection, "run", {"mode": run_mode}, component=COMPONENT_COLLECT) as run_activity:
+        exit_code = _run_collect_stages(app, build_gateway_once, fixture_paths, run_live_searches)
+        if exit_code != 0:
+            run_activity.end_as("failed", note=f"exit code {exit_code} (see the service log)")
+    return exit_code
+
+
+def _run_collect_stages(app: AppContext, build_gateway_once: Callable[[], ProviderGateway], fixture_paths: list,
+                        run_live_searches: bool) -> int:
+    """The stages of one run, each recorded in the activity log (the monitor shows which one is running)."""
+    def stage(step_name: str):
+        return recorded_activity(app.connection, step_name)
+
+    with stage("seeds"):
+        _synchronize_seed_sources(app, build_gateway_once)
     collection_context = CollectionContext.start(
         app.connection, app.config, build_gateway_once,
         active_seed_paper_ids=load_active_seed_library_paper_ids(app.connection, app.config))
     if fixture_paths:
-        _import_recorded_fixtures(collection_context, fixture_paths)
+        with stage("fixtures"):
+            _import_recorded_fixtures(collection_context, fixture_paths)
     elif run_live_searches:
-        _print_lines(collect_current_releases(collection_context))
-        _print_lines(run_historical_searches(collection_context))
-        _print_lines(run_requested_research_branches(collection_context))
+        with stage("current_releases"):
+            _print_lines(collect_current_releases(collection_context))
+        with stage("historical_search"):
+            _print_lines(run_historical_searches(collection_context))
+        with stage("gap_searches"):
+            _print_lines(run_requested_research_branches(collection_context))
         print(f"Candidates: {collection_context.candidate_budget.describe()}")
-        _print_lines(fetch_references_of_reviewed_papers(collection_context))
+        with stage("references"):
+            _print_lines(fetch_references_of_reviewed_papers(collection_context))
     else:
         print("Papers: live arXiv / OpenAlex searches skipped (--skip-searches)")
-    screening_result = run_screening_and_promotion(
-        app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids,
-        moment=collection_context.started_at,
-        hold_new_readings_until=compute_source_text_hold_until(utc_now(),
-                                                               app.config.collection.source_text_hold_minutes))
+    with stage("screening") as screening_activity:
+        screening_result = run_screening_and_promotion(
+            app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids,
+            moment=collection_context.started_at,
+            hold_new_readings_until=compute_source_text_hold_until(utc_now(),
+                                                                   app.config.collection.source_text_hold_minutes))
+        if screening_result.embedder_failure is not None:
+            screening_activity.end_as("failed", note=str(screening_result.embedder_failure))
     _print_lines(screening_result.report_lines)
-    _print_lines(_queue_follow_up_work(app, collection_context))
+    with stage("follow_up"):
+        _print_lines(_queue_follow_up_work(app, collection_context))
     try:
-        _print_lines(acquire_source_texts(collection_context, allow_network=run_live_searches))
+        with stage("source_text"):
+            _print_lines(acquire_source_texts(collection_context, allow_network=run_live_searches))
     finally:  # the held readings become due now, whatever the source-text stage achieved
         with write_transaction(app.connection):
             released_count = release_readings_held_for_source_text(app.connection)

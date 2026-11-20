@@ -1,11 +1,12 @@
 """Command-line entry point: paperwatch [--home DIR] {init, doctor, collect, work, reread, report, status,
-access-check, capacity, backup, label-sample}.
+access-check, capacity, backup, label-sample, monitor}.
 
 Every failure is printed as `paperwatch: FAILED [<component>] <message>` with a component-specific exit code
 (see paperwatch.errors), so the operator and systemd logs show which part broke.
 
 Before a command runs, its process arms one egress policy (paperwatch.network.egress_guard): only `collect` may
-reach paper providers; every other command may reach only the local model server; `init`, `capacity`, `backup`, and `label-sample` may reach nothing.
+reach paper providers; every other command may reach only the local model server; `init`, `capacity`, `backup`, and `label-sample` may reach nothing; `monitor`
+connects nowhere (it only serves its page) and may start only `systemctl` for read-only state queries.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from paperwatch.app_context import AppContext
 from paperwatch.commands.backup_command import run_backup_command
 from paperwatch.commands.capacity_command import run_capacity_command
 from paperwatch.commands.label_sample_command import run_label_sample_command
+from paperwatch.commands.monitor_command import add_monitor_arguments, run_monitor_command
 from paperwatch.commands.access_check_command import COMPONENT_COLLECTOR, COMPONENT_WORKER, run_access_check_command
 from paperwatch.commands.collect_command import run_collect_command
 from paperwatch.commands.doctor_command import run_doctor_command
@@ -30,10 +32,11 @@ from paperwatch.commands.report_command import run_report_command
 from paperwatch.commands.reread_command import run_reread_command
 from paperwatch.commands.status_command import run_status_command
 from paperwatch.commands.work_command import run_work_command
-from paperwatch.config import AppConfig
+from paperwatch.config import AppConfig, load_app_config
 from paperwatch.errors import PaperwatchError, describe_failure_for_operator
 from paperwatch.network.egress_guard import (EgressPolicy, arm_egress_policy, build_collector_policy,
-                                             build_local_model_policy, build_no_network_policy)
+                                             build_local_model_policy, build_monitor_policy,
+                                             build_no_network_policy)
 from paperwatch.network.provider_rules import load_provider_access_rules
 from paperwatch.service_log_redaction import install_service_log_redaction
 
@@ -112,6 +115,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     label_parser.add_argument("--size", dest="sample_size", type=int, default=40, help="at least 40 (default 40)")
     label_parser.add_argument("--seed", dest="sample_seed", type=int, default=20261121,
                               help="the draw is reproducible for a given seed")
+    monitor_parser = subcommands.add_parser("monitor", help="serve a live, read-only web page of what paperwatch "
+                                                            "is doing, has done, and plans to do")
+    add_monitor_arguments(monitor_parser)
     return parser
 
 
@@ -143,6 +149,12 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command_name == "init":
             arm_egress_policy(build_no_network_policy("init"))
             return run_init_command(arguments.home, arguments)
+        if arguments.command_name == "monitor":
+            # Read-only: it never opens the database for writing or insists on the current schema version, so it
+            # also watches a deployment that runs an older version.
+            app_config = load_app_config(arguments.home)
+            arm_egress_policy(build_monitor_policy())
+            return run_monitor_command(app_config, arguments)
         app = AppContext.load(arguments.home)
         try:
             arm_egress_policy_for_command(arguments.command_name, app.config)

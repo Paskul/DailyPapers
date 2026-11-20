@@ -1,0 +1,236 @@
+# paperwatch settings: the ONE file you edit. Installation ([setup]), configuration (every other table), and research
+# topics ([[topics]]) live here. Apply it with:   ./setup.sh
+# (re-run after every change; it is safe to repeat). ./setup.sh --check validates without changing anything.
+#
+# This file holds your private research questions, so settings/paperwatch.toml is gitignored. API keys do NOT go here:
+# they stay in settings/collector_credentials.toml (mode 0600), installed where only the collector can read them.
+
+[setup]
+home = "/srv/paperwatch"          # the paperwatch home: database (state/), notes and reports (output/), models/
+mode = "hardened"                 # "hardened": app installed read-only in /opt/paperwatch, separate collector and
+                                  #   worker accounts, firewall rules, sandboxed services (asks for sudo);
+                                  # "local": everything runs as you from this repository, no sudo (home may then be
+                                  #   anywhere, e.g. "/home/<you>/paperwatch")
+credentials_file = "collector_credentials.toml"   # relative to this file; "" = no API keys (seeds from CSL JSON only)
+install_embedding_model = true    # download the pinned screening model (about 450 MB, hash-checked) if missing
+build_extractor_image = true      # build the sandboxed PDF extractor with Podman if [extractor] image is empty or
+                                  #   missing; its id is filled in automatically. Without it, papers are read from
+                                  #   their abstracts only.
+daily_schedule = false            # true: recurring systemd timers run collect at [schedule] collect_times, keep the
+                                  #   worker running, and publish the report at [report] publish_time, every day.
+                                  #   false: nothing runs on its own (setup removes the timers if they exist).
+monitor_service = false           # true: keep `paperwatch monitor` running as your user service (starts at boot)
+monitor_port = 8765               # the monitor page: http://127.0.0.1:8765 (from another machine: an SSH tunnel,
+monitor_listen_address = "127.0.0.1"  # ssh -L 8765:127.0.0.1:8765 <host>, or this machine's Tailscale address)
+
+# ===================================================================================================================
+# Configuration (installed as <home>/config.toml). Every value is the built-in default; delete a line to keep it.
+# ===================================================================================================================
+[paths]
+state_dir = "state"     # SQLite database + source cache. Keep OUTSIDE any synced notes folder.
+output_dir = "output"   # Markdown notes (papers/) and daily reports (daily/). May point into an Obsidian vault.
+
+[model]
+backend = "llama_cpp"                    # "llama_cpp" (real local server) or "fake" (offline tests)
+base_url = "http://127.0.0.1:8080/v1"    # must be a loopback address; there is never a hosted fallback
+model_alias = "qwen-local"
+connect_timeout_seconds = 5.0
+required_context_tokens = 32768          # `doctor` fails if the per-slot context is smaller
+allow_non_loopback_host = false
+outage_backoff_initial_seconds = 30      # model jobs pause together on an outage; health checks back off
+outage_backoff_max_seconds = 1800
+inference_lock_wait_seconds = 3600       # one inference request at a time across all roles
+
+# Hard limits per model role. Reasoning tokens count toward max_output_tokens.
+# reasoning_effort: "server-default" or a level the server supports (e.g. low, medium, high).
+[roles.healthcheck]
+max_output_tokens = 2048
+timeout_seconds = 120
+reasoning_effort = "low"
+
+[roles.section_reader]                    # reads one bounded section of a long paper
+max_output_tokens = 16384
+timeout_seconds = 1800
+reasoning_effort = "server-default"
+
+[roles.reviewer]                          # the evidence-backed review (from passages or section notes)
+max_output_tokens = 16384
+timeout_seconds = 1800
+reasoning_effort = "server-default"
+
+[roles.topic_assessor]                    # rubric ratings of a finished review against every topic
+max_output_tokens = 12288
+timeout_seconds = 1200
+reasoning_effort = "server-default"
+
+[roles.research]                          # picks the references worth reading, and a gap search
+max_output_tokens = 8192
+timeout_seconds = 1200
+reasoning_effort = "server-default"
+
+[roles.comparison]                        # compares two saved reviews on the same question
+max_output_tokens = 12288
+timeout_seconds = 1200
+reasoning_effort = "server-default"
+
+[roles.writer]                            # writes the daily report's overview from the frozen reviews
+max_output_tokens = 8192
+timeout_seconds = 1500
+reasoning_effort = "medium"               # also bounded by report.writer_deadline_minutes
+
+[worker]
+max_attempts_per_job = 3      # paper-specific failures only; outages never consume attempts
+retry_delay_seconds = 600     # multiplied by the attempt number
+idle_poll_seconds = 60        # no inference calls happen while idle
+lease_seconds = 300                  # a crashed worker's job is reclaimable after this long
+lease_renewal_interval_seconds = 60  # a live worker renews its lease this often during long model calls
+
+[report]
+timezone = "America/New_York"
+publish_time = "07:00"            # the cutoff: reviews completed later belong to the next report
+max_papers_per_report = 15
+minimum_reading_priority = 65     # 0-100: the best topic score a review needs to be recommended
+writer_deadline_minutes = 30      # slot + writer call + repair + validation; after that, the saved-summary fallback
+
+[schedule]
+collect_times = ["00:30", "06:30", "12:30", "18:30"]
+
+# The collector is the ONLY component that contacts paper providers. Which hosts, paths, and parameters it may use,
+# its request budgets and its response bounds are fixed in the read-only provider rules shipped with the package
+# (paperwatch/network/provider_rules.toml), not here.
+[collector]
+credentials_file = "credentials/collector.toml"   # API keys (Zotero, OpenAlex). Collector account only, mode 0600.
+user_agent = "paperwatch/0.1 (local research monitor)"
+allow_lookup_by_seed_identifier = false   # true lets the collector look up a work by an identifier known only from
+                                          # your seed library (e.g. a seed's DOI); that tells the provider you hold it
+
+# What one `collect` run may admit and fetch Starting values; tune them with `paperwatch capacity`.
+[collection]
+daily_new_candidate_budget = 500          # papers new to the catalog per UTC day, from arXiv / OpenAlex routes
+current_release_reserved_candidates = 200 # of those, kept for current releases; the historical search uses the rest
+historical_candidates_per_topic = 300     # per initial (or materially changed) historical search of a topic
+# The historical search weights publication years exponentially toward the present: candidates per year halve
+# every `historical_half_life_years`, down to `historical_earliest_year`. The curve is cut into
+# `historical_window_count` windows of equal weight (narrow recent ones, one wide old one), each with an equal share.
+historical_earliest_year = 1940
+historical_half_life_years = 6.0
+historical_window_count = 8
+historical_citation_ordering_min_age_years = 5.0  # windows at least this old take their most-cited papers first
+historical_pages_per_topic_per_run = 6    # bounds one run (arXiv needs 3 s between requests)
+pages_per_search_per_run = 10             # missed-release recovery and recent OpenAlex windows
+openalex_recent_window_days = 14          # recent window; also the overlap re-checked for late-indexed works
+openalex_recent_sweep_interval_hours = 12 # one recent OpenAlex sweep per query at most this often
+daily_source_text_budget = 30             # full-text downloads per UTC day for papers queued for review
+local_sources_dir = "local_sources"       # put PDFs here named by arXiv id or DOI (2401.01234v2.pdf,
+                                          #   10.1109_xyz.pdf); used before any download
+source_text_hold_minutes = 60             # new readings wait until this run has fetched their PDFs (at most this long)
+source_cache_limit_megabytes = 4096       # downloads above this are removed (oldest first) once their text is
+                                          #   extracted; extracted text, reviews, and reports are always kept
+
+# Cheap CPU screening of every candidate, then the daily promotion of the best ones to a reading.
+# Score per topic, 0-1 = weighted mean of the AVAILABLE signals (a missing one is left out, the rest renormalized):
+#   question similarity  max(0, cosine) of the paper to the topic's question (or its phrases when it has none)
+#   seed similarity      mean max(0, cosine) to the `closest_seed_count` most similar active seeds
+#   phrase match         fraction of the topic's approved public phrases found verbatim in title + abstract
+# Promotion first replaces each signal by its percentile among the topic's unpromoted candidates, so raw cosines and
+# the 0/1 phrase signal share one scale and topics compare fairly. A paper's screening score is its best topic's
+# score. Starting values; check them with `paperwatch label-sample`.
+[screening]
+embedding_backend = "onnx"                     # "onnx" (pinned local model, CPU) or "hashing" (offline tests only)
+embedding_model = "bge-base-en-v1.5"           # pinned in paperwatch/screening/embedding_model_registry.py
+embedding_model_dir = "models/bge-base-en-v1.5"  # install with deploy/install_embedding_model.sh
+embedding_threads = 16                         # CPU threads used for embedding
+embedding_batch_size = 32
+question_similarity_weight = 0.5
+seed_similarity_weight = 0.3
+phrase_match_weight = 0.2
+closest_seed_count = 3
+daily_promotion_limit = 30      # readings promoted per UTC day; slots are divided across topics first
+near_cutoff_promotions = 3      # of those, the best candidates just below the cutoff (to see what it misses)
+minimum_screening_score = 0.0   # a pool percentile (0.8 = top fifth); 0 = promote by rank only
+
+# How a promoted paper is read. Its text becomes passages with stable ids (A1.. abstract, P1.. full
+# text) and page/section names; a long text is read in bounded sections (methods and results first), one model call
+# each, then one synthesis call and one topic-assessment call. `full_text` only when every substantive section was
+# read; otherwise `partial_text`. A section plus its prompt plus the role's max_output_tokens must fit
+# model.required_context_tokens (checked when the config loads).
+[reading]
+section_max_characters = 24000   # passages per reading section (about 7k tokens)
+max_sections_per_paper = 10      # reading sections per paper; a longer paper is reviewed as partial_text
+passage_max_characters = 1500    # longer paragraphs are split at sentence ends
+passage_min_characters = 200     # shorter paragraphs are merged with the next one on the same page
+closest_seeds_per_topic = 3      # seed papers from your library attached to each topic's assessment
+comparison_reviews_per_topic = 3 # earlier reviews on the same question attached as comparison anchors
+anchor_abstract_characters = 800
+
+# Following important references of completed reviews. After a review that addresses part of some
+# topic's question, `collect` fetches the paper's OpenAlex reference list (and confirms identifiers found in its own
+# bibliography with a provider record). The research role picks up to `references_per_paper` cited works that the
+# paper's method, theorem, data, or baseline depends on; each becomes a lower-priority reading that waits for the next
+# `collect` to fetch its full text. It may also pick one unused approved search (query + year window) to fill a gap.
+[references]
+follow_references = true
+max_citation_hops = 2                 # references of references, no further
+references_per_paper = 3              # at most 3
+daily_reference_readings = 20         # per UTC day, on top of screening.daily_promotion_limit
+minimum_parent_question_fit = 2       # follow a review only if it rated question_fit >= 2 for some topic
+reference_fetches_per_run = 10        # reviewed papers whose references one collect run fetches
+max_references_fetched_per_paper = 200
+bibliography_lookups_per_paper = 10   # bibliography DOIs / arXiv ids confirmed with a provider record, per paper
+candidates_offered_per_selection = 30
+reference_reading_hold_minutes = 360  # a chosen reference waits up to this long for its full text
+research_branches_per_day = 3         # gap searches the research role may request per UTC day
+branches_offered_per_selection = 12
+
+# Comparisons of two completed reviews on the same question: queued when both rate question_fit >= 2
+# for a topic and share comparable assumptions, guarantees, or evaluation settings; the closest neighbour first.
+[comparisons]
+daily_comparison_jobs = 5
+minimum_shared_evidence_dimensions = 1   # of assumptions / guarantees / evaluation setting
+sweep_reviews_completed_within_days = 14 # collect queues comparisons the daily cap held back for these reviews
+
+# PDF/XML text extraction runs in rootless Podman with no network, a read-only root, and one read-only input.
+[extractor]
+container_runtime = "podman"
+image = ""                       # set to the 64-hex image id printed by deploy/build_extractor_image.sh
+timeout_seconds = 120.0
+max_input_megabytes = 60
+max_output_megabytes = 20
+memory_megabytes = 1024
+temporary_space_megabytes = 64
+cpu_limit = 1.0
+
+# Linux accounts created by deploy/setup_service_accounts.sh. `paperwatch access-check` verifies them.
+[access]
+collector_account = "paperwatch-collector"
+worker_account = "paperwatch-worker"      # runs `work` and `report`
+shared_state_group = "paperwatch-state"   # owns state/ so both accounts can use SQLite and its WAL files
+model_server_account = ""                 # empty: llama-server runs as a regular user account
+
+# ===================================================================================================================
+# Research topics. Add one [[topics]] block per research interest; all are active in every run.
+# A topic can be defined by keywords, by seed papers, or by both:
+#   id                 a short name (letters, digits, - and _)
+#   question           PRIVATE. A full sentence for the local model only; never sent to any paper provider.
+#                      Optional for a seeds-only topic.
+#   public_queries     search terms the collector MAY send to arXiv / OpenAlex
+#   arxiv_categories   public subject categories to watch
+#   zotero_collections Zotero collection keys (8 characters, from zotero.org/<user>/collections/<KEY>); needs the
+#                      [zotero] key in the credentials file
+#   csl_json_files     CSL JSON exports (Zotero: Export Collection... -> CSL JSON) put in settings/seeds/ and listed
+#                      as "seeds/<file>.json"
+# ===================================================================================================================
+[[topics]]
+id = "team-safety"
+question = "Can a runtime monitor reject a joint robot plan before it blocks a human exit?"
+public_queries = ["multi-robot runtime assurance", "multi-agent plan monitoring",
+                  "runtime verification mobile robots"]
+arxiv_categories = ["cs.RO", "cs.MA", "cs.LO"]
+zotero_collections = []          # e.g. ["ABCD2345"]
+csl_json_files = []              # e.g. ["seeds/team-safety.json"]
+
+# Seeds only: no question; the topic is defined by the papers in its collection.
+# [[topics]]
+# id = "library-verification"
+# arxiv_categories = ["cs.LO", "cs.PL"]
+# zotero_collections = ["EFGH6789"]

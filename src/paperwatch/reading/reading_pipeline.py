@@ -16,6 +16,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from paperwatch.activity_log import recorded_activity
 from paperwatch.app_context import AppContext
 from paperwatch.reading.comparison_anchors import TopicAnchors, assessable_topic_profiles, build_topic_anchors
 from paperwatch.reading.reading_priority import RELATIVE_VALUE, ScoredTopicAssessment, score_topic_assessment
@@ -67,7 +68,9 @@ def read_paper(app: AppContext, packet: ReviewPacket, *, job_id: str | None) -> 
     if not packet.reading_plan.is_single_pass:
         section_notes = _read_sections(app, packet, stage_identity, job_id)
     synthesis = _run_or_load_stage(app, stage_identity, SYNTHESIS_STAGE_KEY, REVIEWER_ROLE,
-                                   _build_reviewer_input(app, packet, section_notes), job_id)
+                                   _build_reviewer_input(app, packet, section_notes), job_id,
+                                   stage_detail={"stage": "synthesis", "section_notes": len(section_notes),
+                                                 "coverage": packet.coverage})
     review_content = synthesis.validated_output
     topic_assessments = _assess_topics(app, packet, review_content, job_id)
     return CompletedReading(
@@ -86,7 +89,7 @@ def _read_sections(app: AppContext, packet: ReviewPacket, stage_identity: Readin
                    job_id: str | None) -> list[dict[str, Any]]:
     sections_to_read = packet.reading_plan.sections_to_read
     section_notes = []
-    for reading_section in sections_to_read:
+    for position, reading_section in enumerate(sections_to_read, start=1):
         section_input = {
             "paper": packet.orientation,
             "reading_section": {"section_number": reading_section.section_number,
@@ -95,7 +98,11 @@ def _read_sections(app: AppContext, packet: ReviewPacket, stage_identity: Readin
             "passages": [passage.as_model_input() for passage in reading_section.passages],
         }
         stage_result = _run_or_load_stage(app, stage_identity, reading_section.stage_key, SECTION_READER_ROLE,
-                                          section_input, job_id)
+                                          section_input, job_id,
+                                          stage_detail={"stage": "section", "position": position,
+                                                        "sections_to_read": len(sections_to_read),
+                                                        "section_number": reading_section.section_number,
+                                                        "section_count": len(packet.reading_plan.all_sections)})
         section_notes.append({"section_number": reading_section.section_number,
                               "section_titles": list(reading_section.section_titles),
                               "notes": stage_result.validated_output})
@@ -104,13 +111,15 @@ def _read_sections(app: AppContext, packet: ReviewPacket, stage_identity: Readin
 
 def _run_or_load_stage(app: AppContext, stage_identity: ReadingStageIdentity, stage_key: str,
                        role_definition: RoleDefinition, role_input: RoleInput,
-                       job_id: str | None) -> SavedStageResult:
+                       job_id: str | None, stage_detail: dict[str, Any] | None = None) -> SavedStageResult:
+    """A saved result (an earlier attempt finished this stage) is reused without a model call or activity row."""
     saved_result = load_saved_stage_result(app.connection, stage_identity, stage_key, role_definition.prompt_version)
     if saved_result is not None:
         return saved_result
-    role_result = run_role_with_one_repair(role_definition=role_definition, role_input=role_input,
-                                           app_config=app.config, model_client=app.model_client,
-                                           connection=app.connection, job_id=job_id)
+    with recorded_activity(app.connection, "reading_stage", stage_detail or {"stage": stage_key}):
+        role_result = run_role_with_one_repair(role_definition=role_definition, role_input=role_input,
+                                               app_config=app.config, model_client=app.model_client,
+                                               connection=app.connection, job_id=job_id)
     save_stage_result(app.connection, stage_identity, stage_key, role_result, job_id)
     return SavedStageResult(role_result.validated_output, role_result.model_response.model_identity,
                             role_result.model_response.server_build)
@@ -172,9 +181,11 @@ def _assess_topics(app: AppContext, packet: ReviewPacket, review_content: dict[s
         "reading": summarize_review_for_assessment(review_content),
         "topics": [anchors.as_model_input() for anchors in topic_anchors],
     }
-    role_result = run_role_with_one_repair(role_definition=TOPIC_ASSESSOR_ROLE, role_input=assessor_input,
-                                           app_config=app.config, model_client=app.model_client,
-                                           connection=app.connection, job_id=job_id)
+    with recorded_activity(app.connection, "reading_stage", {"stage": "topic_assessment",
+                                                             "topic_count": len(topic_anchors)}):
+        role_result = run_role_with_one_repair(role_definition=TOPIC_ASSESSOR_ROLE, role_input=assessor_input,
+                                               app_config=app.config, model_client=app.model_client,
+                                               connection=app.connection, job_id=job_id)
     anchors_by_topic_id: dict[str, TopicAnchors] = {anchors.topic_id: anchors for anchors in topic_anchors}
     profile_hash_by_topic_id = {profile.topic_id: profile.compute_profile_sha256() for profile in profiles}
     completed_assessments = []

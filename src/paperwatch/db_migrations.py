@@ -739,6 +739,29 @@ CREATE TABLE inference_reservations (                          -- a holder that 
 """
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# Migration 10: the activity log read by `paperwatch monitor` (what each process is doing now; recent history).
+# --------------------------------------------------------------------------------------------------------------------
+MIGRATION_0010_ACTIVITY_LOG = """
+CREATE TABLE activity_log (                                    -- one row per step of a collect, work, or report run
+    activity_id         TEXT PRIMARY KEY,
+    parent_activity_id  TEXT,                                  -- the enclosing step (NULL for a whole run)
+    component           TEXT NOT NULL,                         -- collect | work | report | other
+    step                TEXT NOT NULL,                         -- e.g. 'run', 'screening', 'job', 'model_call'
+    detail_json         TEXT NOT NULL DEFAULT '{}',            -- ids and counts only, never paper text
+    process_id          INTEGER NOT NULL,
+    boot_id             TEXT,                                  -- with process_id: tells a crashed step from a live one
+    started_at          TEXT NOT NULL,
+    finished_at         TEXT,                                  -- NULL while the step runs (or after a crash)
+    outcome             TEXT,                                  -- ok | failed | stopped | retry | ...
+    note                TEXT                                   -- short, redacted reason for the outcome
+);
+CREATE INDEX activity_log_by_start ON activity_log(started_at);
+CREATE INDEX activity_log_unfinished ON activity_log(finished_at) WHERE finished_at IS NULL;
+CREATE INDEX activity_log_by_parent ON activity_log(parent_activity_id);
+"""
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("initial schema (plan part 1)", MIGRATION_0001_INITIAL_SCHEMA),
     SchemaMigration("paper identity, editions, reading identity and part-2 records",
@@ -757,4 +780,5 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
                     MIGRATION_0008_REFERENCES_AND_COMPARISONS),
     SchemaMigration("daily report: report states, frozen snapshot, entry labels, inference reservation (plan part 9)",
                     MIGRATION_0009_DAILY_REPORT),
+    SchemaMigration("activity log for the monitor", MIGRATION_0010_ACTIVITY_LOG),
 )

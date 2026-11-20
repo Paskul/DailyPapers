@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>paperwatch monitor</title>
+<link rel="stylesheet" href="/monitor.css">
+<script src="/monitor.js" defer></script>
+</head>
+<body>
+<header class="page-header">
+  <div class="title-block">
+    <h1>paperwatch monitor</h1>
+    <p class="subtle" id="home-line">connecting…</p>
+  </div>
+  <div class="controls">
+    <label for="history-hours" class="subtle">History</label>
+    <select id="history-hours">
+      <option value="12">12 h</option>
+      <option value="24" selected>24 h</option>
+      <option value="36">36 h</option>
+      <option value="72">3 days</option>
+      <option value="168">7 days</option>
+    </select>
+    <span class="refresh-state subtle" id="refresh-state" aria-live="polite"></span>
+  </div>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<main>
+  <section aria-labelledby="now-heading">
+    <h2 id="now-heading">Now</h2>
+    <div class="status-grid" id="status-grid"></div>
+    <div id="current-jobs"></div>
+  </section>
+
+  <section aria-labelledby="timeline-heading">
+    <div class="section-head">
+      <h2 id="timeline-heading">Timeline</h2>
+      <p class="subtle">Past work left of the <strong>now</strong> line, the schedule right of it (each side has its own time scale). Hover a bar for details.</p>
+    </div>
+    <div class="timeline-wrap" id="timeline-wrap">
+      <div class="timeline-legend" id="timeline-legend"></div>
+      <div class="timeline-scroll"><svg id="timeline" role="img" aria-label="Timeline of collect runs, jobs, model calls, and reports"></svg></div>
+      <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+    </div>
+  </section>
+
+  <div class="two-columns">
+    <section aria-labelledby="plan-heading">
+      <h2 id="plan-heading">Plan until the next report</h2>
+      <div id="plan"></div>
+    </section>
+    <section aria-labelledby="queue-heading">
+      <h2 id="queue-heading">Queue (in the order the worker takes it)</h2>
+      <div id="queue"></div>
+    </section>
+  </div>
+
+  <div class="two-columns">
+    <section aria-labelledby="events-heading">
+      <div class="section-head">
+        <h2 id="events-heading">Recent events</h2>
+        <div class="filter-row" id="event-filters"></div>
+      </div>
+      <ol class="event-list" id="events"></ol>
+    </section>
+    <section aria-labelledby="days-heading">
+      <h2 id="days-heading">Per day</h2>
+      <div id="days"></div>
+      <h2 class="spaced">Today's limits (UTC day)</h2>
+      <div id="budgets"></div>
+    </section>
+  </div>
+</main>
+<footer class="subtle" id="footer"></footer>
+</body>
+</html>

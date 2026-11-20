@@ -2,6 +2,7 @@
 # Build the pinned text-extractor image and load it into the collector account's rootless image store (plan part 3).
 #
 # Usage: deploy/build_extractor_image.sh [collector account]      (run as your normal user, NOT with sudo)
+#        An empty account ("") keeps the image in your own store only (the `local` setup mode). ./setup.sh runs this.
 #
 # Needs the network once, for the Debian base image and packages. The collector itself never downloads images: it
 # runs `podman run --pull=never` with the image id printed at the end, which you put in config.toml:
@@ -11,7 +12,7 @@
 # `podman save | podman load` transfer into the collector's storage.
 set -euo pipefail
 
-COLLECTOR_ACCOUNT="${1:-paperwatch-collector}"
+COLLECTOR_ACCOUNT="${1-paperwatch-collector}"
 BUILD_TAG=localhost/paperwatch-extractor:build
 BASE_IMAGE_NAME=docker.io/library/debian:bookworm-slim
 [[ $EUID -ne 0 ]] || { echo "run as your normal user; the script calls sudo only for the load step" >&2; exit 1; }
@@ -27,7 +28,9 @@ echo "built $BUILD_TAG = $IMAGE_ID (base debian@${BASE_IMAGE_DIGEST})"
 podman run --rm --pull=never --network=none --read-only --entrypoint cat "$IMAGE_ID" \
     /opt/paperwatch-extractor/PACKAGE_VERSIONS
 
-if id -u "$COLLECTOR_ACCOUNT" >/dev/null 2>&1; then
+if [[ -z "$COLLECTOR_ACCOUNT" ]]; then
+    echo "image kept in your own store (local mode)"
+elif id -u "$COLLECTOR_ACCOUNT" >/dev/null 2>&1; then
     ARCHIVE_DIR="$(mktemp -d)"
     trap 'rm -rf "$ARCHIVE_DIR"' EXIT
     chmod 0755 "$ARCHIVE_DIR"

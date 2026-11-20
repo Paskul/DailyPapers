@@ -38,6 +38,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from paperwatch.config import AppConfig, load_app_config
+from paperwatch.deployment.systemd_units import worker_sandbox_lines
 from paperwatch.reporting.report_schedule import parse_clock_time
 
 PILOT_UNIT_PREFIX = "paperwatch-pilot-"
@@ -145,35 +146,8 @@ def _paperwatch_command(plan: OneDayPilotPlan, *arguments: str) -> str:
 
 def _worker_sandbox_lines(plan: OneDayPilotPlan) -> str:
     """systemd sandbox for `work` and `report` (the processes that talk to the model)."""
-    return f"""\
-User={plan.worker_account}
-Group={plan.worker_account}
-SupplementaryGroups={plan.shared_state_group}
-UMask=0007
-WorkingDirectory=/
-NoNewPrivileges=yes
-ProtectSystem=strict
-ReadWritePaths={plan.state_dir} {plan.output_dir}
-ProtectHome=yes
-PrivateTmp=yes
-PrivateDevices=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
-ProtectControlGroups=yes
-ProtectClock=yes
-ProtectHostname=yes
-RestrictNamespaces=yes
-RestrictRealtime=yes
-RestrictSUIDSGID=yes
-LockPersonality=yes
-CapabilityBoundingSet=
-SystemCallArchitectures=native
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-# Third network layer (after nftables and the in-process egress guard): IP traffic to localhost only.
-IPAddressDeny=any
-IPAddressAllow=localhost
-"""
+    return worker_sandbox_lines(worker_account=plan.worker_account, shared_state_group=plan.shared_state_group,
+                                state_dir=plan.state_dir, output_dir=plan.output_dir)
 
 
 def render_pilot_units(plan: OneDayPilotPlan) -> dict[str, str]:

@@ -24,6 +24,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from paperwatch.activity_log import COMPONENT_REPORT, recorded_activity
 from paperwatch.app_context import AppContext
 from paperwatch.clock import utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
@@ -48,23 +49,30 @@ def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
     report_date = timing.report_date
     report_output_path = app.config.daily_reports_dir / f"{report_date}.md"
 
-    with hold_report_publication_lock(app.config.report_publication_lock_path):
+    with (hold_report_publication_lock(app.config.report_publication_lock_path),
+          recorded_activity(app.connection, "run", {"report_date": report_date, "early": timing.published_early},
+                            component=COMPONENT_REPORT) as run_activity):
         report_row = _load_report_row(app.connection, report_date)
         if report_row is not None and report_row["status"] == REPORT_STATUS_PUBLISHED:
             if not report_output_path.exists():  # restore a deleted file from the saved bytes
                 write_bytes_atomically(report_output_path, report_row["rendered_bytes"])
                 print(f"restored missing report file {report_output_path}")
             print(f"report for {report_date} already published: {report_output_path}")
+            run_activity.end_as("already_published")
             return 0
 
         if report_row is None:  # stage 1
-            freeze_report_snapshot(app.connection, app.config, timing, report_output_path,
-                                   active_seed_paper_ids=load_active_seed_library_paper_ids(app.connection,
-                                                                                            app.config))
+            with recorded_activity(app.connection, "freeze"):
+                freeze_report_snapshot(app.connection, app.config, timing, report_output_path,
+                                       active_seed_paper_ids=load_active_seed_library_paper_ids(app.connection,
+                                                                                                app.config))
             report_row = _load_report_row(app.connection, report_date)
         if report_row["status"] == REPORT_STATUS_WRITING:  # stages 2 and 3 (also after a crash in them)
-            _synthesize_and_render(app, report_date)
-        published_paper_count = _publish_saved_report(app, report_date, report_output_path)  # stage 4
+            with recorded_activity(app.connection, "synthesize"):
+                _synthesize_and_render(app, report_date)
+        with recorded_activity(app.connection, "publish"):
+            published_paper_count = _publish_saved_report(app, report_date, report_output_path)  # stage 4
+        run_activity.add_detail(papers=published_paper_count)
 
     synthesis_status = _load_report_row(app.connection, report_date)["synthesis_status"]
     print(f"published report for {report_date} with {published_paper_count} paper(s) "

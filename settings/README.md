@@ -1,25 +1,31 @@
 # Operator settings
 
-Edit your topics, provider keys, and configuration here, then install them into the paperwatch home:
+Everything you set lives in this folder, and `./setup.sh` (at the repository root) applies it:
 
 ```bash
-deploy/apply_settings.sh                 # default home: /srv/paperwatch (pass another path as the first argument)
+./setup.sh                  # install / update everything settings/paperwatch.toml describes (safe to re-run)
+./setup.sh --settings-only  # quick path after editing topics or config: settings, schedule, monitor only
+./setup.sh --check          # validate; change nothing
 ```
 
-| File | Committed | Installed as | Access |
+| File | Committed | What it holds | Installed as |
 | --- | --- | --- | --- |
-| `topics.toml` | no (private questions) | `<home>/topics.toml` | you + group `paperwatch-state`, read-only for the services |
-| `config.toml` | no | `<home>/config.toml` | same |
-| `collector_credentials.toml` | no (API keys) | `<home>/credentials/collector.toml` | `paperwatch-collector` only, mode 0600 |
-| `seeds/*.json` | no | `<home>/seeds/` | same as topics; referenced as `csl_json_files = ["seeds/<file>.json"]` |
-| `*.example.toml` | yes | — | starting points to copy |
+| `paperwatch.toml` | no (private questions) | `[setup]` (home, mode, schedule, monitor), every config table, and your `[[topics]]` | `<home>/config.toml` + `<home>/topics.toml` |
+| `collector_credentials.toml` | no (API keys) | Zotero and OpenAlex keys, mode 0600 | `<home>/credentials/collector.toml`, readable by the collector only |
+| `seeds/*.json` | no | CSL JSON seed exports, listed in a topic as `csl_json_files = ["seeds/<file>.json"]` | `<home>/seeds/` |
+| `.extractor-image-id` | no | the id of the PDF extractor image setup built (used when `[extractor] image` is empty) | — |
+| `*.example.toml` | yes | starting points | — |
 
-`config.example.toml` is a link to the package's built-in template (`src/paperwatch/templates/config.toml`), so it
-always shows the current defaults. Copy it; don't edit it.
+The first `./setup.sh` creates `paperwatch.toml` for you: from the example, or, if you still have the former
+`config.toml` + `topics.toml` here, by combining them unchanged (they are then no longer read; delete them when you
+are happy with the new file). It stops so you can review the `[setup]` table before anything is installed.
 
-The script first validates every file with the repository's code (unknown keys, bad collection keys, credentials file
-permissions, CSL files that don't exist). It changes nothing if validation fails. It skips files that don't exist
-here, and asks for `sudo` only to install the credentials file or create `<home>/seeds/`.
+`paperwatch.example.toml` is generated from the package's templates, so it always shows every option with its
+current default (a test keeps it in step). Copy it; don't edit it.
+
+Setup first validates the whole file with the application's own loader (unknown keys, bad values, cross-field
+rules), checks that every CSL JSON seed file exists and that Zotero topics have a key, and proves that the file
+splits exactly into `config.toml` and `topics.toml`. Nothing is installed if any check fails.
 
 To bring an existing live credentials file into this folder (it stays private: mode 0600, gitignored):
 
