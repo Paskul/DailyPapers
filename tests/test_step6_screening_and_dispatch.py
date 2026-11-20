@@ -521,7 +521,7 @@ def test_draining_the_queue_then_idling_makes_no_further_model_requests(tmp_path
     while run_single_work_cycle(app, probe_paused_model_now=True).outcome != WorkCycleOutcome.NO_JOB_DUE:
         pass
     model_requests_after_drain = len(app.model_client.received_requests)
-    assert model_requests_after_drain == 1
+    assert model_requests_after_drain == 2  # reviewer + topic assessor for the one paper
     run_collect_command(app, argparse.Namespace(fixture_paths=[RECORDED_PAPER_FIXTURE]))  # nothing new to read
     for _idle_cycle in range(5):
         assert run_single_work_cycle(app, probe_paused_model_now=True).outcome == WorkCycleOutcome.NO_JOB_DUE

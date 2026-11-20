@@ -14,7 +14,9 @@ Stages of one run:
      local embedding model plus the phrase signal, then promote up to the daily limit (slots divided across topics
      first) and queue each reading in its priority class. Nothing leaves the machine and no model call is made.
   4. Source text: for papers queued for review, a local file, else (live runs only) a capped download; then text
-     extraction in the sandbox when the extractor image is configured.
+     extraction in the sandbox when the extractor image is configured. A paper whose full text was extracted gets its
+     reading switched to the full text (plan part 7). The readings promoted in step 3 are held until this stage
+     ends, so the worker does not read an abstract seconds before the PDF arrives.
   5. Research profile: print each topic's input mode (keywords, seeds, or both) and anything missing.
 
 Re-collecting is always safe: the catalog resolves each record to its canonical paper, every page commits with its
@@ -30,6 +32,9 @@ import sys
 from collections.abc import Callable
 
 from paperwatch.app_context import AppContext
+from paperwatch.clock import utc_now
+from paperwatch.db import write_transaction
+from paperwatch.readings import compute_source_text_hold_until, release_readings_held_for_source_text
 from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.current_releases import collect_current_releases
 from paperwatch.collection.historical_search import run_historical_searches
@@ -72,11 +77,19 @@ def run_collect_command(app: AppContext, arguments: argparse.Namespace, *,
         print(f"Candidates: {collection_context.candidate_budget.describe()}")
     else:
         print("Papers: live arXiv / OpenAlex searches skipped (--skip-searches)")
-    screening_result = run_screening_and_promotion(app.connection, app.config,
-                                                   active_seed_paper_ids=collection_context.active_seed_paper_ids,
-                                                   moment=collection_context.started_at)
+    screening_result = run_screening_and_promotion(
+        app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids,
+        moment=collection_context.started_at,
+        hold_new_readings_until=compute_source_text_hold_until(utc_now(),
+                                                               app.config.collection.source_text_hold_minutes))
     _print_lines(screening_result.report_lines)
-    _print_lines(acquire_source_texts(collection_context, allow_network=run_live_searches))
+    try:
+        _print_lines(acquire_source_texts(collection_context, allow_network=run_live_searches))
+    finally:  # the held readings become due now, whatever the source-text stage achieved
+        with write_transaction(app.connection):
+            released_count = release_readings_held_for_source_text(app.connection)
+        if released_count:
+            print(f"Readings: {released_count} held reading(s) released to the worker")
     _print_research_profile_summary(app)
     if screening_result.embedder_failure is not None:
         print(describe_failure_for_operator(screening_result.embedder_failure), file=sys.stderr)

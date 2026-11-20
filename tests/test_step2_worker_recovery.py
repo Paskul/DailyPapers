@@ -122,7 +122,7 @@ def test_worker_killed_right_after_commit_leaves_exactly_one_review(tmp_path, mo
     assert collect(restarted_app, BASE_RECORD)[1] is False
     assert restarted_app.connection.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 1
     assert restarted_app.connection.execute("SELECT status FROM jobs").fetchone()[0] == "done"
-    assert len(fake_model.received_requests) == 1
+    assert len(fake_model.received_requests) == 2  # the one reading's reviewer + topic-assessor calls, nothing more
 
 
 def test_stale_worker_cannot_overwrite_the_reclaiming_workers_result(tmp_path):

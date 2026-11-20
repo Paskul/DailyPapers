@@ -23,9 +23,19 @@ max_output_tokens = 2048
 timeout_seconds = 120
 reasoning_effort = "low"
 
-[roles.reviewer]
+[roles.section_reader]                    # reads one bounded section of a long paper (plan part 7)
 max_output_tokens = 16384
 timeout_seconds = 1800
+reasoning_effort = "server-default"
+
+[roles.reviewer]                          # the evidence-backed review (from passages or section notes)
+max_output_tokens = 16384
+timeout_seconds = 1800
+reasoning_effort = "server-default"
+
+[roles.topic_assessor]                    # rubric ratings of a finished review against every topic
+max_output_tokens = 12288
+timeout_seconds = 1200
 reasoning_effort = "server-default"
 
 [worker]
@@ -71,6 +81,7 @@ openalex_recent_sweep_interval_hours = 12 # one recent OpenAlex sweep per query 
 daily_source_text_budget = 30             # full-text downloads per UTC day for papers queued for review
 local_sources_dir = "local_sources"       # put PDFs here named by arXiv id or DOI (2401.01234v2.pdf,
                                           #   10.1109_xyz.pdf); used before any download
+source_text_hold_minutes = 60             # new readings wait until this run has fetched their PDFs (at most this long)
 
 # Cheap CPU screening of every candidate, then the daily promotion of the best ones to a reading (plan part 6).
 # Score per topic, 0-1 = weighted mean of the AVAILABLE signals (a missing one is left out, the rest renormalized):
@@ -93,6 +104,20 @@ closest_seed_count = 3
 daily_promotion_limit = 30      # readings promoted per UTC day; slots are divided across topics first
 near_cutoff_promotions = 3      # of those, the best candidates just below the cutoff (to see what it misses)
 minimum_screening_score = 0.0   # a pool percentile (0.8 = top fifth); 0 = rank only, until part 10 calibrates it
+
+# How a promoted paper is read (plan part 7). Its text becomes passages with stable ids (A1.. abstract, P1.. full
+# text) and page/section names; a long text is read in bounded sections (methods and results first), one model call
+# each, then one synthesis call and one topic-assessment call. `full_text` only when every substantive section was
+# read; otherwise `partial_text`. A section plus its prompt plus the role's max_output_tokens must fit
+# model.required_context_tokens (checked when the config loads).
+[reading]
+section_max_characters = 24000   # passages per reading section (about 7k tokens)
+max_sections_per_paper = 10      # reading sections per paper; a longer paper is reviewed as partial_text
+passage_max_characters = 1500    # longer paragraphs are split at sentence ends
+passage_min_characters = 200     # shorter paragraphs are merged with the next one on the same page
+closest_seeds_per_topic = 3      # seed papers from your library attached to each topic's assessment
+comparison_reviews_per_topic = 3 # earlier reviews on the same question attached as comparison anchors
+anchor_abstract_characters = 800
 
 # PDF/XML text extraction runs in rootless Podman with no network, a read-only root, and one read-only input.
 [extractor]

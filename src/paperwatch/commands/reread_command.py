@@ -31,7 +31,7 @@ def run_reread_command(app: AppContext, arguments: argparse.Namespace) -> int:
 
     reading_generation = new_reading_generation_id()
     with write_transaction(app.connection):
-        enqueue_outcome, review_packet = enqueue_reading_if_needed(
+        enqueue_outcome, reading_input = enqueue_reading_if_needed(
             app.connection, paper_id, dispatch_order=dispatch_order_for_operator_request(),
             max_attempts=app.config.worker.max_attempts_per_job, reading_generation=reading_generation,
             operator_reason=operator_reason)
@@ -42,5 +42,5 @@ def run_reread_command(app: AppContext, arguments: argparse.Namespace) -> int:
         print(f"no reread queued for {paper_id}: {enqueue_outcome}")
         return 1
     print(f"queued reread of {paper_id} as generation {reading_generation} "
-          f"(edition {review_packet.edition_id}, {review_packet.coverage}); run `paperwatch work` to process it")
+          f"(edition {reading_input.edition_id}, {reading_input.text_kind}); run `paperwatch work` to process it")
     return 0

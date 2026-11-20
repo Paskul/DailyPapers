@@ -13,8 +13,9 @@ or a used-up request budget is temporary: nothing is recorded, and the next run 
 
 Extraction runs the pinned extractor in rootless Podman (paperwatch.sandboxed_extractor) on the CACHED copy and
 stores the text next to it (state/cache/sources/<edition id>/<source hash>.txt). Without a configured image the row
-says `not_configured`, and extraction happens on the first run after the image is set. Part 7 turns the text into
-passages; the worker never downloads anything itself.
+says `not_configured`, and extraction happens on the first run after the image is set. After a successful extraction
+the text's normalized fingerprint is stored and a promoted paper's queued reading switches to the full text (plan
+part 7 turns the text into passages); the worker never downloads anything itself.
 """
 
 from __future__ import annotations
@@ -33,6 +34,9 @@ from paperwatch.db import write_transaction
 from paperwatch.errors import (ExtractionError, ProviderUnavailable, SourceAccessDenied, SourceInputError,
                                SourceRecordNotFound, SourceRequestBudgetExhausted)
 from paperwatch.jobs import REVIEW_PAPER_JOB_KIND
+from paperwatch.readings import FULL_TEXT_EDITION_ORDER_SQL
+from paperwatch.review_inputs import fingerprint_extracted_reading_text
+from paperwatch.screening.review_promotion import queue_new_reading_for_promoted_paper_in_transaction
 from paperwatch.sandboxed_extractor import BYTES_PER_MEGABYTE, extract_text_in_sandbox
 from paperwatch.scholarly_identifiers import ARXIV_SCHEME, OPENALEX_SCHEME
 from paperwatch.source_cache import (CachedSourceFile, cached_edition_directory, store_extracted_text,
@@ -59,13 +63,15 @@ class SourceTextRunCounts:
     extracted: int = 0
     extraction_failed: int = 0
     extraction_not_configured: int = 0
+    readings_switched_to_full_text: int = 0
 
     def describe(self, downloads_remaining: int) -> str:
         return (f"Source text: {self.from_local_files} from local files, {self.downloaded} downloaded "
                 f"({downloads_remaining} download(s) left today), {self.unavailable} unavailable (abstract only), "
                 f"{self.waiting_for_download_budget} waiting for download budget; extraction: {self.extracted} "
                 f"extracted, {self.extraction_failed} failed, {self.extraction_not_configured} waiting for the "
-                "extractor image (set extractor.image)")
+                f"extractor image (set extractor.image); {self.readings_switched_to_full_text} reading(s) switched "
+                "to full text")
 
 
 def acquire_source_texts(context: CollectionContext, *, allow_network: bool) -> list[str]:
@@ -117,11 +123,11 @@ def papers_waiting_for_source_text(connection: sqlite3.Connection, limit: int) -
 
 
 def editions_in_text_preference_order(connection: sqlite3.Connection, paper_id: str) -> list[sqlite3.Row]:
-    """arXiv editions first (newest version first), then OpenAlex, then the rest (newest sighting first)."""
+    """arXiv editions first (newest version first), then OpenAlex, then the rest (newest sighting first). The same
+    order picks the edition a full-text reading uses (paperwatch.readings.select_reading_input)."""
     return connection.execute(
-        """SELECT * FROM paper_editions WHERE paper_id = ?
-           ORDER BY CASE WHEN edition_key LIKE 'arxiv:%' THEN 0 WHEN edition_key LIKE 'openalex:%' THEN 1 ELSE 2 END,
-                    COALESCE(version_number, 0) DESC, first_seen_at DESC, edition_id""", (paper_id,)).fetchall()
+        f"SELECT * FROM paper_editions WHERE paper_id = ? ORDER BY {FULL_TEXT_EDITION_ORDER_SQL}",
+        (paper_id,)).fetchall()
 
 
 def count_network_downloads_today(connection: sqlite3.Connection, context: CollectionContext) -> int:
@@ -234,8 +240,21 @@ def _extract_pending_texts(context: CollectionContext, run_counts: SourceTextRun
         _update_extraction(context, text_row["edition_id"], extraction_status="extracted",
                            extracted_text_file_name=text_path.name,
                            extracted_text_sha256=hashlib.sha256(extracted.text.encode("utf-8")).hexdigest(),
+                           normalized_text_sha256=fingerprint_extracted_reading_text(extracted.text),
+                           extracted_text_characters=len(extracted.text.strip()),
                            extractor_image=extracted.extractor_image, last_error=None)
         run_counts.extracted += 1
+        if _switch_reading_to_full_text(context, text_row["paper_id"]):
+            run_counts.readings_switched_to_full_text += 1
+
+
+def _switch_reading_to_full_text(context: CollectionContext, paper_id: str) -> bool:
+    """Queue the full-text reading of a promoted paper (its queued abstract reading is retired). Plan part 2: newly
+    available full text is a new input. Returns True if a job was added."""
+    with write_transaction(context.connection):
+        return queue_new_reading_for_promoted_paper_in_transaction(
+            context.connection, paper_id, active_seed_paper_ids=context.active_seed_paper_ids,
+            max_attempts=context.app_config.worker.max_attempts_per_job)
 
 
 # --------------------------------------------------------------------------------------------------------------------

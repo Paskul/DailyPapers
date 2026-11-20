@@ -63,8 +63,11 @@ def build_review_job_key(paper_id: str, review_input_key: str) -> str:
 
 def enqueue_job_if_absent(connection: sqlite3.Connection, *, job_key: str, kind: str, paper_id: str | None,
                           input_version: str, input_payload: dict[str, Any], dispatch_order: JobDispatchOrder,
-                          max_attempts: int) -> bool:
-    """Insert the job unless a job with the same logical key exists (whatever its status). Returns True if added."""
+                          max_attempts: int, due_at: str | None = None) -> bool:
+    """Insert the job unless a job with the same logical key exists (whatever its status). Returns True if added.
+
+    `due_at` in the future holds a new job back (e.g. until `collect` has acquired the paper's source text); by
+    default the job is due at once."""
     now_timestamp = utc_now_timestamp()
     insert_cursor = connection.execute(
         """INSERT OR IGNORE INTO jobs (job_id, job_key, kind, paper_id, input_version, input_json, priority,
@@ -74,7 +77,7 @@ def enqueue_job_if_absent(connection: sqlite3.Connection, *, job_key: str, kind:
         (new_internal_id(JOB_ID_PREFIX), job_key, kind, paper_id, input_version, json.dumps(input_payload),
          int(dispatch_order.priority_class), dispatch_order.within_class_order_primary,
          dispatch_order.within_class_order_secondary, dispatch_order.new_release_fresh_until,
-         max_attempts, now_timestamp, now_timestamp, now_timestamp))
+         max_attempts, due_at or now_timestamp, now_timestamp, now_timestamp))
     return insert_cursor.rowcount == 1
 
 
@@ -182,7 +185,8 @@ def record_job_attempt_failure(connection: sqlite3.Connection, claimed_job: Clai
     'lease_lost' means another worker reclaimed the job meanwhile; nothing is changed, so a stale worker's failure
     never overwrites a newer worker's state.
     """
-    out_of_attempts = claimed_job.attempts_including_this_one >= claimed_job.max_attempts
+    out_of_attempts = (claimed_job.attempts_including_this_one >= claimed_job.max_attempts
+                       or failure.ends_job_immediately)  # retrying the same input cannot help
     new_status = "failed" if out_of_attempts else "queued"
     retry_due_at = format_utc_timestamp(
         utc_now() + timedelta(seconds=retry_delay_seconds * claimed_job.attempts_including_this_one))

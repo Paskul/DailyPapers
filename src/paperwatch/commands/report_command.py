@@ -16,19 +16,17 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import sqlite3
 from datetime import date
 
 from paperwatch.app_context import AppContext
-from paperwatch.catalog import load_paper_aliases
 from paperwatch.clock import format_utc_timestamp, utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
 from paperwatch.errors import ConfigurationError
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, read_service_health_state
 from paperwatch.rendering.file_output import write_bytes_atomically
-from paperwatch.rendering.notes import ReportCorrection, SelectedReview, render_daily_report, render_paper_note
-from paperwatch.review_store import load_latest_topic_assessments
+from paperwatch.rendering.notes import ReportCorrection, SelectedReview, render_daily_report
+from paperwatch.rendering.review_notes import load_selected_review, write_paper_note_if_missing
 
 
 def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
@@ -59,11 +57,8 @@ def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
         _save_pending_report(app.connection, report_date, cutoff_at, report_output_path, report_bytes,
                              selected_reviews, corrections)
 
-    for selected_review in selected_reviews:
-        note_path = (app.config.paper_notes_dir / selected_review.paper_row["paper_id"]
-                     / f"{selected_review.review_row['review_id']}.md")
-        if not note_path.exists():  # notes are immutable per review revision; only write or restore
-            write_bytes_atomically(note_path, render_paper_note(selected_review).encode("utf-8"))
+    for selected_review in selected_reviews:  # restore any missing note from its saved review first
+        write_paper_note_if_missing(app.config.paper_notes_dir, selected_review)
     write_bytes_atomically(report_output_path, report_bytes)
     app.connection.execute("UPDATE reports SET status = 'published', published_at = ? WHERE report_date = ?",
                            (utc_now_timestamp(), report_date))
@@ -91,8 +86,9 @@ def _select_reviews_for_report(app: AppContext, cutoff_at: str) -> list[Selected
                                      ORDER BY newest.completed_at DESC, newest.review_id DESC LIMIT 1)""",
         (cutoff_at,)).fetchall()
     unranked_reviews = [_build_selected_review(app.connection, rank=0, review_row=row) for row in candidate_rows]
-    unranked_reviews.sort(key=lambda candidate: (
-        -(candidate.best_topic_assessment.topic_score if candidate.best_topic_assessment is not None else -1),
+    unranked_reviews.sort(key=lambda candidate: (  # legacy 0-4 and 0-100 priorities on one scale
+        -(candidate.best_topic_assessment.priority_score_out_of_100
+          if candidate.best_topic_assessment is not None else -1),
         candidate.paper_row["paper_id"]))
     chosen_reviews = unranked_reviews[:app.config.report.max_papers_per_report]
     return [_build_selected_review(app.connection, rank=position + 1, review_row=chosen.review_row)
@@ -121,13 +117,7 @@ def _load_frozen_selection(connection: sqlite3.Connection, report_date: str) -> 
 
 
 def _build_selected_review(connection: sqlite3.Connection, *, rank: int, review_row: sqlite3.Row) -> SelectedReview:
-    return SelectedReview(
-        rank=rank,
-        paper_row=connection.execute("SELECT * FROM papers WHERE paper_id = ?", (review_row["paper_id"],)).fetchone(),
-        review_row=review_row,
-        review_content=json.loads(review_row["review_json"]),
-        paper_aliases=load_paper_aliases(connection, review_row["paper_id"]),
-        topic_assessments=load_latest_topic_assessments(connection, review_row["review_id"]))
+    return load_selected_review(connection, review_row["review_id"], rank=rank)
 
 
 def _collect_report_statistics(app: AppContext) -> dict:

@@ -1,8 +1,10 @@
 """Error types. Every error names the component that failed so the CLI can tell the operator where to look.
 
-Two class attributes drive recovery behaviour in the worker:
+Three class attributes drive recovery behaviour in the worker:
   * `is_service_outage`: True means the whole service is down (e.g. the llama.cpp server). The worker pauses
     every job that needs that service, releases the current job without charging it an attempt, and backs off.
+  * `ends_job_immediately`: True means retrying the same input cannot help (e.g. the answer was still invalid after
+    its one repair attempt, plan part 7). The job fails now with its reason retained, and the worker moves on.
   * `model_call_outcome`: the label written to the `model_calls` log when the error happened during a model call.
 """
 
@@ -13,6 +15,7 @@ class PaperwatchError(Exception):
     failed_component: str = "paperwatch"
     process_exit_code: int = 1
     is_service_outage: bool = False
+    ends_job_immediately: bool = False
     model_call_outcome: str = "error"
 
     def __init__(self, message: str, *, operator_hint: str | None = None) -> None:
@@ -40,11 +43,25 @@ class DatabaseError(PaperwatchError):
 
 
 class ModelOutputInvalid(PaperwatchError):
-    """The model answered, but the answer is not valid JSON, violates the role schema, or fails host checks."""
+    """The model answered, but the answer is not valid JSON, violates the role schema, or fails host checks.
+
+    `rejected_answer_text` and `problems` let the role layer ask for one bounded repair (paperwatch.roles.base)."""
 
     failed_component = "model-output"
     process_exit_code = 5
     model_call_outcome = "invalid_output"
+
+    def __init__(self, message: str, *, operator_hint: str | None = None, rejected_answer_text: str | None = None,
+                 problems: tuple[str, ...] = ()) -> None:
+        super().__init__(message, operator_hint=operator_hint)
+        self.rejected_answer_text = rejected_answer_text
+        self.problems = problems or (message,)
+
+
+class ModelOutputRejectedAfterRepair(ModelOutputInvalid):
+    """The answer was still invalid after its one repair attempt (plan part 7). The job fails with this reason."""
+
+    ends_job_immediately = True
 
 
 class ModelOutputTruncated(ModelOutputInvalid):
@@ -67,6 +84,14 @@ class ModelRequestRejected(PaperwatchError):
     failed_component = "model-server"
     process_exit_code = 5
     model_call_outcome = "rejected"
+
+
+class ModelPromptExceedsContextBudget(ModelRequestRejected):
+    """Refused locally before sending: the prompt plus the role's reserved output (reasoning and final answer) would
+    not fit model.required_context_tokens. The same input would be refused again, so the job fails now."""
+
+    ends_job_immediately = True
+    model_call_outcome = "over_context_budget"
 
 
 class InferenceLockTimeout(PaperwatchError):

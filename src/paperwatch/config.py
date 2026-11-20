@@ -86,8 +86,15 @@ class RoleLimits:
 
 DEFAULT_ROLE_LIMITS: dict[str, RoleLimits] = {
     "healthcheck": RoleLimits(max_output_tokens=2048, timeout_seconds=120, reasoning_effort="low"),
-    "reviewer": RoleLimits(max_output_tokens=16384, timeout_seconds=1800),
+    # Plan part 7 roles. The owner chose the server's default reasoning (xhigh) for every reading call (2026-11-19).
+    "section_reader": RoleLimits(max_output_tokens=16384, timeout_seconds=1800),  # one bounded reading section
+    "reviewer": RoleLimits(max_output_tokens=16384, timeout_seconds=1800),  # the evidence-backed review
+    "topic_assessor": RoleLimits(max_output_tokens=12288, timeout_seconds=1200),  # rubric ratings per topic
 }
+# Room the reading roles need besides the passages themselves: system prompt, orientation (title + abstract), JSON
+# keys. Used by the load-time check that a reading section fits the context budget.
+READING_PROMPT_OVERHEAD_TOKENS = 3000
+READING_CHARACTERS_PER_TOKEN_ESTIMATE = 3.5  # same estimate as paperwatch.roles.base
 
 
 @dataclass(frozen=True)
@@ -150,6 +157,26 @@ class CollectionSettings:
     openalex_recent_sweep_interval_hours: int = 12  # a recent OpenAlex sweep per query at most this often
     daily_source_text_budget: int = 30  # full-text DOWNLOADS per UTC day (local files are free)
     local_sources_dir: str = "local_sources"  # PDFs/XML you place here, named by arXiv id or DOI
+    # Readings that `collect` queues wait until the same run has acquired their source text (so the worker does not
+    # read an abstract seconds before the PDF arrives). If that stage never finishes, they become due after this.
+    source_text_hold_minutes: int = 60
+
+
+@dataclass(frozen=True)
+class ReadingSettings:
+    """How a promoted paper is read (plan part 7). Starting values; measure them on the workstation in part 10.
+
+    A long text is read in bounded reading sections, one model call each, then synthesized; see
+    paperwatch.reading.reading_plan for the order (methods and results first) and the full_text / partial_text rule.
+    """
+
+    section_max_characters: int = 24000  # passages per reading section (~7k tokens), leaving room for reasoning
+    max_sections_per_paper: int = 10  # reading sections read per paper; more makes the review partial_text
+    passage_max_characters: int = 1500  # a longer paragraph is split at sentence ends into several passages
+    passage_min_characters: int = 200  # a shorter paragraph is merged with the next one on the same page
+    closest_seeds_per_topic: int = 3  # seed papers attached to each topic's assessment as comparison anchors
+    comparison_reviews_per_topic: int = 3  # earlier reviews on the same question attached as anchors
+    anchor_abstract_characters: int = 800  # each seed anchor's abstract is cut to this length
 
 
 @dataclass(frozen=True)
@@ -272,6 +299,7 @@ class AppConfig:
     collector: CollectorSettings
     collection: CollectionSettings
     screening: ScreeningSettings
+    reading: ReadingSettings
     extractor: ExtractorSettings
     access: AccessSettings
     topics: tuple[TopicDefinition, ...]
@@ -343,7 +371,7 @@ def load_app_config(home_dir: Path) -> AppConfig:
     raw_topics = _read_toml_file(home_dir / TOPICS_FILE_NAME)
 
     known_sections = {"paths", "model", "roles", "worker", "report", "schedule", "collector", "collection",
-                      "screening", "extractor", "access"}
+                      "screening", "reading", "extractor", "access"}
     unknown_sections = set(raw_config) - known_sections
     if unknown_sections:
         raise ConfigurationError(f"unknown section(s) {sorted(unknown_sections)} in {CONFIG_FILE_NAME}")
@@ -359,6 +387,7 @@ def load_app_config(home_dir: Path) -> AppConfig:
         collector=_build_settings_section(CollectorSettings, raw_config.get("collector", {}), "collector"),
         collection=_build_settings_section(CollectionSettings, raw_config.get("collection", {}), "collection"),
         screening=_build_settings_section(ScreeningSettings, raw_config.get("screening", {}), "screening"),
+        reading=_build_settings_section(ReadingSettings, raw_config.get("reading", {}), "reading"),
         extractor=_build_settings_section(ExtractorSettings, raw_config.get("extractor", {}), "extractor"),
         access=_build_settings_section(AccessSettings, raw_config.get("access", {}), "access"),
         topics=_build_topics(raw_topics),
@@ -527,6 +556,7 @@ def _validate_cross_field_rules(app_config: AppConfig) -> None:
     _validate_extractor_settings(app_config.extractor)
     _validate_collection_settings(app_config.collection)
     _validate_screening_settings(app_config.screening)
+    _validate_reading_settings(app_config)
     worker_settings = app_config.worker
     if worker_settings.max_attempts_per_job <= 0:
         raise ConfigurationError("worker.max_attempts_per_job must be positive")
@@ -578,6 +608,31 @@ def _validate_screening_settings(screening_settings: ScreeningSettings) -> None:
                                  "screening.near_cutoff_promotions must lie between 0 and the daily limit")
     if not 0.0 <= screening_settings.minimum_screening_score <= 1.0:
         raise ConfigurationError("screening.minimum_screening_score must lie between 0 and 1")
+
+
+def _validate_reading_settings(app_config: AppConfig) -> None:
+    reading_settings = app_config.reading
+    for setting_name, setting_value in dataclasses.asdict(reading_settings).items():
+        if setting_value <= 0:
+            raise ConfigurationError(f"reading.{setting_name} must be positive")
+    if not reading_settings.passage_min_characters <= reading_settings.passage_max_characters \
+            <= reading_settings.section_max_characters:
+        raise ConfigurationError("reading.passage_min_characters <= passage_max_characters <= "
+                                 "section_max_characters must hold")
+    # Plan part 7: reserve context space for reasoning and the final answer. One reading section plus the prompt
+    # around it plus the section reader's whole output limit must fit the context paperwatch may rely on.
+    section_prompt_tokens = READING_PROMPT_OVERHEAD_TOKENS + int(
+        reading_settings.section_max_characters / READING_CHARACTERS_PER_TOKEN_ESTIMATE)
+    for reading_role_name in ("section_reader", "reviewer"):
+        reserved_output_tokens = app_config.role_limits[reading_role_name].max_output_tokens
+        if section_prompt_tokens + reserved_output_tokens > app_config.model.required_context_tokens:
+            raise ConfigurationError(
+                f"a reading section of {reading_settings.section_max_characters} characters (about "
+                f"{section_prompt_tokens} prompt tokens) plus [roles.{reading_role_name}] max_output_tokens = "
+                f"{reserved_output_tokens} exceeds model.required_context_tokens = "
+                f"{app_config.model.required_context_tokens}",
+                operator_hint="lower reading.section_max_characters or the role's max_output_tokens, or raise "
+                              "model.required_context_tokens if the server's per-slot context allows it")
 
 
 def _validate_extractor_settings(extractor_settings: ExtractorSettings) -> None:

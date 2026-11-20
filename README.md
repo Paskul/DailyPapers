@@ -4,10 +4,11 @@ A local reading service that answers **"Which papers are worth my time today, an
 It collects papers, has the local llama.cpp model (Qwen, `qwen-local` at `http://127.0.0.1:8080/v1`) review them,
 and publishes one Markdown report per day. The full design is in [`Local_Paper_Monitor_Plan.md`](Local_Paper_Monitor_Plan.md).
 
-**Status:** parts 1-6 of 10 are implemented: the application skeleton and contracts; paper identity, editions,
+**Status:** parts 1-7 of 10 are implemented: the application skeleton and contracts; paper identity, editions,
 reading identity, and crash-safe jobs; the access limits on what can reach the internet; the research profile
-built from topics, Zotero, and CSL JSON seeds; collection of current papers plus a finite historical search; and
-cheap CPU screening of every candidate with ordered dispatch of the readings.
+built from topics, Zotero, and CSL JSON seeds; collection of current papers plus a finite historical search; cheap
+CPU screening of every candidate with ordered dispatch of the readings; and evidence-backed reading with
+passage-level citations, a 0-100 reading-priority rubric per topic, and a permanent note per review.
 
 ## Project decisions (confirmed by the owner)
 
@@ -27,6 +28,9 @@ These answer open questions from the plan. Later build steps must follow them.
 | **Screening model = BAAI/bge-base-en-v1.5 on ONNX** | One pinned sentence-embedding model (768 dimensions), run in-process by onnxruntime on the CPU (no torch, no extra service or socket). Its files are pinned by revision and sha256 in the package and installed by `deploy/install_embedding_model.sh`; nothing is downloaded at run time. | Parts 6, 10 |
 | **No minimum screening score yet** | `minimum_screening_score = 0`: the 30 daily slots go by rank, divided across topics. Embedding cosines depend on the model (bge rates unrelated texts around 0.2-0.4), so part 10 calibrates a real floor from labeled samples. | Parts 6, 10 |
 | **Signals ranked within each topic before combining** | Each signal becomes its percentile among the topic's unpromoted candidates, so the 0/1 phrase signal cannot outweigh the cosines and one topic's higher raw cosines do not win the spare and near-cutoff slots. The minimum score is therefore a relative position. Owner request after review, 2026-11-19. | Parts 6, 10 |
+| **Every topic is assessed** | Each completed reading is rated against every topic that has a question, terms, or seeds (topics with no input are skipped), in one topic-assessment call. Owner decision, 2026-11-19. | Parts 7, 9 |
+| **Seeds and earlier reviews are comparison papers** | The rubric's "value relative to nearby saved papers" uses the topic's closest seeds from your library AND earlier reviews on the same question. It is omitted ("comparison unavailable") only when a topic has neither. Owner decision, 2026-11-19. | Parts 7, 9 |
+| **Deep reading at the server's default reasoning** | Up to 10 reading sections per paper; every reading call (section reader, reviewer, topic assessor) uses the server's default reasoning effort (xhigh). Owner decision, 2026-11-19; measure in part 10. | Parts 7, 10 |
 | **Extractor = poppler `pdftotext`** | PDF text comes from `pdftotext` (reading order, form feeds between pages) in a Debian-slim image pinned by image id. XML (JATS/TEI) comes from a small stdlib dumper in the same image. | Parts 3, 5, 7 |
 
 ## Setup
@@ -53,7 +57,7 @@ to validate them and install them into the deployed home (`/srv/paperwatch`) wit
 | `init` | Create the home layout and database; never overwrites existing config files. Safe to rerun (migrates the DB). |
 | `doctor` | PASS/WARN/FAIL per component: config, paths, database, the screening model (pinned hashes, loads, ranks a probe sensibly), model health, alias, context budget, reasoning levels, a schema-constrained request with reasoning. |
 | `collect [--fixture FILE] [--skip-searches]` | Sync seed papers, then collect current releases (arXiv feeds, missed-release recovery, recent OpenAlex windows) and each topic's finite historical search, screen every candidate and promote today's papers to review jobs, acquire their full text, and print each topic's input mode. `--fixture` replays recorded records instead of the live searches; `--skip-searches` runs no arXiv/OpenAlex requests. |
-| `work --once` / `work` | Run one job / loop until SIGTERM. Idle = zero inference calls. Several workers may run at once. |
+| `work --once` / `work` | Run one job / loop until SIGTERM. A review job reads the paper in bounded sections, validates every citation, scores it per topic, commits, then writes its note. Idle = zero inference calls. Several workers may run at once. |
 | `reread PAPER_ID [--reason TEXT]` | Operator request for a fresh reading; gets its own generation id and a separate review. |
 | `report [--date YYYY-MM-DD]` | Publish `output/daily/<date>.md` plus per-paper notes. One report per date; reruns produce identical bytes. |
 | `status` | Topics with their input mode (keywords / seeds / both) and what is missing, seed sources and their last sync, papers by status, editions/aliases, unresolved possible duplicates, jobs by kind/status (incl. expired leases), queued jobs per priority class with the oldest one's age, the screening model and today's promotions by reason and topic, reviews by coverage, model pause state, last model call, new candidates today, each feed / recent window / historical search with its coverage and stopping reason, open coverage gaps, source text, withdrawals, outbound requests today and paused providers, last report. |
@@ -65,7 +69,7 @@ Failures always print `paperwatch: FAILED [<component>] ...` with a component-sp
 
 ## How the model is used
 
-- One fresh two-message context per job; the model gets plain data and **no tools**.
+- One fresh two-message context per model call (a long paper takes several); the model gets plain data and **no tools**.
 - Each role (`roles/`) has its own prompt, prompt version, JSON output schema, host-side checks, and hard
   time/token limits (`[roles.<name>]` in `config.toml`).
 - Requests are schema-constrained (`response_format: json_schema`); the final answer is parsed separately from
@@ -198,6 +202,66 @@ an active seed or a withdrawn work) for every topic, on the CPU, and promotes th
 - **A missing or altered model** fails visibly. Every other stage of `collect` still runs, candidates wait unscored
   (nothing is promoted on partial signals), and `collect` exits with code 12. `doctor`, `status`, and `access-check`
   name the problem.
+
+## Reading papers (plan part 7)
+
+The worker reads each queued paper from text the collector already saved; it never downloads anything
+(`reading/`, roles in `roles/`).
+
+- **Which text**: the sandboxed extractor's full text when it is usable (at least 1500 characters), else the
+  abstract (`readings.select_reading_input`). `collect` holds the readings it promotes until its source-text stage
+  has run (`collection.source_text_hold_minutes`), so a PDF fetched in the same run is read instead of the abstract.
+  If full text is extracted while an abstract reading is still queued, the queued job is retired and the full-text
+  reading takes its place. If the cached text has vanished or changed, the worker marks it failed and queues the
+  abstract reading, without a model call.
+- **Passages** (`reading/passages.py`): stable ids (`A1..` abstract sentences, `T1` the title of a title-only record,
+  `P1..` full text), with the PDF page (pdftotext's form feeds) and the section heading. Line-end hyphenation is
+  undone; ligatures and soft hyphens are normalized. Each section gets a kind (method, results, discussion,
+  references, ...).
+- **Reading plan** (`reading/reading_plan.py`): passages are cut into reading sections of at most
+  `reading.section_max_characters` (one model call each). Up to `reading.max_sections_per_paper` are read, method and
+  results first, then discussion/conclusion, introduction, background, front matter, appendices. References and
+  acknowledgments are never read.
+  - `full_text` only if every section with substantive content was read and a closing section (conclusion,
+    discussion, references) exists; otherwise `partial_text`, with the reasons saved (e.g. "the extraction may be
+    truncated").
+  - When the config loads, one section plus its prompt plus the role's whole output limit must fit
+    `model.required_context_tokens`; before each call the actual prompt is checked again.
+- **Model calls** (`reading/reading_pipeline.py`), each a fresh context with plain data and no tools:
+  1. `section_reader`, once per reading section of a long paper. Each validated result is saved
+     (`review_stage_results`), so a timeout or crash resumes at the first missing section.
+  2. `reviewer`: the review, from the passages (one section) or from the section notes. Saved as a stage too.
+  3. `topic_assessor`: rubric ratings for every topic, with comparison anchors.
+- **Evidence checks** (`reading/evidence_checks.py`, `roles/evidence_fields.py`), before anything is committed:
+  - every cited passage id must be in the packet;
+  - a finding `{claim, conditions, passage_id, excerpt}` quotes 3-60 contiguous words of its passage (case,
+    whitespace, hyphenation, quotes and dashes ignored);
+  - every number in a claim, its conditions, or a statement must occur in a cited passage, so an invented metric is
+    rejected ("Table 2", "Section 3" are exempt);
+  - the authors' claims (`results`, limitations stated by the authors) are kept apart from the model's
+    (`reviewer_inferences`, limitations stated by the reviewer). Statements can say "insufficient evidence";
+    ambiguous passages and garbled tables or equations are flagged.
+  - An invalid answer gets **one repair attempt** (sent back with its problems); a second invalid answer fails the
+    job with both reasons kept, and the worker moves on.
+- **Reading priority** (`reading/reading_priority.py`): the model proposes an integer 0-4 per dimension and explains
+  it; the code computes `round(100 * sum(weight * rating / 4) / sum(active weights))`, half up.
+
+  | Dimension | Weight |
+  | --- | ---: |
+  | Fit to the research question | 40 |
+  | Fit of method or assumptions | 25 |
+  | Strength of evidence available to this review (capped at 1 for an abstract-only review) | 20 |
+  | Value relative to nearby saved papers (omitted when no anchor exists: "comparison unavailable") | 15 |
+
+  Anchors (`reading/comparison_anchors.py`) are the topic's closest seeds (from screening, else cached embeddings)
+  and earlier reviews whose assessment rated question fit at least 2, nearest first. The worker never embeds
+  anything. The score is a reading priority for your question, not a novelty claim.
+- **Saved and rendered**: the review row stores the reading record (sections read and not read, partial reasons,
+  table and equation recovery); the cited passages are copied into `review_evidence_passages`, so the evidence
+  survives cache pruning; each topic assessment keeps the ratings, explanations, applied caps, and the topic profile
+  hash. Right after the commit the worker writes `output/papers/<paper>/<review>.md`. It shows every field with its
+  evidence pointers (`P12` (p. 4, 3 Results)) and quotes, the scoring table per topic, matched seeds, the coverage,
+  and the cited passages. `report` restores a missing note from the saved review.
 
 ## Research profile (plan part 4)
 
@@ -338,10 +402,13 @@ src/paperwatch/
   network/                      # collector only: provider rules, gateway, secure fetcher, ledger, credentials,
                                 #   and the per-process egress guard
   llm/                          # model client contract, llama.cpp client, fake client, lock, outage guard
-  roles/                        # healthcheck + provisional abstract-only reviewer; output guards
+  reading/                      # part 7: passages, reading plan, parser recovery, review packet, evidence checks,
+                                #   saved stage results, comparison anchors, rubric, the reading pipeline
+  roles/                        # healthcheck, section_reader, reviewer, topic_assessor; shared evidence fields;
+                                #   output guards
   sources/                      # record types, discovery route names, parsers: arXiv Atom (feed + API), OpenAlex
                                 #   works JSON, recorded fixtures
-  rendering/                    # Markdown escaping, notes, daily report, atomic writes
+  rendering/                    # Markdown escaping, evidence notes, daily report, note loading, atomic writes
   commands/                     # one module per CLI command
 settings/                       # operator settings (gitignored) + committed *.example.toml; see settings/README.md
 deploy/                         # install, service accounts, nftables egress rules, extractor image, embedding model,
@@ -353,7 +420,10 @@ tests/                          # step 1 vertical slice; step 2 identity/reading
                                 #   step 5 feed replay, mid-page failure, downtime recovery, late indexing, revisions,
                                 #   historical cap, budgets, source text, withdrawals (fake_paper_providers.py);
                                 #   step 6 500 candidates with known nearest seeds, fair promotion, claim order of all
-                                #   four job types, zero inference while idle, rescoring, missing model
+                                #   four job types, zero inference while idle, rescoring, missing model;
+                                #   step 7 full / truncated / abstract-only through one schema, invented metric and
+                                #   unknown passage rejected, no second reading, resume after a timeout, rubric,
+                                #   anchors, held readings, switch to full text, fallback when the cache is gone
 ```
 
 ## Tests

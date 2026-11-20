@@ -7,14 +7,16 @@ backfill, and the PRAGMA user_version bump in ONE transaction, so a database is 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from paperwatch.errors import SourceInputError
 from paperwatch.identifiers import EDITION_ID_PREFIX, new_internal_id
 from paperwatch.review_inputs import (COVERAGE_ABSTRACT_ONLY, INITIAL_READING_GENERATION, build_review_input_key,
-                                      fingerprint_abstract_reading_text)
+                                      fingerprint_abstract_reading_text, fingerprint_extracted_reading_text)
 from paperwatch.scholarly_identifiers import (build_edition_key, normalize_identifier, parse_version_number,
                                              resolve_edition_version_label)
 from paperwatch.text_normalization import build_title_match_key
@@ -484,6 +486,72 @@ CREATE INDEX paper_promotions_by_time ON paper_promotions(promoted_at);
 """
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# Migration 7 (plan part 7): evidence-backed reading.
+#   review_stage_results      validated result of each step of a reading (one per reading section, then the
+#                             synthesis), so a timeout resumes instead of restarting a long paper
+#   review_evidence_passages  the passages a review cites, copied out of the source cache, so the evidence survives
+#                             when replaceable downloads are pruned (plan part 10)
+#   reviews.reading_record_json        sections read and not read, why the coverage is partial, parser recovery
+#   edition_source_texts.normalized_text_sha256 / extracted_text_characters: the full-text reading identity and
+#                             whether the text is long enough to read (backfilled from the cache when readable)
+# --------------------------------------------------------------------------------------------------------------------
+MIGRATION_0007_EVIDENCE_BACKED_READING = """
+CREATE TABLE review_stage_results (
+    paper_id             TEXT NOT NULL REFERENCES papers(paper_id),
+    review_input_key     TEXT NOT NULL,
+    reading_plan_sha256  TEXT NOT NULL,                        -- section boundaries + limits; never mixed
+    stage_key            TEXT NOT NULL,                        -- 'section:003' | 'synthesis'
+    prompt_version       TEXT NOT NULL,
+    role_name            TEXT NOT NULL,
+    result_json          TEXT NOT NULL,                        -- validated role output
+    model_identity       TEXT NOT NULL,
+    server_build         TEXT NOT NULL,
+    job_id               TEXT,
+    completed_at         TEXT NOT NULL,
+    PRIMARY KEY (paper_id, review_input_key, reading_plan_sha256, stage_key, prompt_version)
+);
+
+CREATE TABLE review_evidence_passages (
+    review_id     TEXT NOT NULL REFERENCES reviews(review_id),
+    passage_id    TEXT NOT NULL,                               -- A1.. abstract, T1 title, P1.. extracted text
+    page_number   INTEGER,
+    section_title TEXT NOT NULL,
+    passage_text  TEXT NOT NULL,                               -- untrusted; escaped when rendered
+    PRIMARY KEY (review_id, passage_id)
+);
+
+ALTER TABLE reviews ADD COLUMN reading_record_json TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE edition_source_texts ADD COLUMN normalized_text_sha256 TEXT;
+ALTER TABLE edition_source_texts ADD COLUMN extracted_text_characters INTEGER;
+"""
+CACHED_TEXT_FILE_NAME_PATTERN = re.compile(r"^[0-9a-f]{32}\.txt$")
+INTERNAL_EDITION_ID_PATTERN = re.compile(r"^e_[0-9a-f]{16}$")
+
+
+def _backfill_full_text_reading_identity(connection: sqlite3.Connection) -> None:
+    """Fingerprint texts extracted before schema v7. The cache sits next to the database (state/cache/sources/);
+    an unreadable file stays NULL, so that paper is read from its abstract until the text is extracted again."""
+    database_file = Path(connection.execute("PRAGMA database_list").fetchone()["file"] or ".")
+    source_files_dir = database_file.parent / "cache" / "sources"
+    for text_row in connection.execute(
+            """SELECT edition_id, extracted_text_file_name FROM edition_source_texts
+               WHERE extraction_status = 'extracted' AND extracted_text_file_name IS NOT NULL""").fetchall():
+        if not INTERNAL_EDITION_ID_PATTERN.match(text_row["edition_id"]) or \
+                not CACHED_TEXT_FILE_NAME_PATTERN.match(text_row["extracted_text_file_name"]):
+            continue
+        try:
+            extracted_text = (source_files_dir / text_row["edition_id"] / text_row["extracted_text_file_name"]
+                              ).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        connection.execute(
+            """UPDATE edition_source_texts SET normalized_text_sha256 = ?, extracted_text_characters = ?
+               WHERE edition_id = ?""",
+            (fingerprint_extracted_reading_text(extracted_text), len(extracted_text.strip()),
+             text_row["edition_id"]))
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("initial schema (plan part 1)", MIGRATION_0001_INITIAL_SCHEMA),
     SchemaMigration("paper identity, editions, reading identity and part-2 records",
@@ -496,4 +564,6 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
                     MIGRATION_0005_COLLECTION_ROUTES_WITHDRAWALS_AND_SOURCE_TEXT),
     SchemaMigration("screening scores, embedding cache, promotions, and dispatch order (plan part 6)",
                     MIGRATION_0006_SCREENING_AND_DISPATCH_ORDER),
+    SchemaMigration("evidence-backed reading: stage results, cited passages, reading records (plan part 7)",
+                    MIGRATION_0007_EVIDENCE_BACKED_READING, _backfill_full_text_reading_identity),
 )

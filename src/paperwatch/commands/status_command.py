@@ -23,6 +23,7 @@ from paperwatch.collection.current_releases import (ARXIV_FEED_CHECKPOINT_PREFIX
 from paperwatch.collection.historical_search import (history_plan_key, historical_queries_for_topic, plan_windows,
                                                      recency_schedule_settings)
 from paperwatch.public_query_catalog import build_public_query_catalog
+from paperwatch.reading.stage_results import count_saved_stages_of_unfinished_readings
 from paperwatch.screening.embedding_model_registry import look_up_pinned_embedding_model
 from paperwatch.screening.review_promotion import count_screening_promotions_today, utc_day_start_timestamp
 from paperwatch.screening.text_embedders import EMBEDDING_BACKEND_HASHING
@@ -83,6 +84,7 @@ def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
     coverage_rows = connection.execute(
         "SELECT coverage, COUNT(*) AS review_count FROM reviews GROUP BY coverage").fetchall()
     print("Reviews: " + (", ".join(f"{row['coverage']} {row['review_count']}" for row in coverage_rows) or "none"))
+    _print_reading_progress(app)
 
     model_health = read_service_health_state(connection, MODEL_SERVICE_NAME)
     if model_health.is_paused_at(utc_now()):
@@ -218,6 +220,20 @@ def _print_provider_access_summary(app: AppContext) -> None:
         if provider_health.is_paused_at(utc_now()):
             print(f"Provider {paused_row['service'].removeprefix(PROVIDER_SERVICE_NAME_PREFIX)}: PAUSED until "
                   f"{format_utc_timestamp(provider_health.paused_until)}; last error: {provider_health.last_error}")
+
+
+def _print_reading_progress(app: AppContext) -> None:
+    """Plan part 7: saved steps of readings not finished yet (they resume, not restart) and the reading priorities."""
+    saved_stage_count = count_saved_stages_of_unfinished_readings(app.connection)
+    if saved_stage_count:
+        print(f"  {saved_stage_count} saved reading step(s) of unfinished readings (a retry resumes from them)")
+    priority_row = app.connection.execute(
+        """SELECT COUNT(*) AS assessed, SUM(topic_score >= 65) AS at_least_65 FROM (
+               SELECT review_id, MAX(topic_score) AS topic_score FROM review_topic_assessments
+               WHERE score_scale = 'priority_0_to_100' GROUP BY review_id)""").fetchone()
+    if priority_row["assessed"]:
+        print(f"  Reading priority: {priority_row['assessed']} review(s) scored, {priority_row['at_least_65'] or 0} "
+              "at 65/100 or more for their best topic")
 
 
 def _print_collection_coverage(app: AppContext) -> None:

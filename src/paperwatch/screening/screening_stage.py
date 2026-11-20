@@ -27,9 +27,11 @@ class ScreeningStageResult:
 
 def run_screening_and_promotion(connection: sqlite3.Connection, app_config: AppConfig, *,
                                 active_seed_paper_ids: frozenset[str], moment: datetime | None = None,
-                                build_embedder: Callable[[], TextEmbedder] | None = None) -> ScreeningStageResult:
+                                build_embedder: Callable[[], TextEmbedder] | None = None,
+                                hold_new_readings_until: datetime | None = None) -> ScreeningStageResult:
     """`build_embedder` lets tests inject an embedder with known vectors; by default the configured one is loaded,
-    and only if some candidate needs a (re)score."""
+    and only if some candidate needs a (re)score. `hold_new_readings_until` keeps the new readings from being claimed
+    until `collect` has acquired their source text (paperwatch.readings)."""
     stage_result = ScreeningStageResult()
     topic_profiles = build_topic_screening_profiles(connection, app_config, configured_embedder_identity(app_config))
     if not topic_profiles:
@@ -44,6 +46,7 @@ def run_screening_and_promotion(connection: sqlite3.Connection, app_config: AppC
     promotion_outcome = promote_screened_candidates(
         connection, app_config.screening, screening_outcome,
         tuple(topic_profile.topic_id for topic_profile in topic_profiles),
-        max_attempts_per_job=app_config.worker.max_attempts_per_job, moment=moment)
+        max_attempts_per_job=app_config.worker.max_attempts_per_job, moment=moment,
+        hold_new_readings_until=hold_new_readings_until)
     stage_result.report_lines.append(promotion_outcome.describe())
     return stage_result

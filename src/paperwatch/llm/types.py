@@ -6,7 +6,8 @@ two-message conversation (system + user) and returns the final answer separated 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
@@ -20,6 +21,9 @@ class StructuredChatRequest:
     max_output_tokens: int  # hard limit, reasoning included
     timeout_seconds: float  # hard limit for the whole request
     reasoning_effort: str  # "server-default" or a server-supported level
+    # The plain data the user message was rendered from. NEVER sent to a server (the real client sends only the two
+    # messages); the offline fake uses it to build valid answers (paperwatch.llm.fake_answers).
+    role_input: Mapping[str, Any] | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)

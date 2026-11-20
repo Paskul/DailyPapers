@@ -1,7 +1,9 @@
 """`paperwatch work [--once]`: claim due jobs and run them, one bounded job at a time.
 
-Each job kind has a handler that performs the slow external work (a model call) OUTSIDE any write transaction and
+Each job kind has a handler that performs the slow external work (model calls) OUTSIDE any write transaction and
 returns the database writes to commit; those writes and `job done` then commit together under the lease check.
+After a successful commit the handler's file output (the permanent reading note) is written; if that write fails,
+`report` restores the note from the saved review.
 While the handler runs, a JobLeaseKeeper thread renews the job's short lease, so a crashed worker's job is
 reclaimable quickly while a live worker keeps its job however long the model takes.
 
@@ -23,7 +25,7 @@ from enum import StrEnum
 
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import load_edition_row, set_paper_status
-from paperwatch.clock import utc_now
+from paperwatch.clock import utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
 from paperwatch.errors import (InferenceLockTimeout, ModelServerUnavailable, PaperwatchError, SourceInputError,
                                UnexpectedWorkerError, describe_failure_for_operator)
@@ -32,12 +34,12 @@ from paperwatch.jobs import (ATTEMPT_SETTLEMENT_FAILED_PERMANENTLY, ATTEMPT_SETT
                              finish_job_with_writes, record_job_attempt_failure, release_job_without_charging_attempt)
 from paperwatch.lease_keeper import JobLeaseKeeper
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, ensure_model_service_available, read_service_health_state
-from paperwatch.readings import ReadingJobInput, refresh_paper_status_from_work
-from paperwatch.research_profile import compute_topic_profile_hashes
-from paperwatch.review_inputs import build_abstract_review_packet, build_reviewer_role_input
-from paperwatch.review_store import insert_review_with_topic_assessments
-from paperwatch.roles.base import run_role_once
-from paperwatch.roles.reviewer import REVIEWER_ROLE
+from paperwatch.reading.reading_pipeline import read_paper
+from paperwatch.reading.review_packet import ExtractedTextUnavailable, build_review_packet
+from paperwatch.readings import (ReadingEnqueueOutcome, ReadingJobInput, dispatch_order_of_job_row,
+                                 enqueue_reading_if_needed, refresh_paper_status_from_work, select_reading_input)
+from paperwatch.rendering.review_notes import load_selected_review, write_paper_note_if_missing
+from paperwatch.review_store import insert_completed_reading
 
 LOGGER = logging.getLogger(__name__)
 RETRY_AFTER_LOCK_TIMEOUT_SECONDS = 5.0
@@ -48,10 +50,12 @@ ResultWriter = Callable[[sqlite3.Connection], None]
 
 @dataclass(frozen=True)
 class JobHandlerResult:
-    """What a handler hands back: the writes to commit with `job done`, and a short note for the operator."""
+    """What a handler hands back: the writes to commit with `job done`, a short note for the operator, and optional
+    file output to produce once the commit succeeded (never before: a lost lease must leave no file behind)."""
 
     write_results: ResultWriter
     completion_note: str
+    after_commit: Callable[[], None] | None = None
 
 
 JobHandler = Callable[[AppContext, ClaimedJob], JobHandlerResult]
@@ -82,33 +86,75 @@ class WorkCycleReport:
 
 
 def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHandlerResult:
+    """Read one paper (plan part 7): rebuild its packet from the saved edition, run the evidence-backed reading,
+    and commit the review, its cited passages, and its topic assessments together with `job done`."""
     reading_job_input = ReadingJobInput.from_payload(claimed_job.input_payload)
-    edition_row = load_edition_checked_against_catalog(app, claimed_job, reading_job_input.edition_id)
-    review_packet = build_abstract_review_packet(edition_row, reading_job_input.reading_generation)
+    load_edition_checked_against_catalog(app, claimed_job, reading_job_input.edition_id)
+    current_input = select_reading_input(app.connection, claimed_job.paper_id, reading_job_input.reading_generation)
+    if current_input is None or current_input.review_input_key != claimed_job.input_version:
+        # Newer text arrived after this job was queued (full text was extracted, or an abstract appeared). Queue
+        # the reading of the current input in this job's place; this job ends without a model call.
+        return _supersede_with_current_input(app, claimed_job, reading_job_input,
+                                             "input superseded by newer text; no model call made")
+    try:
+        review_packet = build_review_packet(app.connection, app.config, claimed_job.paper_id, current_input)
+    except ExtractedTextUnavailable as unavailable_text:
+        return _fall_back_from_unusable_text(app, claimed_job, reading_job_input, current_input.edition_id,
+                                             unavailable_text)
 
-    if review_packet.review_input_key != claimed_job.input_version:
-        # The edition's text changed after this job was queued (a title-only edition received its abstract). The
-        # collector queued a job for the new text, so this one finishes without a model call.
-        def mark_superseded(connection: sqlite3.Connection) -> None:
-            refresh_paper_status_from_work(connection, claimed_job.paper_id)
-
-        return JobHandlerResult(mark_superseded, "input superseded by newer text; no model call made")
-
-    role_result = run_role_once(role_definition=REVIEWER_ROLE,
-                                role_input=build_reviewer_role_input(review_packet, app.config.topics),
-                                app_config=app.config, model_client=app.model_client, connection=app.connection,
-                                job_id=claimed_job.job_id)
+    completed_reading = read_paper(app, review_packet, job_id=claimed_job.job_id)
+    committed_review_ids: list[str] = []
 
     def write_review_and_mark_paper_complete(connection: sqlite3.Connection) -> None:
-        insert_review_with_topic_assessments(connection, paper_id=claimed_job.paper_id, job_id=claimed_job.job_id,
-                                             review_packet=review_packet, role_result=role_result,
-                                             topics=app.config.topics,
-                                             topic_profile_sha256_by_topic_id=compute_topic_profile_hashes(
-                                                 connection, app.config))
+        committed_review_ids.append(insert_completed_reading(connection, paper_id=claimed_job.paper_id,
+                                                             job_id=claimed_job.job_id,
+                                                             completed_reading=completed_reading))
         set_paper_status(connection, claimed_job.paper_id, "complete")
 
-    return JobHandlerResult(write_review_and_mark_paper_complete,
-                            f"review saved for paper {claimed_job.paper_id} ({review_packet.coverage})")
+    def write_permanent_note() -> None:
+        write_paper_note_if_missing(app.config.paper_notes_dir,
+                                    load_selected_review(app.connection, committed_review_ids[0]))
+
+    best_score = max((assessment.scored.reading_priority_score for assessment in completed_reading.topic_assessments),
+                     default=None)
+    return JobHandlerResult(
+        write_review_and_mark_paper_complete,
+        f"review saved for paper {claimed_job.paper_id} ({review_packet.coverage}, "
+        f"{len(review_packet.reading_plan.sections_to_read)} reading section(s), best reading priority "
+        f"{'not rated' if best_score is None else f'{best_score}/100'})",
+        after_commit=write_permanent_note)
+
+
+def _supersede_with_current_input(app: AppContext, claimed_job: ClaimedJob, reading_job_input: ReadingJobInput,
+                                  completion_note: str) -> JobHandlerResult:
+    job_row = app.connection.execute("SELECT * FROM jobs WHERE job_id = ?", (claimed_job.job_id,)).fetchone()
+
+    def queue_current_input(connection: sqlite3.Connection) -> None:
+        enqueue_outcome, _reading_input = enqueue_reading_if_needed(
+            connection, claimed_job.paper_id, dispatch_order=dispatch_order_of_job_row(job_row),
+            max_attempts=claimed_job.max_attempts, reading_generation=reading_job_input.reading_generation,
+            operator_reason=reading_job_input.operator_reason)
+        if enqueue_outcome != ReadingEnqueueOutcome.QUEUED:
+            LOGGER.info("superseded job %s: current input of %s is %s", claimed_job.job_id, claimed_job.paper_id,
+                        enqueue_outcome)
+        refresh_paper_status_from_work(connection, claimed_job.paper_id)
+
+    return JobHandlerResult(queue_current_input, completion_note)
+
+
+def _fall_back_from_unusable_text(app: AppContext, claimed_job: ClaimedJob, reading_job_input: ReadingJobInput,
+                                  edition_id: str, problem: ExtractedTextUnavailable) -> JobHandlerResult:
+    """The cached full text is gone or altered: record that, and queue the next best input (usually the abstract)."""
+    supersede_result = _supersede_with_current_input(
+        app, claimed_job, reading_job_input, f"{problem}; the next best input was queued instead")
+
+    def mark_text_failed_then_requeue(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """UPDATE edition_source_texts SET extraction_status = 'failed', last_error = ?, updated_at = ?
+               WHERE edition_id = ?""", (str(problem)[:300], utc_now_timestamp(), edition_id))
+        supersede_result.write_results(connection)
+
+    return JobHandlerResult(mark_text_failed_then_requeue, supersede_result.completion_note)
 
 
 def load_edition_checked_against_catalog(app: AppContext, claimed_job: ClaimedJob, edition_id: str) -> sqlite3.Row:
@@ -168,8 +214,13 @@ def run_single_work_cycle(app: AppContext, *, probe_paused_model_now: bool) -> W
         return WorkCycleReport(WorkCycleOutcome.LEASE_LOST, f"lease on {claimed_job.job_id} was lost; result "
                                "discarded so a newer worker's result is not overwritten",
                                job_id=claimed_job.job_id, paper_id=claimed_job.paper_id)
-    return WorkCycleReport(WorkCycleOutcome.JOB_COMPLETED,
-                           f"completed {claimed_job.kind} {claimed_job.job_id}: {handler_result.completion_note}",
+    completion_message = f"completed {claimed_job.kind} {claimed_job.job_id}: {handler_result.completion_note}"
+    if handler_result.after_commit is not None:
+        try:
+            handler_result.after_commit()
+        except PaperwatchError as output_failure:  # the result is committed; `report` restores the note later
+            completion_message += f" (note not written yet: {output_failure}; `report` will restore it)"
+    return WorkCycleReport(WorkCycleOutcome.JOB_COMPLETED, completion_message,
                            job_id=claimed_job.job_id, paper_id=claimed_job.paper_id)
 
 

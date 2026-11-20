@@ -186,7 +186,9 @@ def test_title_route_topic_and_model_changes_never_trigger_another_reading(tmp_p
     app = AppContext.load(tmp_path, model_client=upgraded_model)
     assert not collect(app, BASE_RECORD)[1]
     assert drain_queue(app) == []  # empty queue: no inference call
-    assert len(fake_model.received_requests) == 1 and upgraded_model.received_requests == []
+    # One reading = one reviewer call + one topic-assessment call (plan part 7); nothing after the model upgrade.
+    assert [request.role_name for request in fake_model.received_requests] == ["reviewer", "topic_assessor"]
+    assert upgraded_model.received_requests == []
     assert count_rows(app.connection, "reviews") == 1 and count_rows(app.connection, "jobs") == 1
     assert app.connection.execute("SELECT status FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()[0] == \
         "complete"
@@ -220,8 +222,11 @@ def test_abstract_arriving_for_title_only_record_supersedes_the_queued_title_rea
     assert collect(app, BASE_RECORD)[1]  # same edition, now with its abstract: newly available text
 
     outcomes = drain_queue(app)
-    assert outcomes == [WorkCycleOutcome.JOB_COMPLETED, WorkCycleOutcome.JOB_COMPLETED]
-    assert len(fake_model.received_requests) == 1  # the superseded title-only job made no model call
+    assert outcomes == [WorkCycleOutcome.JOB_COMPLETED]  # the title-only job was retired when the abstract arrived
+    assert len(fake_model.requests_for_role("reviewer")) == 1
+    [retired_job] = app.connection.execute(
+        "SELECT status, last_error FROM jobs WHERE input_version != (SELECT review_input_key FROM reviews)").fetchall()
+    assert retired_job["status"] == "done" and retired_job["last_error"].startswith("superseded by a newer input")
     [review_row] = app.connection.execute("SELECT source_text_sha256, review_input_key FROM reviews").fetchall()
     assert review_row["review_input_key"].startswith("abstract_only:sha256:")
     assert app.connection.execute("SELECT status FROM papers").fetchone()[0] == "complete"
@@ -256,15 +261,25 @@ def test_operator_reread_gets_its_own_generation_and_review(initialized_home):
 
 
 def test_topic_assessments_are_stored_apart_from_the_reading(tmp_path):
-    answer = {"one_sentence_summary": "s", "research_question": "q", "method": "m", "authors_main_claims": [],
-              "stated_limitations": [], "insufficient_evidence": False,
-              "topic_relevance": [{"topic_id": "team-safety", "relevance_rating": 3, "rationale": "fits"}]}
-    app = load_test_app(tmp_path, FakeModelClient({"reviewer": json.dumps(answer)}))
+    """Part 7: the topic assessor proposes ratings; the host caps evidence for an abstract-only reading and
+    computes the 0-100 reading priority. No anchors exist, so relative_value is omitted."""
+    assessor_answer = {"topic_assessments": [{
+        "topic_id": "team-safety", "rationale": "fits",
+        "ratings": {"question_fit": {"rating": 4, "explanation": "direct"},
+                    "method_fit": {"rating": 3, "explanation": "close"},
+                    "evidence_strength": {"rating": 2, "explanation": "partial"}},
+        "matched_seed_ids": [], "compared_review_ids": []}]}
+    app = load_test_app(tmp_path, FakeModelClient({"topic_assessor": json.dumps(assessor_answer)}))
     collect(app, BASE_RECORD)
     drain_queue(app)
     [assessment_row] = app.connection.execute("SELECT * FROM review_topic_assessments").fetchall()
+    # round(100 * (40*4 + 25*3 + 20*1) / (4 * 85)) = 75: evidence capped from 2 to 1 (abstract only).
     assert (assessment_row["topic_id"], assessment_row["topic_score"], assessment_row["score_scale"]) == (
-        "team-safety", 3, "rating_0_to_4")
+        "team-safety", 75, "priority_0_to_100")
+    scoring = json.loads(assessment_row["assessment_json"])["scoring"]
+    assert scoring["proposed_ratings"]["evidence_strength"] == 2 and \
+        scoring["applied_ratings"] == {"question_fit": 4, "method_fit": 3, "evidence_strength": 1}
+    assert scoring["comparison_available"] is False
     assert assessment_row["topic_profile_sha256"] == app.config.topics[0].compute_profile_sha256()
 
 

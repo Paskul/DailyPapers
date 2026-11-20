@@ -1,8 +1,10 @@
-"""Persist completed readings and their topic assessments; load assessments for notes and reports.
+"""Persist completed readings and their topic assessments; load them for notes and reports.
 
-A review row is the immutable reading (what was read, by which model and prompt, with which coverage). Topic
-assessments live in their own table, keyed by review, topic, and the topic-profile hash, so a changed question or
-scoring rule can get a new assessment while the reading itself is reused (plan part 2).
+A review row is the immutable reading (what was read, by which model and prompt, with which coverage, and the
+reading record: sections read and not read, why coverage is partial, parser recovery). The passages it cites are
+copied into review_evidence_passages, so the evidence survives when the source cache is pruned (plan part 10).
+Topic assessments live in their own table, keyed by review, topic, and the topic-profile hash, so a changed question
+or seed set can get a new assessment while the reading itself is reused (plan part 2).
 Call the write helpers inside the job's lease-checked finish transaction.
 """
 
@@ -10,16 +12,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from paperwatch.clock import utc_now_timestamp
-from paperwatch.config import TopicDefinition
 from paperwatch.identifiers import REVIEW_ID_PREFIX, new_internal_id
-from paperwatch.review_inputs import ReviewPacket
-from paperwatch.roles.base import RoleRunResult
+from paperwatch.reading.reading_pipeline import CompletedReading
+from paperwatch.reading.reading_priority import SCORE_SCALE_PRIORITY_0_TO_100
+from paperwatch.roles.reviewer import REVIEWER_ROLE_NAME
+from paperwatch.roles.topic_assessor import TOPIC_ASSESSOR_ROLE_NAME
 
-SCORE_SCALE_RATING_0_TO_4 = "rating_0_to_4"  # provisional reviewer; part 7 adds 'priority_0_to_100'
+SCORE_SCALE_RATING_0_TO_4 = "rating_0_to_4"  # the provisional step-1 reviewer's relevance rating (legacy rows)
 
 
 @dataclass(frozen=True)
@@ -29,56 +32,75 @@ class TopicAssessment:
     score_scale: str
     rationale: str
     topic_profile_sha256: str
+    assessment_record: dict[str, Any] = field(default_factory=dict)  # ratings, explanations, anchors, scoring
+
+    @property
+    def priority_score_out_of_100(self) -> float:
+        """Legacy 0-4 relevance and the 0-100 reading priority on one scale (for ordering only)."""
+        return 25.0 * self.topic_score if self.score_scale == SCORE_SCALE_RATING_0_TO_4 else float(self.topic_score)
 
 
-def insert_review_with_topic_assessments(connection: sqlite3.Connection, *, paper_id: str, job_id: str,
-                                         review_packet: ReviewPacket, role_result: RoleRunResult,
-                                         topics: tuple[TopicDefinition, ...],
-                                         topic_profile_sha256_by_topic_id: dict[str, str] | None = None) -> str:
-    """Insert the reading once and its topic assessments. Returns the review id that now holds this input.
+@dataclass(frozen=True)
+class EvidencePassage:
+    passage_id: str
+    page_number: int | None
+    section_title: str
+    passage_text: str
 
-    `topic_profile_sha256_by_topic_id` (paperwatch.research_profile) includes each topic's active seeds; without it
-    the hash covers the topic id and question only.
+    @property
+    def location_label(self) -> str:
+        return (f"p. {self.page_number}, " if self.page_number is not None else "") + self.section_title
 
-    UNIQUE(paper_id, review_input_key) keeps the first accepted review if the same input was somehow read twice.
-    """
+
+def insert_completed_reading(connection: sqlite3.Connection, *, paper_id: str, job_id: str,
+                             completed_reading: CompletedReading) -> str:
+    """Insert the reading once, its cited passages, and its topic assessments. Returns the review id that now holds
+    this input. UNIQUE(paper_id, review_input_key) keeps the first accepted review if the same input was somehow
+    read twice; the second reading's assessments are then not stored either."""
+    packet = completed_reading.packet
     new_review_id = new_internal_id(REVIEW_ID_PREFIX)
     completed_at = utc_now_timestamp()
     insert_cursor = connection.execute(
         """INSERT OR IGNORE INTO reviews (review_id, paper_id, job_id, review_input_key, coverage, review_json,
                role_name, prompt_version, model_identity, server_build, completed_at, edition_id,
-               source_text_sha256, reading_generation)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (new_review_id, paper_id, job_id, review_packet.review_input_key, review_packet.coverage,
-         json.dumps(role_result.validated_output, ensure_ascii=False), role_result.role_name,
-         role_result.prompt_version, role_result.model_response.model_identity,
-         role_result.model_response.server_build, completed_at, review_packet.edition_id,
-         review_packet.source_text_sha256, review_packet.reading_generation))
+               source_text_sha256, reading_generation, reading_record_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (new_review_id, paper_id, job_id, packet.review_input_key, packet.coverage,
+         json.dumps(completed_reading.review_content, ensure_ascii=False), REVIEWER_ROLE_NAME,
+         completed_reading.reviewer_prompt_version, completed_reading.model_identity,
+         completed_reading.server_build, completed_at, packet.edition_id,
+         packet.reading_input.source_text_sha256, packet.reading_input.reading_generation,
+         json.dumps(completed_reading.reading_record, ensure_ascii=False)))
     if insert_cursor.rowcount != 1:
         return connection.execute("SELECT review_id FROM reviews WHERE paper_id = ? AND review_input_key = ?",
-                                  (paper_id, review_packet.review_input_key)).fetchone()["review_id"]
+                                  (paper_id, packet.review_input_key)).fetchone()["review_id"]
 
-    topic_by_id = {topic.topic_id: topic for topic in topics}
-    for topic_relevance in role_result.validated_output.get("topic_relevance", []):
-        topic = topic_by_id[topic_relevance["topic_id"]]  # the reviewer role rejects unknown topic ids
-        insert_topic_assessment(connection, review_id=new_review_id, topic=topic,
-                                topic_score=topic_relevance["relevance_rating"],
-                                score_scale=SCORE_SCALE_RATING_0_TO_4, assessment=topic_relevance,
-                                role_name=role_result.role_name, prompt_version=role_result.prompt_version,
-                                assessed_at=completed_at,
-                                topic_profile_sha256=(topic_profile_sha256_by_topic_id or {}).get(topic.topic_id))
+    passage_by_id = packet.passage_by_id
+    connection.executemany(
+        """INSERT OR IGNORE INTO review_evidence_passages (review_id, passage_id, page_number, section_title,
+               passage_text) VALUES (?, ?, ?, ?, ?)""",
+        [(new_review_id, passage_id, passage_by_id[passage_id].page_number, passage_by_id[passage_id].section_title,
+          passage_by_id[passage_id].text)
+         for passage_id in completed_reading.cited_passage_ids if passage_id in passage_by_id])
+    for completed_assessment in completed_reading.topic_assessments:
+        insert_topic_assessment(
+            connection, review_id=new_review_id, topic_id=completed_assessment.topic_id,
+            topic_score=completed_assessment.scored.reading_priority_score,
+            score_scale=SCORE_SCALE_PRIORITY_0_TO_100, assessment=completed_assessment.to_record(),
+            role_name=TOPIC_ASSESSOR_ROLE_NAME, prompt_version=completed_reading.topic_assessor_prompt_version,
+            assessed_at=completed_at, topic_profile_sha256=completed_assessment.topic_profile_sha256)
     return new_review_id
 
 
-def insert_topic_assessment(connection: sqlite3.Connection, *, review_id: str, topic: TopicDefinition,
-                            topic_score: int, score_scale: str, assessment: dict[str, Any], role_name: str,
-                            prompt_version: str, assessed_at: str, topic_profile_sha256: str | None = None) -> bool:
+def insert_topic_assessment(connection: sqlite3.Connection, *, review_id: str, topic_id: str, topic_score: int,
+                            score_scale: str, assessment: dict[str, Any], role_name: str, prompt_version: str,
+                            assessed_at: str, topic_profile_sha256: str) -> bool:
     """One assessment per (review, topic, topic profile). Returns False if that exact assessment already exists."""
     insert_cursor = connection.execute(
         """INSERT OR IGNORE INTO review_topic_assessments (review_id, topic_id, topic_profile_sha256, topic_score,
                score_scale, assessment_json, role_name, prompt_version, assessed_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (review_id, topic.topic_id, topic_profile_sha256 or topic.compute_profile_sha256(), topic_score, score_scale,
+        (review_id, topic_id, topic_profile_sha256, topic_score, score_scale,
          json.dumps(assessment, ensure_ascii=False), role_name, prompt_version, assessed_at))
     return insert_cursor.rowcount == 1
 
@@ -94,9 +116,16 @@ def load_latest_topic_assessments(connection: sqlite3.Connection, review_id: str
            ORDER BY assessment.topic_id, assessment.topic_profile_sha256""", (review_id,)).fetchall()
     latest_by_topic: dict[str, TopicAssessment] = {}
     for assessment_row in assessment_rows:
+        assessment_record = json.loads(assessment_row["assessment_json"])
         latest_by_topic.setdefault(assessment_row["topic_id"], TopicAssessment(
             topic_id=assessment_row["topic_id"], topic_score=assessment_row["topic_score"],
-            score_scale=assessment_row["score_scale"],
-            rationale=json.loads(assessment_row["assessment_json"]).get("rationale", ""),
-            topic_profile_sha256=assessment_row["topic_profile_sha256"]))
+            score_scale=assessment_row["score_scale"], rationale=assessment_record.get("rationale", ""),
+            topic_profile_sha256=assessment_row["topic_profile_sha256"], assessment_record=assessment_record))
     return list(latest_by_topic.values())
+
+
+def load_review_evidence_passages(connection: sqlite3.Connection, review_id: str) -> dict[str, EvidencePassage]:
+    return {row["passage_id"]: EvidencePassage(row["passage_id"], row["page_number"], row["section_title"],
+                                               row["passage_text"])
+            for row in connection.execute(
+                "SELECT * FROM review_evidence_passages WHERE review_id = ? ORDER BY passage_id", (review_id,))}

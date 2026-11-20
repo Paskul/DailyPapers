@@ -8,8 +8,11 @@ Replaces the part-5 placeholder that queued every collected paper. Now:
     its seven-day fresh window) or class 2, ordered by that score (paperwatch.dispatch_order). The promotion row
     keeps the normalized score, the raw score, and the pool size. The rest become `screened_out`: they stay
     searchable in SQLite, are rescored when the profile changes, and can be promoted on a later day;
-  * an already promoted paper whose text changes (a new arXiv version, an abstract appearing) gets its new reading
-    queued during ingestion without spending another slot: it was already chosen once.
+  * an already promoted paper whose text changes (a new arXiv version, an abstract appearing, or full text
+    extracted by the source-text stage) gets its new reading queued without spending another slot: it was already
+    chosen once;
+  * `collect` holds the readings it promotes until its source-text stage has run (paperwatch.readings), so the
+    worker reads the full text instead of the abstract when the PDF is fetched in the same run.
 The daily limit counts promotions per UTC day (like the candidate budget), and the selection plus its queueing commit
 in one write transaction, so two collectors running at once cannot exceed it. Active seeds and withdrawn works are
 never promoted. Source text is then acquired for the promoted papers by the same `collect` run.
@@ -82,7 +85,8 @@ def count_screening_promotions_today(connection: sqlite3.Connection, moment: dat
 
 def promote_screened_candidates(connection: sqlite3.Connection, screening_settings: ScreeningSettings,
                                 screening_outcome: CandidateScreeningOutcome, active_topic_ids: tuple[str, ...], *,
-                                max_attempts_per_job: int, moment: datetime | None = None) -> PromotionRunOutcome:
+                                max_attempts_per_job: int, moment: datetime | None = None,
+                                hold_new_readings_until: datetime | None = None) -> PromotionRunOutcome:
     moment = moment or utc_now()
     outcome = PromotionRunOutcome(daily_promotion_limit=screening_settings.daily_promotion_limit)
     with write_transaction(connection):
@@ -128,7 +132,8 @@ def promote_screened_candidates(connection: sqlite3.Connection, screening_settin
             _record_promotion(connection, decision.paper_id, decision.promotion_reason.value,
                               decision.selecting_topic_id, decision.best_topic_id, score_record, dispatch_order,
                               moment)
-            _queue_reading_and_mark_paper(connection, decision.paper_id, dispatch_order, max_attempts_per_job)
+            _queue_reading_and_mark_paper(connection, decision.paper_id, dispatch_order, max_attempts_per_job,
+                                          hold_until=hold_new_readings_until)
             outcome.promoted.append(decision)
 
         promoted_paper_ids = {decision.paper_id for decision in decisions}
@@ -185,9 +190,9 @@ def _record_promotion(connection: sqlite3.Connection, paper_id: str, promotion_r
 
 
 def _queue_reading_and_mark_paper(connection: sqlite3.Connection, paper_id: str, dispatch_order: JobDispatchOrder,
-                                  max_attempts: int) -> bool:
-    enqueue_outcome, _review_packet = enqueue_reading_if_needed(connection, paper_id, dispatch_order=dispatch_order,
-                                                                max_attempts=max_attempts)
+                                  max_attempts: int, hold_until: datetime | None = None) -> bool:
+    enqueue_outcome, _reading_input = enqueue_reading_if_needed(connection, paper_id, dispatch_order=dispatch_order,
+                                                                max_attempts=max_attempts, hold_until=hold_until)
     if enqueue_outcome == ReadingEnqueueOutcome.QUEUED:
         set_paper_status(connection, paper_id, "queued")
         return True
