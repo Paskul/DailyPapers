@@ -72,10 +72,11 @@ chgrp "$SHARED_GROUP" "$PAPERWATCH_HOME" "$PAPERWATCH_HOME/config.toml" "$PAPERW
 chmod 0750 "$PAPERWATCH_HOME"
 chmod 0640 "$PAPERWATCH_HOME/config.toml" "$PAPERWATCH_HOME/topics.toml"
 
-# state/: both services and the operator read and write SQLite and its -wal/-shm files (setgid keeps the group).
+# state/: both services and the operator read and write SQLite and its -wal/-shm files (setgid keeps the group),
+# and open the lock files (inference.lock; report-publication.lock from plan part 9) for writing.
 chown "$WORKER_ACCOUNT:$SHARED_GROUP" "$STATE_DIR"
 chmod 2770 "$STATE_DIR"
-find "$STATE_DIR" -maxdepth 1 -type f \( -name '*.sqlite3*' -o -name 'inference.lock' \) \
+find "$STATE_DIR" -maxdepth 1 -type f \( -name '*.sqlite3*' -o -name '*.lock' \) \
      -exec chgrp "$SHARED_GROUP" {} + -exec chmod 0660 {} +
 
 # state/cache/: written by the collector only, read by the worker.
