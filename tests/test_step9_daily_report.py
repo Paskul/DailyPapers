@@ -232,21 +232,21 @@ def test_kill_between_rename_and_database_update_republishes_the_same_bytes(app,
                                                                              monkeypatch):
     add_reviewed_papers(app, 3, strong=True)
     test_clock.advance(hours=HOURS_TO_PASS_THE_FIRST_CUTOFF)
-    original_write = report_command.write_bytes_atomically
+    original_write = report_command.write_output_file_atomically
 
-    def write_then_die(destination_path, file_bytes, **options):
-        original_write(destination_path, file_bytes, **options)
+    def write_then_die(destination_path, file_bytes):
+        original_write(destination_path, file_bytes)
         if destination_path.parent == app.config.daily_reports_dir:
             raise KeyboardInterrupt("killed right after the rename")
 
-    monkeypatch.setattr(report_command, "write_bytes_atomically", write_then_die)
+    monkeypatch.setattr(report_command, "write_output_file_atomically", write_then_die)
     with pytest.raises(KeyboardInterrupt):
         run_report_command(app, argparse.Namespace(report_date=FIRST_REPORT_DATE, publish_early=False))
     report_path = app.config.daily_reports_dir / f"{FIRST_REPORT_DATE}.md"
     bytes_before_kill = report_path.read_bytes()
     assert app.connection.execute("SELECT status FROM reports").fetchone()[0] == "pending"
 
-    monkeypatch.setattr(report_command, "write_bytes_atomically", original_write)
+    monkeypatch.setattr(report_command, "write_output_file_atomically", original_write)
     test_clock.advance(minutes=10)
     publish(app, FIRST_REPORT_DATE)
     assert report_path.read_bytes() == bytes_before_kill

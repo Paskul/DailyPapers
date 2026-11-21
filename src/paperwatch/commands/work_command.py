@@ -15,6 +15,10 @@ reclaimable quickly while a live worker keeps its job however long the model tak
 
 While no job is due, or while the model server is paused after an outage, the worker sleeps and issues zero
 inference calls. A paused server is re-probed with the cheap /health endpoint on an exponential back-off.
+
+Stopping (SIGTERM / SIGINT, e.g. the report service at the cutoff): a wait for the model is aborted at once
+(paperwatch.worker_stop), the current job goes back to the queue WITHOUT using an attempt, and the worker exits.
+Saved stage results of a long paper are kept, so the next run continues with the first missing section.
 """
 
 from __future__ import annotations
@@ -24,7 +28,6 @@ import logging
 import signal
 import sqlite3
 import sys
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -58,6 +61,8 @@ from paperwatch.review_store import insert_completed_reading
 from paperwatch.roles.base import run_role_with_one_repair
 from paperwatch.roles.comparison import COMPARISON_ROLE
 from paperwatch.roles.research import RESEARCH_ROLE
+from paperwatch.worker_stop import (WorkerStopRequested, request_worker_stop, reset_worker_stop_request,
+                                    stop_was_requested, wait_for_stop_request)
 
 LOGGER = logging.getLogger(__name__)
 RETRY_AFTER_LOCK_TIMEOUT_SECONDS = 5.0
@@ -90,6 +95,7 @@ class WorkCycleOutcome(StrEnum):
     JOB_RELEASED_UNCHARGED = "job_released_uncharged"  # e.g. inference lock busy; not the job's fault
     MODEL_SERVICE_PAUSED = "model_service_paused"
     LEASE_LOST = "lease_lost"  # another worker reclaimed the job; our result was discarded
+    STOPPED = "stopped"  # a stop request interrupted the job; it went back to the queue without using an attempt
 
 
 @dataclass(frozen=True)
@@ -269,6 +275,8 @@ def run_single_work_cycle(app: AppContext, *, probe_paused_model_now: bool) -> W
     except ModelServerUnavailable as outage:
         return WorkCycleReport(WorkCycleOutcome.MODEL_SERVICE_PAUSED, str(outage), failure=outage)
 
+    if stop_was_requested():  # a stop arrived during the health check: claim nothing new
+        return WorkCycleReport(WorkCycleOutcome.STOPPED, "stop requested; no job claimed")
     claimed_job = claim_next_due_job(app.connection, lease_duration_seconds=app.config.worker.lease_seconds)
     if claimed_job is None:
         return WorkCycleReport(WorkCycleOutcome.NO_JOB_DUE, "no job is due")
@@ -294,6 +302,7 @@ ACTIVITY_OUTCOME_BY_CYCLE_OUTCOME = {
     WorkCycleOutcome.JOB_RELEASED_UNCHARGED: "released",
     WorkCycleOutcome.MODEL_SERVICE_PAUSED: "paused",
     WorkCycleOutcome.LEASE_LOST: "lease_lost",
+    WorkCycleOutcome.STOPPED: "stopped",
 }
 
 
@@ -307,6 +316,8 @@ def _run_claimed_job(app: AppContext, claimed_job: ClaimedJob) -> WorkCycleRepor
                             lease_duration_seconds=app.config.worker.lease_seconds,
                             renewal_interval_seconds=app.config.worker.lease_renewal_interval_seconds):
             handler_result = job_handler(app, claimed_job)
+    except WorkerStopRequested as stop_request:
+        return _release_job_after_stop_request(app, claimed_job, stop_request)
     except PaperwatchError as failure:
         return _settle_failed_job(app, claimed_job, failure)
     except Exception as unexpected_exception:  # a bug: charge the attempt so it cannot loop forever
@@ -325,6 +336,27 @@ def _run_claimed_job(app: AppContext, claimed_job: ClaimedJob) -> WorkCycleRepor
             completion_message += f" (note not written yet: {output_failure}; `report` will restore it)"
     return WorkCycleReport(WorkCycleOutcome.JOB_COMPLETED, completion_message,
                            job_id=claimed_job.job_id, paper_id=claimed_job.paper_id)
+
+
+class JobInterruptedByStopRequest(PaperwatchError):
+    """Recorded as the job's last error when a stop request sent it back to the queue (no attempt is used)."""
+
+    failed_component = "worker"
+
+
+def _release_job_after_stop_request(app: AppContext, claimed_job: ClaimedJob,
+                                    stop_request: WorkerStopRequested) -> WorkCycleReport:
+    interruption = JobInterruptedByStopRequest(str(stop_request))
+    with write_transaction(app.connection):
+        released = release_job_without_charging_attempt(app.connection, claimed_job, interruption)
+        if released and claimed_job.paper_id and claimed_job.kind == REVIEW_PAPER_JOB_KIND:
+            set_paper_status(app.connection, claimed_job.paper_id, "queued")
+    message = (f"stopped during {claimed_job.kind} {claimed_job.job_id}; "
+               + ("it is back in the queue without using an attempt" if released
+                  else "its lease was already lost, so the newer worker's state is left untouched")
+               + "; saved reading stages are kept")
+    return WorkCycleReport(WorkCycleOutcome.STOPPED, message, job_id=claimed_job.job_id,
+                           paper_id=claimed_job.paper_id)
 
 
 def _settle_failed_job(app: AppContext, claimed_job: ClaimedJob, failure: PaperwatchError) -> WorkCycleReport:
@@ -368,6 +400,7 @@ EXIT_CODE_BY_OUTCOME = {
     WorkCycleOutcome.NO_JOB_DUE: 0,
     WorkCycleOutcome.JOB_COMPLETED: 0,
     WorkCycleOutcome.LEASE_LOST: 0,
+    WorkCycleOutcome.STOPPED: 0,
 }
 
 
@@ -383,25 +416,32 @@ def run_work_command(app: AppContext, arguments: argparse.Namespace) -> int:
 
 
 def _run_worker_loop(app: AppContext) -> int:
-    stop_requested = threading.Event()
+    reset_worker_stop_request()
 
     def request_stop(signal_number: int, _frame: object) -> None:
-        LOGGER.info("received signal %d; stopping after the current job", signal_number)
-        stop_requested.set()
+        LOGGER.info("received signal %d; stopping now (a wait for the model is aborted)", signal_number)
+        request_worker_stop()  # raises WorkerStopRequested if the main thread is waiting for the model
 
-    signal.signal(signal.SIGTERM, request_stop)
-    signal.signal(signal.SIGINT, request_stop)
-    print("paperwatch worker started; Ctrl+C or SIGTERM stops it after the current job", flush=True)
-
-    with recorded_activity(app.connection, "run", {"mode": "loop"}, component=COMPONENT_WORKER) as run_activity:
-        completed_job_count = 0
-        while not stop_requested.is_set():
-            cycle_report = run_single_work_cycle(app, probe_paused_model_now=False)
-            if cycle_report.outcome != WorkCycleOutcome.NO_JOB_DUE:
-                _print_cycle_report(cycle_report)
-            completed_job_count += cycle_report.outcome == WorkCycleOutcome.JOB_COMPLETED
-            stop_requested.wait(_seconds_until_next_cycle(app, cycle_report))
-        run_activity.add_detail(completed_jobs=completed_job_count)
+    previous_handlers = {signal_number: signal.signal(signal_number, request_stop)
+                         for signal_number in (signal.SIGTERM, signal.SIGINT)}
+    print("paperwatch worker started; Ctrl+C or SIGTERM stops it (the current job goes back to the queue)",
+          flush=True)
+    try:
+        with recorded_activity(app.connection, "run", {"mode": "loop"},
+                               component=COMPONENT_WORKER) as run_activity:
+            completed_job_count = 0
+            while not stop_was_requested():
+                cycle_report = run_single_work_cycle(app, probe_paused_model_now=False)
+                if cycle_report.outcome != WorkCycleOutcome.NO_JOB_DUE:
+                    _print_cycle_report(cycle_report)
+                completed_job_count += cycle_report.outcome == WorkCycleOutcome.JOB_COMPLETED
+                if cycle_report.outcome == WorkCycleOutcome.STOPPED:
+                    break
+                wait_for_stop_request(_seconds_until_next_cycle(app, cycle_report))
+            run_activity.add_detail(completed_jobs=completed_job_count)
+    finally:
+        for signal_number, previous_handler in previous_handlers.items():
+            signal.signal(signal_number, previous_handler)
     print("paperwatch worker stopped", flush=True)
     return 0
 

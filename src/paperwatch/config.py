@@ -154,8 +154,19 @@ class CollectionSettings:
     what is left after `current_release_reserved_candidates`, so it can never starve the day's new releases.
     """
 
-    daily_new_candidate_budget: int = 500  # per UTC day, across all topics and routes
+    # Owner decision 2026-11-21: 1000 (was 500). Screening 1000 candidates costs about a minute of CPU, and a larger
+    # pool gives a better daily top 30.
+    daily_new_candidate_budget: int = 1000  # per UTC day, across all topics and routes
     current_release_reserved_candidates: int = 200  # of the daily budget, kept for current releases
+    # Owner decision 2026-11-21 (after the first pilot, where cs.AI alone used the whole budget): arXiv category feeds
+    # and their missed-release recovery searches together admit at most this many per UTC day, split evenly across
+    # the approved categories (a category's unused share goes to the others). The rest of the daily budget is kept
+    # for the keyword routes (recent OpenAlex windows, the historical search). See collection/candidate_budget.py.
+    # A value above the daily budget means the feeds may use all of it.
+    category_feed_candidate_limit: int = 400  # 2026-11-21: 400 of the 1000 (was 250 of 500)
+    # Kept for the historical search each UTC day while some topic's historical plan still has work (owner decision
+    # 2026-11-21: in the first pilot the current releases used the whole budget and the history got 0 on every run).
+    historical_reserved_candidates: int = 100
     historical_candidates_per_topic: int = 300  # per initial (or materially changed) historical search of a topic
     # Recency-weighted historical windows (paperwatch.collection.recency_schedule): candidates per publication year
     # decay exponentially with age, halving every `historical_half_life_years`, down to the floor year.

@@ -16,14 +16,19 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from paperwatch.roles.answer_salvage import AnswerSalvage, DroppableListField, salvage_evidence_answer
 from paperwatch.roles.base import RoleDefinition, RoleInput
 from paperwatch.roles.evidence_fields import (AMBIGUOUS_PASSAGE_SCHEMA, EVIDENCE_RULES_FOR_PROMPTS, FINDING_SCHEMA,
-                                              INFERENCE_SCHEMA, PARSER_PROBLEM_SCHEMA, array_of, check_finding_list,
-                                              check_flagged_passages, check_inference_list)
+                                              INFERENCE_SCHEMA, PARSER_PROBLEM_SCHEMA, array_of, check_finding,
+                                              check_finding_list, check_flagged_passage, check_flagged_passages,
+                                              check_inference, check_inference_list)
 from paperwatch.roles.output_guards import find_invented_web_addresses
 
 SECTION_READER_ROLE_NAME = "section_reader"
-SECTION_READER_PROMPT_VERSION = "section-reader-v1"
+# v2 (2026-11-21): the evidence rules tell the model to cite the passage that holds a quoted number (tables are often
+# separate passages). v1 notes passed the same checks, so they are still reused (stage_results.py re-checks them).
+SECTION_READER_PROMPT_VERSION = "section-reader-v2"
+SECTION_READER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("section-reader-v1",)
 FINDING_KINDS = ("other", "research_question", "method", "assumption", "evaluation_setting", "result", "limitation")
 MAXIMUM_SECTION_FINDINGS = 10
 
@@ -91,6 +96,20 @@ def _find_section_reader_problems(validated_output: dict[str, Any], role_input: 
             + find_invented_web_addresses(validated_output, role_input))
 
 
+# "Fix, then drop" (roles/answer_salvage.py): every list of the notes may lose its failing items.
+SECTION_READER_DROPPABLE_FIELDS = (
+    DroppableListField("findings", check_finding, holds_findings=True),
+    DroppableListField("reviewer_inferences", check_inference),
+    DroppableListField("ambiguous_passages", check_flagged_passage),
+    DroppableListField("parser_problems", check_flagged_passage),
+)
+
+
+def _salvage_section_reader_answer(answer: dict[str, Any], role_input: RoleInput) -> AnswerSalvage | None:
+    return salvage_evidence_answer(answer, role_input, build_passage_text_by_id(role_input["passages"]),
+                                   SECTION_READER_DROPPABLE_FIELDS)
+
+
 SECTION_READER_ROLE = RoleDefinition(
     role_name=SECTION_READER_ROLE_NAME,
     prompt_version=SECTION_READER_PROMPT_VERSION,
@@ -98,4 +117,6 @@ SECTION_READER_ROLE = RoleDefinition(
     output_schema=SECTION_READER_OUTPUT_SCHEMA,
     render_user_message=_render_section_reader_user_message,
     find_semantic_problems=_find_section_reader_problems,
+    salvage_answer=_salvage_section_reader_answer,
+    reusable_earlier_prompt_versions=SECTION_READER_REUSABLE_EARLIER_PROMPT_VERSIONS,
 )

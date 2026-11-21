@@ -255,7 +255,7 @@ def test_status_shows_the_source_cache_and_the_last_successful_fetch_per_source(
 
 def test_the_new_operator_commands_may_reach_no_network(tmp_path):
     app = build_in_process_app(tmp_path / "home")
-    assert NO_NETWORK_COMMAND_NAMES == {"capacity", "backup", "label-sample"}
+    assert NO_NETWORK_COMMAND_NAMES == {"retry-failed", "capacity", "backup", "label-sample"}
     for command_name in NO_NETWORK_COMMAND_NAMES:
         policy = select_egress_policy_for_command(command_name, app.config)
         assert policy is not None and not policy.allowed_loopback_ports and not policy.allow_public_internet_https

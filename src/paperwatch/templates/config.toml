@@ -81,8 +81,11 @@ allow_lookup_by_seed_identifier = false   # true lets the collector look up a wo
 
 # What one `collect` run may admit and fetch Starting values; tune them with `paperwatch capacity`.
 [collection]
-daily_new_candidate_budget = 500          # papers new to the catalog per UTC day, from arXiv / OpenAlex routes
+daily_new_candidate_budget = 1000         # papers new to the catalog per UTC day, from arXiv / OpenAlex routes
 current_release_reserved_candidates = 200 # of those, kept for current releases; the historical search uses the rest
+category_feed_candidate_limit = 400       # of those, the most arXiv category feeds (+ recovery) may admit, split
+                                          #   evenly across categories; the rest is kept for keyword searches
+historical_reserved_candidates = 100      # of those, kept each day for the historical search while it has work
 historical_candidates_per_topic = 300     # per initial (or materially changed) historical search of a topic
 # The historical search weights publication years exponentially toward the present: candidates per year halve
 # every `historical_half_life_years`, down to `historical_earliest_year`. The curve is cut into

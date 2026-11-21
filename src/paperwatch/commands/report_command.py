@@ -30,7 +30,7 @@ from paperwatch.clock import utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
 from paperwatch.rendering.comparison_notes import restore_missing_comparison_notes
 from paperwatch.rendering.daily_report import render_daily_report
-from paperwatch.rendering.file_output import write_bytes_atomically
+from paperwatch.rendering.file_output import make_output_file_group_readable, write_output_file_atomically
 from paperwatch.rendering.notes import SelectedReview
 from paperwatch.rendering.review_notes import load_selected_review, write_paper_note_if_missing
 from paperwatch.reporting.publication_lock import hold_report_publication_lock
@@ -55,8 +55,9 @@ def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
         report_row = _load_report_row(app.connection, report_date)
         if report_row is not None and report_row["status"] == REPORT_STATUS_PUBLISHED:
             if not report_output_path.exists():  # restore a deleted file from the saved bytes
-                write_bytes_atomically(report_output_path, report_row["rendered_bytes"])
+                write_output_file_atomically(report_output_path, report_row["rendered_bytes"])
                 print(f"restored missing report file {report_output_path}")
+            make_output_file_group_readable(report_output_path)
             print(f"report for {report_date} already published: {report_output_path}")
             run_activity.end_as("already_published")
             return 0
@@ -128,7 +129,7 @@ def _publish_saved_report(app: AppContext, report_date: str, report_output_path:
         write_paper_note_if_missing(app.config.paper_notes_dir,
                                     load_selected_review(app.connection, previous_row["previous_review_id"]))
     restore_missing_comparison_notes(app.connection, app.config.comparison_notes_dir)
-    write_bytes_atomically(report_output_path, report_row["rendered_bytes"])
+    write_output_file_atomically(report_output_path, report_row["rendered_bytes"])
     app.connection.execute("UPDATE reports SET status = ?, published_at = ? WHERE report_date = ?",
                            (REPORT_STATUS_PUBLISHED, utc_now_timestamp(), report_date))
     return len(item_rows)

@@ -156,6 +156,23 @@ def run_historical_searches(context: CollectionContext) -> list[str]:
     return report_lines
 
 
+def historical_search_has_work(context: CollectionContext) -> bool:
+    """True while some topic's historical plan is not started yet, or has budget left and is not exhausted."""
+    query_catalog = build_public_query_catalog(context.app_config.topics)
+    schedule_settings = recency_schedule_settings(context.app_config.collection)
+    for topic in context.app_config.topics:
+        historical_queries = historical_queries_for_topic(topic.topic_id, query_catalog)
+        if not historical_queries:
+            continue
+        plan_checkpoint = load_source_checkpoint(context.connection,
+                                                 history_plan_key(topic.topic_id, historical_queries,
+                                                                  schedule_settings))
+        if plan_checkpoint is None or (plan_checkpoint.coverage_status != SearchCoverageStatus.EXHAUSTED
+                                       and plan_checkpoint.remaining_candidate_budget != 0):
+            return True
+    return False
+
+
 def run_topic_historical_search(context: CollectionContext, topic_id: str,
                                 historical_queries: list[PublicQuery]) -> str:
     collection_settings = context.app_config.collection

@@ -46,7 +46,7 @@ from paperwatch.db import write_transaction
 from paperwatch.readings import compute_source_text_hold_until, release_readings_held_for_source_text
 from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.current_releases import collect_current_releases
-from paperwatch.collection.historical_search import run_historical_searches
+from paperwatch.collection.historical_search import historical_search_has_work, run_historical_searches
 from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
 from paperwatch.collection.source_text import acquire_source_texts
 from paperwatch.comparisons.comparison_queue import queue_comparisons_for_recent_reviews
@@ -103,6 +103,9 @@ def _run_collect_stages(app: AppContext, build_gateway_once: Callable[[], Provid
         with stage("fixtures"):
             _import_recorded_fixtures(collection_context, fixture_paths)
     elif run_live_searches:
+        # Keep the day's historical reserve away from the current releases while some plan still has work.
+        collection_context.candidate_budget.historical_reserve_applies = \
+            historical_search_has_work(collection_context)
         with stage("current_releases"):
             _print_lines(collect_current_releases(collection_context))
         with stage("historical_search"):

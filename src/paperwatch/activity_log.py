@@ -34,6 +34,7 @@ from typing import Any
 from paperwatch.clock import format_utc_timestamp, utc_now, utc_now_timestamp
 from paperwatch.identifiers import new_internal_id
 from paperwatch.service_log_redaction import redact_service_log_text
+from paperwatch.worker_stop import WorkerStopRequested
 
 LOGGER = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ def recorded_activity(connection: sqlite3.Connection, step: str, detail: dict[st
         activity_id, component or (parent.component if parent else COMPONENT_OTHER)))
     try:
         yield handle
-    except (KeyboardInterrupt, SystemExit):
+    except (KeyboardInterrupt, SystemExit, WorkerStopRequested):
         finish_activity(connection, activity_id, OUTCOME_STOPPED, detail_update=handle.detail_update)
         raise
     except BaseException as step_error:

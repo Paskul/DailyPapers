@@ -23,10 +23,12 @@ from paperwatch.reading.reading_priority import RELATIVE_VALUE, ScoredTopicAsses
 from paperwatch.reading.reading_plan import COVERAGE_ABSTRACT_ONLY
 from paperwatch.reading.review_packet import ReviewPacket
 from paperwatch.reading.stage_results import (SYNTHESIS_STAGE_KEY, ReadingStageIdentity, SavedStageResult,
-                                              load_saved_stage_result, save_stage_result)
+                                              load_saved_stage_results, save_stage_result)
 from paperwatch.readings import select_edition_to_read
 from paperwatch.research_profile import build_research_profiles
-from paperwatch.roles.base import RoleDefinition, RoleInput, estimate_prompt_tokens, run_role_with_one_repair
+from paperwatch.errors import ModelOutputInvalid
+from paperwatch.roles.base import (RoleDefinition, RoleInput, estimate_prompt_tokens, parse_and_validate_role_output,
+                                   run_role_with_one_repair)
 from paperwatch.roles.reviewer import (READING_MODE_PASSAGES, READING_MODE_SECTION_NOTES, REVIEWER_ROLE,
                                        collect_cited_passage_ids)
 from paperwatch.roles.section_reader import SECTION_READER_ROLE
@@ -74,7 +76,7 @@ def read_paper(app: AppContext, packet: ReviewPacket, *, job_id: str | None) -> 
     review_content = synthesis.validated_output
     topic_assessments = _assess_topics(app, packet, review_content, job_id)
     return CompletedReading(
-        packet=packet, review_content=review_content, reviewer_prompt_version=REVIEWER_ROLE.prompt_version,
+        packet=packet, review_content=review_content, reviewer_prompt_version=synthesis.prompt_version,
         model_identity=synthesis.model_identity, server_build=synthesis.server_build,
         reading_record=_build_reading_record(packet, section_notes, review_content),
         topic_assessments=topic_assessments, topic_assessor_prompt_version=TOPIC_ASSESSOR_ROLE.prompt_version)
@@ -112,17 +114,30 @@ def _read_sections(app: AppContext, packet: ReviewPacket, stage_identity: Readin
 def _run_or_load_stage(app: AppContext, stage_identity: ReadingStageIdentity, stage_key: str,
                        role_definition: RoleDefinition, role_input: RoleInput,
                        job_id: str | None, stage_detail: dict[str, Any] | None = None) -> SavedStageResult:
-    """A saved result (an earlier attempt finished this stage) is reused without a model call or activity row."""
-    saved_result = load_saved_stage_result(app.connection, stage_identity, stage_key, role_definition.prompt_version)
-    if saved_result is not None:
-        return saved_result
+    """A saved result (an earlier attempt finished this stage) is reused without a model call or activity row. A result
+    of a reusable earlier prompt version is used only if it passes the role's current checks on this input."""
+    for saved_result in load_saved_stage_results(
+            app.connection, stage_identity, stage_key,
+            (role_definition.prompt_version, *role_definition.reusable_earlier_prompt_versions)):
+        if saved_result.prompt_version == role_definition.prompt_version or \
+                _passes_current_checks(role_definition, saved_result, role_input):
+            return saved_result
     with recorded_activity(app.connection, "reading_stage", stage_detail or {"stage": stage_key}):
         role_result = run_role_with_one_repair(role_definition=role_definition, role_input=role_input,
                                                app_config=app.config, model_client=app.model_client,
                                                connection=app.connection, job_id=job_id)
     save_stage_result(app.connection, stage_identity, stage_key, role_result, job_id)
     return SavedStageResult(role_result.validated_output, role_result.model_response.model_identity,
-                            role_result.model_response.server_build)
+                            role_result.model_response.server_build, role_result.prompt_version)
+
+
+def _passes_current_checks(role_definition: RoleDefinition, saved_result: SavedStageResult,
+                           role_input: RoleInput) -> bool:
+    try:
+        parse_and_validate_role_output(role_definition, json.dumps(saved_result.validated_output), role_input)
+    except ModelOutputInvalid:
+        return False
+    return True
 
 
 def _build_reviewer_input(app: AppContext, packet: ReviewPacket,

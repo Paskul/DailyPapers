@@ -11,7 +11,7 @@ import sqlite3
 from pathlib import Path
 
 from paperwatch.catalog import load_paper_aliases
-from paperwatch.rendering.file_output import write_bytes_atomically
+from paperwatch.rendering.file_output import make_output_file_group_readable, write_output_file_atomically
 from paperwatch.rendering.notes import SelectedReview, render_paper_note
 from paperwatch.review_store import load_latest_topic_assessments, load_review_evidence_passages
 from paperwatch.seeds.seed_items import build_seed_id
@@ -56,6 +56,7 @@ def write_paper_note_if_missing(paper_notes_dir: Path, selected_review: Selected
     """Notes are immutable per review revision: write or restore, never rewrite. Returns True if written."""
     note_path = paper_note_path(paper_notes_dir, selected_review)
     if note_path.exists():
+        make_output_file_group_readable(note_path)
         return False
-    write_bytes_atomically(note_path, render_paper_note(selected_review).encode("utf-8"))
+    write_output_file_atomically(note_path, render_paper_note(selected_review).encode("utf-8"))
     return True

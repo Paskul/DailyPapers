@@ -118,6 +118,7 @@ content_types = ["application/pdf"]
 max_response_bytes = 60_000_000
 max_decompressed_bytes = 60_000_000
 total_timeout_seconds = 300.0
+minimum_seconds_between_requests = 1.5    # the PDF host answered 429 to ~10 downloads 0.2 s apart (pilot, 2026-11-21)
 credential_required = true                # the content API needs a key; without one this route is skipped
 
 # ---- Zotero Web API: seed items of approved collections (read-only key) -----------------------------------------

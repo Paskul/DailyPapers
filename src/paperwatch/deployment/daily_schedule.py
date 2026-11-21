@@ -101,8 +101,8 @@ Type=simple
 {worker_identity}ExecStart={_command(paperwatch_executable, home, "work")}
 Restart=on-failure
 RestartSec=60
-# SIGTERM: the worker stops after its current job; a long model call is cut off after this (its lease expires and
-# the job resumes from its saved stages).
+# SIGTERM aborts a model call at once and puts the job back in the queue without using an attempt (it resumes from
+# its saved stages); this timeout is only the backstop if that ever hangs.
 TimeoutStopSec=60
 
 [Install]

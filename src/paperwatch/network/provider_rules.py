@@ -44,6 +44,9 @@ class OperationRule:
     request_header_names: frozenset[str] = frozenset()  # lowercase; extra headers a request may carry
     response_header_names: tuple[str, ...] = ()  # lowercase; response headers handed back to the caller
     cursor_paging_requires_credential: bool = False  # pages after the first need the provider's credential
+    # A longer spacing after a request of THIS operation than the provider's (e.g. OpenAlex's PDF host answered 429
+    # to ~10 downloads at the provider's 0.2 s spacing in the first pilot); None = the provider's spacing.
+    minimum_seconds_between_requests: float | None = None
 
     def describe(self) -> str:
         return f"{self.provider_name}/{self.operation}"
@@ -141,7 +144,8 @@ PROVIDER_KEYS = {"credential_kind", "credential_name", "credential_required", "f
                  "operations"}
 OPERATION_KEYS = {"host", "path_pattern", "query_parameters", "content_types", "max_response_bytes",
                   "max_decompressed_bytes", "total_timeout_seconds", "redirect_hosts", "credential_required",
-                  "request_headers", "response_headers", "cursor_paging_requires_credential"}
+                  "request_headers", "response_headers", "cursor_paging_requires_credential",
+                  "minimum_seconds_between_requests"}
 
 
 def _build_provider_rule(provider_name: str, raw_provider: Any) -> ProviderRule:
@@ -208,7 +212,10 @@ def _build_operation_rule(provider_name: str, operation: str, raw_operation: Any
             raw_operation.get("request_headers", []), f"{label} request_headers")),
         response_header_names=tuple(header_name.lower() for header_name in _require_string_list(
             raw_operation.get("response_headers", []), f"{label} response_headers")),
-        cursor_paging_requires_credential=bool(raw_operation.get("cursor_paging_requires_credential", False)))
+        cursor_paging_requires_credential=bool(raw_operation.get("cursor_paging_requires_credential", False)),
+        minimum_seconds_between_requests=None if "minimum_seconds_between_requests" not in raw_operation
+        else _require_number(raw_operation["minimum_seconds_between_requests"],
+                             f"{label} minimum_seconds_between_requests", float))
 
 
 def _validate_hostname(raw_host: Any, label: str) -> str:

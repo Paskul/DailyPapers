@@ -35,6 +35,13 @@ if ls "$UNIT_DIR"/paperwatch-pilot-* >/dev/null 2>&1; then
     echo "  sudo $REPOSITORY_DIR/deploy/pilot/stop_one_day_pilot.sh" >&2
     exit 1
 fi
+# An earlier pilot may have left units in systemd's memory after deleting their files (a timer still "active", a
+# killed worker "failed"); an "active" timer would ignore the new schedule, so clear them first.
+for leftover_unit in $(systemctl list-units --all --no-legend --plain 'paperwatch-pilot-*' | awk '{print $1}'); do
+    systemctl stop "$leftover_unit" 2>/dev/null || true
+    systemctl reset-failed "$leftover_unit" 2>/dev/null || true
+done
+systemctl daemon-reload
 
 echo "== 1. install the application read-only in $INSTALL_DIR"
 "$REPOSITORY_DIR/deploy/install_application.sh"

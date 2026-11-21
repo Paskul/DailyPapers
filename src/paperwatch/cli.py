@@ -1,11 +1,12 @@
-"""Command-line entry point: paperwatch [--home DIR] {init, doctor, collect, work, reread, report, status,
-access-check, capacity, backup, label-sample, monitor}.
+"""Command-line entry point: paperwatch [--home DIR] {init, doctor, collect, work, reread, retry-failed, report,
+status, access-check, capacity, backup, label-sample, monitor}.
 
 Every failure is printed as `paperwatch: FAILED [<component>] <message>` with a component-specific exit code
 (see paperwatch.errors), so the operator and systemd logs show which part broke.
 
 Before a command runs, its process arms one egress policy (paperwatch.network.egress_guard): only `collect` may
-reach paper providers; every other command may reach only the local model server; `init`, `capacity`, `backup`, and `label-sample` may reach nothing; `monitor`
+reach paper providers; every other command may reach only the local model server; `init`, `retry-failed`, `capacity`,
+`backup`, and `label-sample` may reach nothing; `monitor`
 connects nowhere (it only serves its page) and may start only `systemctl` for read-only state queries.
 """
 
@@ -30,6 +31,7 @@ from paperwatch.commands.doctor_command import run_doctor_command
 from paperwatch.commands.init_command import run_init_command
 from paperwatch.commands.report_command import run_report_command
 from paperwatch.commands.reread_command import run_reread_command
+from paperwatch.commands.retry_failed_command import add_retry_failed_arguments, run_retry_failed_command
 from paperwatch.commands.status_command import run_status_command
 from paperwatch.commands.work_command import run_work_command
 from paperwatch.config import AppConfig, load_app_config
@@ -47,6 +49,7 @@ COMMAND_RUNNERS: dict[str, Callable[[AppContext, argparse.Namespace], int]] = {
     "collect": run_collect_command,
     "work": run_work_command,
     "reread": run_reread_command,
+    "retry-failed": run_retry_failed_command,
     "report": run_report_command,
     "status": run_status_command,
     "access-check": run_access_check_command,
@@ -55,7 +58,8 @@ COMMAND_RUNNERS: dict[str, Callable[[AppContext, argparse.Namespace], int]] = {
     "label-sample": run_label_sample_command,
 }
 COLLECTOR_COMMAND_NAME = "collect"
-NO_NETWORK_COMMAND_NAMES = frozenset({"capacity", "backup", "label-sample"})  # local files and the database only
+# Local files and the database only:
+NO_NETWORK_COMMAND_NAMES = frozenset({"retry-failed", "capacity", "backup", "label-sample"})
 UNGUARDED_COMMAND_NAMES = frozenset({"access-check"})  # must try forbidden connections to prove the OS blocks them
 
 
@@ -83,6 +87,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     reread_parser = subcommands.add_parser("reread", help="queue a fresh reading of one paper (operator request)")
     reread_parser.add_argument("paper_id", metavar="PAPER_ID", help="internal paper id, e.g. p_3f9a1c0b7d2e4a51")
     reread_parser.add_argument("--reason", help="why the paper should be read again (stored with the job)")
+    retry_parser = subcommands.add_parser("retry-failed", help="put failed jobs back in the queue with fresh attempts "
+                                                               "(keeps their saved reading stages)")
+    add_retry_failed_arguments(retry_parser)
     report_parser = subcommands.add_parser("report", help="publish the daily Markdown report")
     report_parser.add_argument("--date", dest="report_date", metavar="YYYY-MM-DD",
                                help="reporting date (default: the latest date whose cutoff has passed)")

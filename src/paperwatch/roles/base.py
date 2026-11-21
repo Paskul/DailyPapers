@@ -15,6 +15,13 @@ receives plain data and has zero tools.
      in the activity log while it runs (the monitor shows the call in progress, including the wait for the lock).
 `run_role_with_one_repair` adds the plan's single bounded repair attempt: an invalid answer is sent back once, in a
 new fresh context, with the problems listed; a second invalid answer ends the job (ModelOutputRejectedAfterRepair).
+Roles with a `salvage_answer` (the evidence readers, roles/answer_salvage.py: "fix, then drop", owner decision
+2026-11-21) first try to correct an answer that fails only in some list items. The corrected answer must pass the
+role's complete checks again. It is used without a repair call when at most half of its items were dropped. After a
+repair call it is used whatever the share, and the corrected FIRST answer is the fallback when the repair fails.
+Every correction is logged with the call (model_calls.error_message, outcome ok).
+The wait for the model (reservation, lock, request) is an `interruptible_model_wait`, so a worker stop request aborts
+it at once instead of waiting for the end of the generation (paperwatch.worker_stop).
 Persisting the validated output is the caller's job, inside its own lease-checked transaction.
 A caller with an overall deadline (the report writer) passes `deadline_monotonic`: the lock wait and the call's time
 limit shrink to the time left, and no call starts after the deadline (ModelCallDeadlineExceeded).
@@ -27,7 +34,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
@@ -41,6 +48,10 @@ from paperwatch.llm.inference_lock import hold_inference_lock
 from paperwatch.llm.inference_reservation import wait_while_inference_is_reserved
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, record_service_outage, record_service_success
 from paperwatch.llm.types import ModelClient, StructuredChatRequest, StructuredChatResponse
+from paperwatch.worker_stop import interruptible_model_wait
+
+if TYPE_CHECKING:
+    from paperwatch.roles.answer_salvage import AnswerSalvage
 
 MAX_REPORTED_SCHEMA_ERRORS = 3
 MAX_REPORTED_SEMANTIC_PROBLEMS = 8
@@ -52,6 +63,11 @@ MAXIMUM_REJECTED_ANSWER_CHARACTERS_IN_REPAIR = 12_000
 REPAIR_PROMPT_VERSION_SUFFIX = "+repair"
 
 RoleInput = Mapping[str, Any]
+
+# When a salvaged (corrected) answer may be used instead of rejecting the call.
+SALVAGE_NEVER = "never"
+SALVAGE_IF_AT_MOST_HALF_DROPPED = "at_most_half_dropped"  # the first call: a repair is cheaper than losing more
+SALVAGE_ALWAYS = "always"  # the repair call: there is no further attempt
 
 
 def _no_semantic_problems(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:
@@ -66,6 +82,11 @@ class RoleDefinition:
     output_schema: dict[str, Any]
     render_user_message: Callable[[RoleInput], str]
     find_semantic_problems: Callable[[dict[str, Any], RoleInput], list[str]] = field(default=_no_semantic_problems)
+    # "Fix, then drop" (roles/answer_salvage.py); None: an answer that fails a host check is rejected as a whole.
+    salvage_answer: Callable[[dict[str, Any], RoleInput], AnswerSalvage | None] | None = None
+    # Earlier prompt versions whose saved stage results may still be reused, after passing today's checks again
+    # (paperwatch.reading.stage_results). Only for a prompt change that tightens guidance, never for a schema change.
+    reusable_earlier_prompt_versions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         Draft202012Validator.check_schema(self.output_schema)  # fail at import time on a malformed schema
@@ -77,6 +98,7 @@ class RoleRunResult:
     model_response: StructuredChatResponse
     role_name: str
     prompt_version: str
+    host_corrections: str | None = None  # what "fix, then drop" changed, if anything
 
 
 def estimate_prompt_tokens(*texts: str) -> int:
@@ -94,26 +116,52 @@ def run_role_with_one_repair(*, role_definition: RoleDefinition, role_input: Rol
                         deadline_monotonic=deadline_monotonic,
                         holds_inference_reservation=holds_inference_reservation)
     try:
-        return run_role_once(**call_options)
+        return run_role_once(**call_options, salvage_policy=SALVAGE_IF_AT_MOST_HALF_DROPPED)
     except ModelOutputInvalid as first_rejection:
         try:
-            return run_role_once(**call_options, rejected_first_answer=first_rejection)
+            return run_role_once(**call_options, rejected_first_answer=first_rejection,
+                                 salvage_policy=SALVAGE_ALWAYS)
         except ModelOutputInvalid as second_rejection:
+            if first_rejection.salvage is not None:
+                return _result_from_salvaged_first_answer(role_definition, first_rejection,
+                                                          f"the repair was rejected too ({second_rejection})")
             raise ModelOutputRejectedAfterRepair(
                 f"role '{role_definition.role_name}' answer still invalid after one repair attempt: "
                 f"{second_rejection} (first answer: {first_rejection})",
                 rejected_answer_text=second_rejection.rejected_answer_text,
                 problems=second_rejection.problems) from second_rejection
+        except PaperwatchError as repair_failure:  # e.g. the repair call timed out: the corrected answer is valid
+            if first_rejection.salvage is not None:
+                return _result_from_salvaged_first_answer(role_definition, first_rejection,
+                                                          f"the repair call failed ({repair_failure})")
+            raise
+
+
+def _result_from_salvaged_first_answer(role_definition: RoleDefinition, first_rejection: ModelOutputInvalid,
+                                       why_not_the_repair: str) -> RoleRunResult:
+    salvage = first_rejection.salvage
+    return RoleRunResult(validated_output=salvage.salvaged_output, model_response=first_rejection.model_response,
+                         role_name=role_definition.role_name, prompt_version=role_definition.prompt_version,
+                         host_corrections=f"{salvage.describe()}; used the corrected first answer because "
+                                          f"{why_not_the_repair}")
+
+
+def _salvage_is_acceptable(salvage: AnswerSalvage | None, salvage_policy: str) -> bool:
+    if salvage is None or salvage_policy == SALVAGE_NEVER:
+        return False
+    return salvage_policy == SALVAGE_ALWAYS or salvage.dropped_at_most_half
 
 
 def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app_config: AppConfig,
                   model_client: ModelClient, connection: sqlite3.Connection,
                   job_id: str | None = None, rejected_first_answer: ModelOutputInvalid | None = None,
                   deadline_monotonic: float | None = None,
-                  holds_inference_reservation: bool = False) -> RoleRunResult:
+                  holds_inference_reservation: bool = False,
+                  salvage_policy: str = SALVAGE_NEVER) -> RoleRunResult:
     """One request. With `rejected_first_answer` it is the repair request: the same input plus the rejected answer
     and its problems, in a new fresh context. `holds_inference_reservation` is True only for the holder of the
-    reservation (the report writer); every other caller yields to a reservation before taking the lock."""
+    reservation (the report writer); every other caller yields to a reservation before taking the lock.
+    `salvage_policy` says when a corrected answer (roles/answer_salvage.py) is returned instead of the rejection."""
     role_limits = app_config.limits_for_role(role_definition.role_name)
     user_message = role_definition.render_user_message(role_input)
     logged_prompt_version = role_definition.prompt_version
@@ -137,26 +185,36 @@ def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app
     activity_id = start_activity(connection, "model_call", {
         "role": role_definition.role_name, "repair": rejected_first_answer is not None, "job_id": job_id,
         "estimated_prompt_tokens": estimated_prompt_tokens, "timeout_seconds": int(call_timeout_seconds)})
+    host_corrections: str | None = None
     try:
-        if not holds_inference_reservation:
-            wait_while_inference_is_reserved(connection)  # plan part 9: the report gets the next slot
-        if deadline_monotonic is not None:
-            seconds_left = deadline_monotonic - time.monotonic()
-            if seconds_left <= 0:
-                raise ModelCallDeadlineExceeded(f"role '{role_definition.role_name}': the caller's deadline passed "
-                                                "before the call could start")
-            lock_wait_seconds = min(lock_wait_seconds, seconds_left)
-            call_timeout_seconds = min(call_timeout_seconds, seconds_left)
-        with hold_inference_lock(app_config.inference_lock_path, lock_wait_seconds):
-            if deadline_monotonic is not None:  # the wait for the lock used part of the time left
-                call_timeout_seconds = min(call_timeout_seconds, deadline_monotonic - time.monotonic())
-                if call_timeout_seconds <= 0:
+        with interruptible_model_wait():  # a worker stop request aborts the wait and the request (worker_stop.py)
+            if not holds_inference_reservation:
+                wait_while_inference_is_reserved(connection)  # plan part 9: the report gets the next slot
+            if deadline_monotonic is not None:
+                seconds_left = deadline_monotonic - time.monotonic()
+                if seconds_left <= 0:
                     raise ModelCallDeadlineExceeded(f"role '{role_definition.role_name}': the caller's deadline "
-                                                    "passed while waiting for the inference slot")
-            model_response = model_client.request_structured_completion(
-                _build_chat_request(role_definition, role_input, user_message, role_limits, call_timeout_seconds))
-        validated_output = parse_and_validate_role_output(role_definition, model_response.final_answer_text,
-                                                          role_input)
+                                                    "passed before the call could start")
+                lock_wait_seconds = min(lock_wait_seconds, seconds_left)
+                call_timeout_seconds = min(call_timeout_seconds, seconds_left)
+            with hold_inference_lock(app_config.inference_lock_path, lock_wait_seconds):
+                if deadline_monotonic is not None:  # the wait for the lock used part of the time left
+                    call_timeout_seconds = min(call_timeout_seconds, deadline_monotonic - time.monotonic())
+                    if call_timeout_seconds <= 0:
+                        raise ModelCallDeadlineExceeded(f"role '{role_definition.role_name}': the caller's "
+                                                        "deadline passed while waiting for the inference slot")
+                model_response = model_client.request_structured_completion(
+                    _build_chat_request(role_definition, role_input, user_message, role_limits,
+                                        call_timeout_seconds))
+        try:
+            validated_output = parse_and_validate_role_output(role_definition, model_response.final_answer_text,
+                                                              role_input)
+        except ModelOutputInvalid as rejection:
+            rejection.model_response = model_response
+            if not _salvage_is_acceptable(rejection.salvage, salvage_policy):
+                raise
+            validated_output = rejection.salvage.salvaged_output
+            host_corrections = rejection.salvage.describe()
     except PaperwatchError as call_error:
         _log_model_call(connection, role_definition.role_name, logged_prompt_version, job_id, call_started_at,
                         time.monotonic() - call_started_monotonic, model_response,
@@ -170,11 +228,14 @@ def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app
         raise
 
     _log_model_call(connection, role_definition.role_name, logged_prompt_version, job_id, call_started_at,
-                    time.monotonic() - call_started_monotonic, model_response, outcome="ok", error_message=None)
-    finish_activity(connection, activity_id, "ok", detail_update={"completion_tokens": model_response.completion_tokens})
+                    time.monotonic() - call_started_monotonic, model_response, outcome="ok",
+                    error_message=host_corrections)  # on success the column holds the host corrections, if any
+    finish_activity(connection, activity_id, "ok", note=host_corrections,
+                    detail_update={"completion_tokens": model_response.completion_tokens})
     record_service_success(connection, MODEL_SERVICE_NAME)
     return RoleRunResult(validated_output=validated_output, model_response=model_response,
-                         role_name=role_definition.role_name, prompt_version=role_definition.prompt_version)
+                         role_name=role_definition.role_name, prompt_version=role_definition.prompt_version,
+                         host_corrections=host_corrections)
 
 
 def _build_chat_request(role_definition: RoleDefinition, role_input: RoleInput, user_message: str,
@@ -217,9 +278,26 @@ def parse_and_validate_role_output(role_definition: RoleDefinition, final_answer
     semantic_problems = role_definition.find_semantic_problems(parsed_answer, role_input)
     if semantic_problems:
         reported_problems = semantic_problems[:MAX_REPORTED_SEMANTIC_PROBLEMS]
-        raise ModelOutputInvalid(f"role '{role_name}' answer failed host checks: {'; '.join(reported_problems)}",
-                                 rejected_answer_text=answer_text, problems=tuple(reported_problems))
+        rejection = ModelOutputInvalid(f"role '{role_name}' answer failed host checks: {'; '.join(reported_problems)}",
+                                       rejected_answer_text=answer_text, problems=tuple(reported_problems))
+        rejection.salvage = _salvage_that_passes_every_check(role_definition, parsed_answer, role_input)
+        raise rejection
     return parsed_answer
+
+
+def _salvage_that_passes_every_check(role_definition: RoleDefinition, parsed_answer: dict[str, Any],
+                                     role_input: RoleInput) -> AnswerSalvage | None:
+    """The role's corrected answer, only if it passes the schema and EVERY host check again; otherwise None."""
+    if role_definition.salvage_answer is None:
+        return None
+    salvage = role_definition.salvage_answer(parsed_answer, role_input)
+    if salvage is None:
+        return None
+    if any(Draft202012Validator(role_definition.output_schema).iter_errors(salvage.salvaged_output)):
+        return None
+    if role_definition.find_semantic_problems(salvage.salvaged_output, role_input):
+        return None
+    return salvage
 
 
 def _render_repair_request(rejected_answer: ModelOutputInvalid) -> str:
@@ -229,8 +307,9 @@ def _render_repair_request(rejected_answer: ModelOutputInvalid) -> str:
     return (f"\nREPAIR REQUEST: your previous answer to this input was rejected by automatic checks.\n"
             f"PROBLEMS:\n{problem_lines}\n"
             f"PREVIOUS ANSWER (rejected):\n{previous_answer or '(empty or cut off)'}\n"
-            "Return a corrected, complete JSON object that fixes every problem. Where the input cannot support a "
-            "claim, remove it or mark it as insufficient evidence instead of guessing.\n")
+            "Return a corrected, complete JSON object that fixes every problem. A quotation or number that is in a "
+            "different passage must cite THAT passage. Where the input cannot support a claim, remove it or mark it "
+            "as insufficient evidence instead of guessing.\n")
 
 
 def _strip_markdown_code_fence(answer_text: str) -> str:

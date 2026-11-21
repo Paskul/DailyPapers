@@ -17,11 +17,16 @@ tools, network access, or the ability to influence which requests are made.
 - **Topics defined your way**: by a private research question, by public search terms, by a set of seed papers from
   your Zotero library or a CSL JSON export, or any combination. Several topics can be active at once.
 - **Current and older work**: daily arXiv feeds and recent OpenAlex results, plus a bounded historical search that
-  leans toward recent work but still surfaces older influential papers.
+  leans toward recent work but still surfaces older influential papers. The arXiv feeds share a capped part of the
+  daily candidate budget fairly across categories, so one broad category (e.g. cs.AI) cannot crowd out the others or
+  the keyword searches.
 - **Cheap screening first**: a pinned sentence-embedding model (BAAI/bge-base-en-v1.5 on ONNX Runtime) ranks every
   candidate on the CPU, and only the day's best (30 by default, shared fairly across topics) go to the LLM.
 - **Evidence-backed reading**: the model reads the full text in bounded sections, and every finding must quote the
-  passage it comes from. Invented numbers, unknown passages, and unsupported claims are rejected.
+  passage it comes from. Invented numbers, unknown passages, and unsupported claims are rejected. When only a few
+  items of an answer fail, the host fixes a quote cited from the wrong passage (only when exactly one passage holds
+  it) and drops the items that still fail, instead of discarding the whole answer. Whatever is kept passes every
+  check.
 - **A transparent score**: each paper gets a 0-100 reading priority per topic, computed by code from the model's
   explained ratings (fit to the question, fit of method, strength of evidence, value relative to papers you already
   have).
@@ -30,7 +35,9 @@ tools, network access, or the ability to influence which requests are made.
 - **Notes you keep**: each review becomes a Markdown note, and the daily report links to them with relative links,
   so the output folder works as (or inside) an Obsidian vault.
 - **Built to run unattended**: crash-safe job queue, resumable collection, model outages handled by pausing (never by
-  falling back to a hosted model), and a fallback report if the writer cannot finish in time.
+  falling back to a hosted model), and a fallback report if the writer cannot finish in time. Stopping the worker
+  (Ctrl+C, SIGTERM) aborts a running model call at once and puts its job back in the queue without using an attempt.
+  Reports and notes are readable by the operator through the shared `paperwatch-state` group.
 
 ## How it works
 
@@ -189,6 +196,7 @@ With `[setup] monitor_service = true`, setup keeps it running as your user servi
 | `work [--once]` | Process queued readings, reference choices, and comparisons. Several workers can run at once. |
 | `report [--date D] [--early]` | Publish the daily report for a date (default: the latest date whose cutoff has passed). |
 | `reread PAPER_ID` | Request a fresh reading of a paper. |
+| `retry-failed [--component C] [--job ID] [--dry-run]` | Put failed jobs back in the queue with fresh attempts, keeping their saved reading stages (default: failures of the model's answers). |
 | `status` | Overview of topics, seed sources, papers, queue, searches, provider budgets, and the last report. |
 | `capacity` | Measured model time per role and per paper, and an estimate of how many readings fit in a day. |
 | `backup DIR` / `backup --check-restore DIR` | Write a consistent snapshot (no credentials, no raw PDFs) / verify that a copy restores. |

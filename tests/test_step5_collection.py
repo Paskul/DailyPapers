@@ -394,8 +394,9 @@ def test_a_seeds_only_topic_uses_category_and_year_queries_for_history(tmp_path,
 
 
 def test_the_daily_budget_reserves_capacity_for_current_releases_and_records_the_overflow(tmp_path, providers):
-    app = open_app(tmp_path, daily_new_candidate_budget=("500", "4"),
-                   current_release_reserved_candidates=("200", "3"))
+    app = open_app(tmp_path, daily_new_candidate_budget=("1000", "4"),
+                   current_release_reserved_candidates=("200", "3"), category_feed_candidate_limit=("400", "3"),
+                   historical_reserved_candidates=("100", "0"))
     try:
         feed_papers = [synthetic_paper(f"2611.0100{index}", date(2026, 11, 13)) for index in range(2)]
         providers.feeds["cs.RO"] = (date(2026, 11, 16), [FeedItem(paper, "new") for paper in feed_papers])
@@ -414,6 +415,31 @@ def test_the_daily_budget_reserves_capacity_for_current_releases_and_records_the
         assert feed_checkpoint.coverage_status == "capped" and feed_checkpoint.cursor is None
         [recovery_checkpoint] = load_source_checkpoints_with_prefix(app.connection, "arxiv-recovery:")
         assert recovery_checkpoint.coverage_status in ("active", "capped")
+    finally:
+        app.close()
+
+
+def test_category_feeds_share_their_limit_fairly_and_a_share_cut_schedules_no_recovery(tmp_path, providers):
+    """Owner decision 2026-11-21: a broad feed (cs.AI) can no longer take the whole budget; within its share it
+    admits the papers that share the most words with the topic, and the rest is a chosen limit, not a gap."""
+    two_category_topics = TOPICS.replace('arxiv_categories = ["cs.RO"]', 'arxiv_categories = ["cs.AI", "cs.RO"]')
+    app = open_app(tmp_path, topics_toml=two_category_topics, category_feed_candidate_limit=("400", "4"))
+    try:
+        broad_feed = [synthetic_paper(f"2611.0400{index}", date(2026, 11, 13), phrase=index in (4, 5))
+                      for index in range(6)]
+        narrow_feed = [synthetic_paper("2611.04100", date(2026, 11, 13))]
+        providers.feeds["cs.AI"] = (date(2026, 11, 16), [FeedItem(paper, "new") for paper in broad_feed])
+        providers.feeds["cs.RO"] = (date(2026, 11, 16), [FeedItem(paper, "new") for paper in narrow_feed])
+        collect(app, providers)
+
+        # water_fill(4, {cs.AI: 6, cs.RO: 1}): cs.RO needs only 1, so cs.AI gets the other 3.
+        admitted_broad = _arxiv_ids_from_route(app, "arxiv-feed:cs.AI")
+        assert len(admitted_broad) == 3 and {"2611.04004", "2611.04005"} <= set(admitted_broad)
+        assert _arxiv_ids_from_route(app, "arxiv-feed:cs.RO") == {"2611.04100"}
+        assert load_source_checkpoints_with_prefix(app.connection, "arxiv-recovery:") == []
+        broad_checkpoint = load_source_checkpoint(app.connection, "arxiv-feed:cs.AI")
+        assert broad_checkpoint.coverage_status == "exhausted" and broad_checkpoint.cursor  # ETag kept
+        assert "fair share of the category feeds reached: 3 new record(s)" in broad_checkpoint.stop_reason
     finally:
         app.close()
 
@@ -578,7 +604,7 @@ def test_collect_twice_in_a_row_admits_nothing_new_and_status_shows_coverage(app
     assert "arXiv feed cs.RO: last complete poll 2026-11-16T11:00:00Z" in status_output
     assert "Historical search team-safety:" in status_output and "window searches:" in status_output
     assert "OpenAlex recent \"runtime assurance\" [team-safety]" in status_output
-    assert "Source text:" in status_output and "Collection: 2 of 500 new candidate(s)" in status_output
+    assert "Source text:" in status_output and "Collection: 2 of 1000 new candidate(s)" in status_output
 
 
 def test_collection_context_counts_todays_candidates_from_the_catalog(app, providers):

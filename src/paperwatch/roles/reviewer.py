@@ -25,16 +25,22 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from paperwatch.roles.answer_salvage import AnswerSalvage, DroppableListField, salvage_evidence_answer
 from paperwatch.roles.base import RoleDefinition, RoleInput
 from paperwatch.roles.evidence_fields import (AMBIGUOUS_PASSAGE_SCHEMA, EVIDENCE_RULES_FOR_PROMPTS, FINDING_SCHEMA,
                                               INFERENCE_SCHEMA, LIMITATION_SCHEMA, PARSER_PROBLEM_SCHEMA,
-                                              STATEMENT_SCHEMA, array_of, check_finding_list, check_flagged_passages,
-                                              check_inference_list, check_limitation_list, check_statement)
+                                              STATEMENT_SCHEMA, array_of, check_finding, check_finding_list,
+                                              check_flagged_passage, check_flagged_passages, check_inference,
+                                              check_inference_list, check_limitation, check_limitation_list,
+                                              check_statement)
 from paperwatch.roles.output_guards import find_invented_web_addresses
 from paperwatch.reading.evidence_checks import check_numbers_occur_in_passages
 
 REVIEWER_ROLE_NAME = "reviewer"
-REVIEWER_PROMPT_VERSION = "reviewer-evidence-v1"  # part 7: passage ids, excerpts, separate topic assessment
+# v1 (part 7): passage ids, excerpts, separate topic assessment. v2 (2026-11-21): the evidence rules tell the model
+# to cite the passage that holds a quoted number; v1 syntheses are still reused after passing today's checks.
+REVIEWER_PROMPT_VERSION = "reviewer-evidence-v2"
+REVIEWER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("reviewer-evidence-v1",)
 READING_MODE_PASSAGES = "passages"
 READING_MODE_SECTION_NOTES = "section_notes"
 MAXIMUM_RESULTS = 8
@@ -132,6 +138,22 @@ def _find_reviewer_problems(validated_output: dict[str, Any], role_input: RoleIn
     return problems
 
 
+# "Fix, then drop" (roles/answer_salvage.py). The three single statements (research question, method, evaluation
+# setting) and the summary cannot be dropped: a problem there still needs the repair call.
+REVIEWER_DROPPABLE_FIELDS = (
+    DroppableListField("assumptions", check_statement),
+    DroppableListField("results", check_finding, holds_findings=True),
+    DroppableListField("limitations", check_limitation),
+    DroppableListField("reviewer_inferences", check_inference),
+    DroppableListField("ambiguous_passages", check_flagged_passage),
+    DroppableListField("parser_problems", check_flagged_passage),
+)
+
+
+def _salvage_reviewer_answer(answer: dict[str, Any], role_input: RoleInput) -> AnswerSalvage | None:
+    return salvage_evidence_answer(answer, role_input, role_input["citable_passages"], REVIEWER_DROPPABLE_FIELDS)
+
+
 REVIEWER_ROLE = RoleDefinition(
     role_name=REVIEWER_ROLE_NAME,
     prompt_version=REVIEWER_PROMPT_VERSION,
@@ -139,4 +161,6 @@ REVIEWER_ROLE = RoleDefinition(
     output_schema=REVIEWER_OUTPUT_SCHEMA,
     render_user_message=_render_reviewer_user_message,
     find_semantic_problems=_find_reviewer_problems,
+    salvage_answer=_salvage_reviewer_answer,
+    reusable_earlier_prompt_versions=REVIEWER_REUSABLE_EARLIER_PROMPT_VERSIONS,
 )

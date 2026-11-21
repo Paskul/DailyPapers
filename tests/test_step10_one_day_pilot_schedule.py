@@ -132,6 +132,10 @@ def test_the_finish_step_disables_and_deletes_every_pilot_unit(pilot):
     assert all(timer_name in disabled_units for timer_name in PILOT_TIMER_NAMES)
     assert any(command.endswith(f"stop {WORKER_SERVICE}") for command in commands)
     assert commands.index(removal_command) < commands.index("/usr/bin/systemctl daemon-reload")
+    # Nothing stays in systemd's memory: the finish timer is stopped and failed states are reset before deletion.
+    assert commands.index(f"-/usr/bin/systemctl stop --no-block {FINISH_TIMER}") < commands.index(removal_command)
+    reset_command = next(command for command in commands if command.startswith("-/usr/bin/systemctl reset-failed "))
+    assert set(reset_command.split()[2:]) == set(ALL_PILOT_UNIT_NAMES)
 
 
 def test_paperwatch_runs_only_as_the_service_accounts_and_the_model_side_is_sandboxed(pilot):

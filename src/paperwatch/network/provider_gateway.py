@@ -266,7 +266,8 @@ class ProviderGateway:
                 self._connection, provider_name=provider_rule.provider_name,
                 daily_request_budget=provider_rule.effective_daily_request_budget(
                     self._credentials.get(provider_rule.provider_name, CREDENTIAL_SECRET_FIELD) is not None),
-                minimum_seconds_between_requests=provider_rule.minimum_seconds_between_requests)
+                minimum_seconds_between_requests=max(provider_rule.minimum_seconds_between_requests,
+                                                     operation_rule.minimum_seconds_between_requests or 0.0))
         except SourceRequestBudgetExhausted as budget_error:
             log_hop("budget_exhausted", error_message=str(budget_error))
             raise

@@ -20,12 +20,13 @@ from datetime import date
 
 from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.page_ingestion import PageIngestionResult, ingest_records_with_checkpoints
+from paperwatch.collection.topic_word_ranking import rank_records_by_topic_words, topic_words_for_category
 from paperwatch.db import write_transaction
 from paperwatch.errors import (PaperwatchError, ProviderUnavailable, SourceAccessDenied, SourceCredentialRequired,
                                SourceInputError)
 from paperwatch.network.provider_requests import PublicationWindow, SearchResultOrder
 from paperwatch.source_checkpoints import SearchCoverageStatus, SourceCheckpoint, save_source_checkpoint
-from paperwatch.sources.discovery_routes import RouteKind
+from paperwatch.sources.discovery_routes import RouteKind, arxiv_category_of_route
 from paperwatch.sources.search_pages import fetch_search_page
 
 STOP_REASON_DAILY_BUDGET = "daily candidate budget reached; resumes when capacity returns (next UTC day)"
@@ -114,8 +115,8 @@ def run_search_pages(context: CollectionContext, checkpoint: SourceCheckpoint, t
         if admission_limit == 0:
             checkpoint = _save_checkpoint_alone(context, replace(
                 checkpoint, coverage_status=SearchCoverageStatus.CAPPED,
-                stop_reason=STOP_REASON_DAILY_BUDGET if context.candidate_budget.remaining_for(target.route_kind) == 0
-                else extra_limit_stop_reason))
+                stop_reason=STOP_REASON_DAILY_BUDGET if context.candidate_budget.remaining_for_route(
+                    target.discovery_route) == 0 else extra_limit_stop_reason))
             break
         try:
             parsed_page = fetch_search_page(context.gateway, provider_name=target.provider_name,
@@ -139,8 +140,8 @@ def run_search_pages(context: CollectionContext, checkpoint: SourceCheckpoint, t
 
         def checkpoints_after_this_page(page_result: PageIngestionResult) -> list[SourceCheckpoint]:
             """Runs inside the page's transaction (called synchronously by the ingestion below)."""
-            stop_reason_if_cut_short = STOP_REASON_DAILY_BUDGET if context.candidate_budget.remaining_for(
-                target.route_kind) <= page_result.new_papers_admitted else extra_limit_stop_reason
+            stop_reason_if_cut_short = STOP_REASON_DAILY_BUDGET if context.candidate_budget.remaining_for_route(
+                target.discovery_route) <= page_result.new_papers_admitted else extra_limit_stop_reason
             advanced_checkpoint = _advance_checkpoint_after_page(context, checkpoint, parsed_page.next_cursor,
                                                                  parsed_page.total_results, page_result,
                                                                  stop_reason_if_cut_short)
@@ -148,13 +149,18 @@ def run_search_pages(context: CollectionContext, checkpoint: SourceCheckpoint, t
             return [advanced_checkpoint] + (related_checkpoints_after_page(page_result)
                                             if related_checkpoints_after_page else [])
 
+        page_records = parsed_page.records
+        arxiv_category = arxiv_category_of_route(target.discovery_route)
+        if arxiv_category is not None:  # a category route admits its best topic matches first (fair-share cap)
+            page_records = rank_records_by_topic_words(page_records, topic_words_for_category(
+                context.app_config.topics, arxiv_category))
         page_result = ingest_records_with_checkpoints(
-            context.connection, parsed_page.records, admission_limit=admission_limit,
+            context.connection, page_records, admission_limit=admission_limit,
             active_seed_paper_ids=context.active_seed_paper_ids,
             max_attempts_per_job=context.app_config.worker.max_attempts_per_job,
             checkpoints_after_page=checkpoints_after_this_page)
         page_result.skipped_malformed_records += sum(parsed_page.skipped_entry_counts.values())
-        context.candidate_budget.record_admissions(target.route_kind, page_result.new_papers_admitted)
+        context.candidate_budget.record_route_admissions(target.discovery_route, page_result.new_papers_admitted)
         summary.ingestion.add(page_result)
         checkpoint = checkpoints_saved_with_page[-1]
     summary.final_checkpoint = checkpoint
@@ -189,7 +195,7 @@ def _advance_checkpoint_after_page(context: CollectionContext, page_checkpoint: 
 
 def _current_admission_limit(context: CollectionContext, checkpoint: SourceCheckpoint, target: SearchTarget,
                              extra_limit: int | None) -> int:
-    limits = [context.candidate_budget.remaining_for(target.route_kind)]
+    limits = [context.candidate_budget.remaining_for_route(target.discovery_route)]
     if checkpoint.remaining_candidate_budget is not None:
         limits.append(checkpoint.remaining_candidate_budget)
     if extra_limit is not None:

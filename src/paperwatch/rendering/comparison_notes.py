@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from paperwatch.catalog import load_paper_aliases
-from paperwatch.rendering.file_output import write_bytes_atomically
+from paperwatch.rendering.file_output import make_output_file_group_readable, write_output_file_atomically
 from paperwatch.rendering.markdown_safety import escape_untrusted_inline_text
 from paperwatch.rendering.notes import ATTRIBUTION_NOTE, render_code_span, render_source_links
 from paperwatch.review_store import load_review_evidence_passages
@@ -32,8 +32,9 @@ def write_comparison_note_if_missing(connection: sqlite3.Connection, comparison_
                                      comparison_id: str) -> bool:
     note_path = comparison_note_path(comparison_notes_dir, comparison_id)
     if note_path.exists():
+        make_output_file_group_readable(note_path)
         return False
-    write_bytes_atomically(note_path, render_comparison_note(connection, comparison_id).encode("utf-8"))
+    write_output_file_atomically(note_path, render_comparison_note(connection, comparison_id).encode("utf-8"))
     return True
 
 

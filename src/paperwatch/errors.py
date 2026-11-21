@@ -10,6 +10,8 @@ Three class attributes drive recovery behaviour in the worker:
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class PaperwatchError(Exception):
     failed_component: str = "paperwatch"
@@ -56,6 +58,10 @@ class ModelOutputInvalid(PaperwatchError):
         super().__init__(message, operator_hint=operator_hint)
         self.rejected_answer_text = rejected_answer_text
         self.problems = problems or (message,)
+        # Set by paperwatch.roles.base: a corrected version of the answer that passes every host check (roles that
+        # support "fix, then drop", roles/answer_salvage.py), and the response it came from.
+        self.salvage: Any = None
+        self.model_response: Any = None
 
 
 class ModelOutputRejectedAfterRepair(ModelOutputInvalid):

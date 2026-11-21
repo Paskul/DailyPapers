@@ -60,6 +60,14 @@ def classify_discovery_route(route: str) -> RouteKind:
     return RouteKind.OTHER
 
 
+def arxiv_category_of_route(route: str) -> str | None:
+    """The category of an arXiv category route (its feed or its missed-release recovery); None for other routes."""
+    for category_route_prefix in (ARXIV_FEED_ROUTE_PREFIX, ARXIV_RECOVERY_ROUTE_PREFIX):
+        if route.startswith(category_route_prefix):
+            return route.removeprefix(category_route_prefix) or None
+    return None
+
+
 def arxiv_feed_route(arxiv_category: str) -> str:
     return f"{ARXIV_FEED_ROUTE_PREFIX}{arxiv_category}"
 

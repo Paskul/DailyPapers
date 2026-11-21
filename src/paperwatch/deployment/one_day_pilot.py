@@ -156,6 +156,7 @@ def render_pilot_units(plan: OneDayPilotPlan) -> dict[str, str]:
     collect_calendar_lines = "\n".join(f"OnCalendar={systemd_calendar_time(moment, plan.timezone_name)}"
                                        for moment in plan.collect_moments)
     unit_paths = " ".join(f"/etc/systemd/system/{unit_name}" for unit_name in ALL_PILOT_UNIT_NAMES)
+    unit_names = " ".join(ALL_PILOT_UNIT_NAMES)
     stamp_paths = " ".join(str(SYSTEMD_TIMER_STAMP_DIR / f"stamp-{timer_name}") for timer_name in PILOT_TIMER_NAMES)
     units = {
         COLLECT_SERVICE: f"""{notice}
@@ -202,7 +203,8 @@ Type=simple
 ExecStart={_paperwatch_command(plan, "work")}
 Restart=on-failure
 RestartSec=60
-# SIGTERM: the worker stops after its current job; a long model call is cut off after this (its lease expires).
+# SIGTERM aborts a model call at once and puts the job back in the queue without using an attempt; this is only
+# the backstop if that ever hangs.
 TimeoutStopSec=60
 """,
         REPORT_SERVICE: f"""{notice}
@@ -242,9 +244,13 @@ Type=oneshot
 ExecStart=-/usr/bin/systemctl stop {WORKER_SERVICE}
 ExecStart=-/usr/bin/systemctl disable --now {COLLECT_TIMER} {REPORT_TIMER}
 ExecStart=-/usr/bin/systemctl disable {FINISH_TIMER}
+# Leave no state in systemd's memory either (first pilot, 2026-11-21: the finish timer stayed "active (running)" and
+# the killed worker "failed" after their files were gone). Stopping the timer does not stop this service.
+ExecStart=-/usr/bin/systemctl stop --no-block {FINISH_TIMER}
+ExecStart=-/usr/bin/systemctl reset-failed {unit_names}
 ExecStart=/usr/bin/rm -f {unit_paths} {stamp_paths}
 ExecStart=/usr/bin/systemctl daemon-reload
-ExecStart=/usr/bin/systemctl reset-failed
+ExecStart=-/usr/bin/systemctl reset-failed
 """,
         FINISH_TIMER: f"""{notice}
 [Unit]
