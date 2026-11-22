@@ -19,7 +19,8 @@ Roles with a `salvage_answer` (the evidence readers, roles/answer_salvage.py: "f
 2026-11-21) first try to correct an answer that fails only in some list items. The corrected answer must pass the
 role's complete checks again. It is used without a repair call when at most half of its items were dropped. After a
 repair call it is used whatever the share, and the corrected FIRST answer is the fallback when the repair fails.
-Every correction is logged with the call (model_calls.error_message, outcome ok).
+Every correction is logged with the call (model_calls.error_message, outcome ok). The answer as received is kept in
+model_calls.answer_text whenever the host rejected or corrected it, so changed checks can be replayed on real answers.
 The wait for the model (reservation, lock, request) is an `interruptible_model_wait`, so a worker stop request aborts
 it at once instead of waiting for the end of the generation (paperwatch.worker_stop).
 Persisting the validated output is the caller's job, inside its own lease-checked transaction.
@@ -66,6 +67,7 @@ MAX_REPORTED_SEMANTIC_PROBLEMS = 8
 CHARACTERS_PER_TOKEN_ESTIMATE = 3.5
 CHAT_TEMPLATE_OVERHEAD_TOKENS = 200
 MAXIMUM_REJECTED_ANSWER_CHARACTERS_IN_REPAIR = 12_000
+MAXIMUM_SAVED_ANSWER_CHARACTERS = 200_000  # model_calls.answer_text; answers are bounded by max_output_tokens anyway
 REPAIR_PROMPT_VERSION_SUFFIX = "+repair"
 
 RoleInput = Mapping[str, Any]
@@ -275,6 +277,7 @@ def run_role_once(
             model_response,
             outcome=call_error.model_call_outcome,
             error_message=str(call_error),
+            answer_text=call_error.rejected_answer_text if isinstance(call_error, ModelOutputInvalid) else None,
         )
         if call_error.is_service_outage:
             record_service_outage(connection, MODEL_SERVICE_NAME, str(call_error), app_config.model)
@@ -294,6 +297,7 @@ def run_role_once(
         model_response,
         outcome="ok",
         error_message=host_corrections,
+        answer_text=model_response.final_answer_text if host_corrections is not None else None,
     )  # on success the column holds the host corrections, if any
     finish_activity(
         connection,
@@ -429,13 +433,15 @@ def _log_model_call(
     *,
     outcome: str,
     error_message: str | None,
+    answer_text: str | None = None,
 ) -> None:
     timings = model_response.server_timings if model_response else ServerTimings()
     connection.execute(
         """INSERT INTO model_calls (call_id, role_name, prompt_version, job_id, model_identity, server_build,
                started_at, duration_seconds, outcome, prompt_tokens, completion_tokens, error_message,
-               prompt_seconds, generation_seconds, cached_prompt_tokens, draft_tokens, draft_tokens_accepted)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               prompt_seconds, generation_seconds, cached_prompt_tokens, draft_tokens, draft_tokens_accepted,
+               answer_text)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             new_internal_id(MODEL_CALL_ID_PREFIX),
             role_name,
@@ -454,5 +460,6 @@ def _log_model_call(
             timings.cached_prompt_tokens,
             timings.draft_tokens,
             timings.draft_tokens_accepted,
+            answer_text[:MAXIMUM_SAVED_ANSWER_CHARACTERS] if answer_text else None,
         ),
     )

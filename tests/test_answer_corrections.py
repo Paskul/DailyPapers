@@ -5,6 +5,7 @@ joined ids     the reviewer joined passage ids into one entry ("P18P19", "'P19',
 numbers        a statement stated a number from a passage it did not cite: the ONE passage that states it is added;
                a model name such as "GPT-6" is not a stated number
 writer         the writer's answer gets "fix, then drop": miscited excerpts move, failing reasons and findings drop
+saved answers  a rejected or corrected answer is kept in model_calls.answer_text for offline replay
 """
 
 from __future__ import annotations
@@ -13,13 +14,15 @@ import json
 from typing import Any
 
 import pytest
+from conftest import build_in_process_app
 from test_daily_report import WRITER_INPUT, validate_writer_answer, writer_answer
 from test_model_contract import INSUFFICIENT
 
 from paperwatch.errors import ModelOutputInvalid
+from paperwatch.llm.fake_client import FakeModelClient
 from paperwatch.reading.evidence_checks import find_numbers_needing_evidence
 from paperwatch.roles.answer_salvage import split_joined_passage_ids
-from paperwatch.roles.base import parse_and_validate_role_output
+from paperwatch.roles.base import parse_and_validate_role_output, run_role_with_one_repair
 from paperwatch.roles.reviewer import REVIEWER_ROLE
 from paperwatch.roles.writer import WRITER_ROLE
 
@@ -232,3 +235,34 @@ def test_a_writer_overview_that_still_fails_needs_the_repair():
 
 def test_a_valid_writer_answer_is_unchanged():
     assert validate_writer_answer(writer_answer()) == writer_answer()
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# Saved answers
+# --------------------------------------------------------------------------------------------------------------------
+
+
+def test_rejected_and_corrected_answers_are_kept_for_replay(tmp_path):
+    invented = json.dumps(reviewer_answer("LoRA with rank 64 on agent traces.", ["P1"]))
+    corrected = json.dumps(reviewer_answer("LoRA with rank 16 on agent traces.", ["P1"]))
+    fake_model = FakeModelClient()
+    fake_model._canned_final_answers_by_role["reviewer"] = [invented, corrected]
+    app = build_in_process_app(tmp_path / "home", model_client=fake_model)
+    try:
+        result = run_role_with_one_repair(
+            role_definition=REVIEWER_ROLE,
+            role_input=REVIEWER_INPUT,
+            app_config=app.config,
+            model_client=fake_model,
+            connection=app.connection,
+        )
+        assert result.validated_output["method"]["supporting_passage_ids"] == ["P1", "P2"]
+        call_rows = app.connection.execute(
+            "SELECT outcome, answer_text FROM model_calls ORDER BY started_at, rowid"
+        ).fetchall()
+        assert [(row["outcome"], row["answer_text"]) for row in call_rows] == [
+            ("invalid_output", invented),
+            ("ok", corrected),
+        ]
+    finally:
+        app.close()

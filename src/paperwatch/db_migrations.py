@@ -819,6 +819,13 @@ ALTER TABLE model_calls ADD COLUMN draft_tokens_accepted INTEGER;  -- ... and ho
 """
 
 
+# Migration 12 (2026-11-22, after the second pilot): the model's answer as received, kept only when the host rejected
+# or corrected it, so a change to the checks or to "fix, then drop" can be replayed on real answers offline.
+MIGRATION_0012_MODEL_CALL_ANSWER_TEXT = """
+ALTER TABLE model_calls ADD COLUMN answer_text TEXT;  -- untrusted model output; NULL when it passed unchanged
+"""
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("initial schema", MIGRATION_0001_INITIAL_SCHEMA),
     SchemaMigration(
@@ -851,4 +858,5 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     ),
     SchemaMigration("activity log for the monitor", MIGRATION_0010_ACTIVITY_LOG),
     SchemaMigration("model call timings reported by llama.cpp", MIGRATION_0011_MODEL_CALL_TIMINGS),
+    SchemaMigration("answers the host rejected or corrected", MIGRATION_0012_MODEL_CALL_ANSWER_TEXT),
 )
