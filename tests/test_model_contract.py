@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import EXAMPLE_TOPIC_TOML, RECORDED_PAPER_FIXTURE
+from conftest import EXAMPLE_TOPIC_TOML, RECORDED_PAPER_FIXTURE, build_in_process_app
+from fake_llama_server import FakeLlamaServer
 
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import record_collected_paper
@@ -16,8 +17,11 @@ from paperwatch.commands.init_command import run_init_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
 from paperwatch.errors import ModelOutputInvalid
 from paperwatch.llm.fake_client import FakeModelClient
+from paperwatch.llm.llama_cpp_client import parse_server_timings
 from paperwatch.llm.reasoning import separate_reasoning_from_final_answer
-from paperwatch.roles.base import parse_and_validate_role_output
+from paperwatch.llm.types import ServerTimings
+from paperwatch.roles.base import parse_and_validate_role_output, run_role_once
+from paperwatch.roles.healthcheck import HEALTHCHECK_EXPECTED_FINAL_ANSWER, HEALTHCHECK_ROLE
 from paperwatch.roles.reviewer import REVIEWER_ROLE
 from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.sources.fixture_source import RecordedFixtureSource
@@ -178,3 +182,49 @@ def test_live_server_reviews_recorded_paper(tmp_path):
     app = _load_app_with_one_queued_paper(tmp_path, LlamaCppModelClient(ModelSettings()))
     cycle_report = run_single_work_cycle(app, probe_paused_model_now=True)
     assert cycle_report.outcome == WorkCycleOutcome.JOB_COMPLETED, cycle_report.message
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# llama.cpp's timings, for `paperwatch capacity`
+# --------------------------------------------------------------------------------------------------------------------
+
+
+def test_llama_cpp_timings_are_read_and_malformed_values_are_left_out():
+    timings = parse_server_timings(
+        {
+            "cache_n": 2048,
+            "prompt_n": 9000,
+            "prompt_ms": 46153.8,
+            "predicted_n": 6182,
+            "predicted_ms": 272321.6,
+            "draft_n": 4100,
+            "draft_n_accepted": 2911,
+        }
+    )
+    assert timings.prompt_seconds == pytest.approx(46.1538)
+    assert timings.generation_seconds == pytest.approx(272.3216)
+    assert (timings.cached_prompt_tokens, timings.draft_tokens, timings.draft_tokens_accepted) == (2048, 4100, 2911)
+    assert parse_server_timings(None) == ServerTimings()  # a server that reports no timings
+    malformed = {"prompt_ms": "fast", "predicted_ms": -1, "cache_n": True, "draft_n": 1.5, "draft_n_accepted": None}
+    assert parse_server_timings(malformed) == ServerTimings()
+
+
+def test_a_model_call_through_llama_cpp_stores_its_timings(tmp_path):
+    with FakeLlamaServer(lambda chat_payload: HEALTHCHECK_EXPECTED_FINAL_ANSWER) as fake_server:
+        app = build_in_process_app(
+            tmp_path / "home",
+            use_configured_model_backend=True,
+            config_replacements={'"http://127.0.0.1:8080/v1"': f'"{fake_server.base_url}"'},
+        )
+        run_role_once(
+            role_definition=HEALTHCHECK_ROLE,
+            role_input={},
+            app_config=app.config,
+            model_client=app.model_client,
+            connection=app.connection,
+        )
+    stored_call = app.connection.execute(
+        "SELECT outcome, prompt_seconds, generation_seconds, cached_prompt_tokens, draft_tokens FROM model_calls"
+    ).fetchone()
+    assert tuple(stored_call) == ("ok", 0.002, 0.001, 0, None)  # the fake server's timings; it drafts nothing
+    app.close()

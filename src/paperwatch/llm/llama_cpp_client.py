@@ -21,7 +21,12 @@ from paperwatch.errors import (
     ModelServerUnavailable,
 )
 from paperwatch.llm.reasoning import separate_reasoning_from_final_answer
-from paperwatch.llm.types import ModelServerDescription, StructuredChatRequest, StructuredChatResponse
+from paperwatch.llm.types import (
+    ModelServerDescription,
+    ServerTimings,
+    StructuredChatRequest,
+    StructuredChatResponse,
+)
 
 METADATA_REQUEST_TIMEOUT_SECONDS = 10.0
 # Request fields that would give the model tools or let it call functions. paperwatch never sends them: the model
@@ -130,6 +135,7 @@ class LlamaCppModelClient:
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
             duration_seconds=duration_seconds,
+            server_timings=parse_server_timings(completion_payload.get("timings")),
         )
 
     # ---- helpers -----------------------------------------------------------------------------------------------------
@@ -213,6 +219,31 @@ def build_chat_completion_payload(request: StructuredChatRequest, model_alias: s
     if TOOL_REQUEST_FIELDS & request_payload.keys():  # explicit check: survives `python -O`
         raise RuntimeError("model requests must never carry tools")
     return request_payload
+
+
+def parse_server_timings(raw_timings: object) -> ServerTimings:
+    """llama.cpp's `timings` of one completion (milliseconds and token counts). A missing or malformed value stays
+    None: the timings are measurements for `paperwatch capacity`, never inputs to a decision."""
+    if not isinstance(raw_timings, dict):
+        return ServerTimings()
+
+    def milliseconds_as_seconds(key: str) -> float | None:
+        value = raw_timings.get(key)
+        if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+            return None
+        return float(value) / 1000.0
+
+    def token_count(key: str) -> int | None:
+        value = raw_timings.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+    return ServerTimings(
+        prompt_seconds=milliseconds_as_seconds("prompt_ms"),
+        generation_seconds=milliseconds_as_seconds("predicted_ms"),
+        cached_prompt_tokens=token_count("cache_n"),
+        draft_tokens=token_count("draft_n"),
+        draft_tokens_accepted=token_count("draft_n_accepted"),
+    )
 
 
 def _server_tools_are_listed(tools_response: httpx.Response) -> bool | None:

@@ -288,3 +288,43 @@ def test_the_new_operator_commands_may_reach_no_network(tmp_path):
         assert policy is not None and not policy.allowed_loopback_ports and not policy.allow_public_internet_https
         assert not policy.resolvable_host_names and not policy.allowed_executables
     app.close()
+
+
+def test_capacity_shows_where_model_time_goes_from_llama_cpp_timings(tmp_path):
+    app = build_in_process_app(tmp_path / "home")
+    with write_transaction(app.connection):
+        for call_number, (
+            prompt_tokens,
+            cached_tokens,
+            prompt_seconds,
+            generated_tokens,
+            generation_seconds,
+        ) in enumerate(((12000, 2000, 50.0, 6000, 250.0), (8000, 0, 40.0, 4000, 150.0))):
+            app.connection.execute(
+                """INSERT INTO model_calls (call_id, role_name, prompt_version, started_at, duration_seconds, outcome,
+                       prompt_tokens, completion_tokens, prompt_seconds, generation_seconds, cached_prompt_tokens,
+                       draft_tokens, draft_tokens_accepted)
+                   VALUES (?, 'section_reader', 'v', ?, ?, 'ok', ?, ?, ?, ?, ?, 3000, 2000)""",
+                (
+                    f"c_{call_number}",
+                    utc_now_timestamp(),
+                    prompt_seconds + generation_seconds,
+                    prompt_tokens,
+                    generated_tokens,
+                    prompt_seconds,
+                    generation_seconds,
+                    cached_tokens,
+                ),
+            )
+    measurement = measure_capacity(app.connection, app.config, window_end=utc_now(), window_hours=24)
+    [section_reader] = measurement.roles
+    rates = section_reader.server_rates
+    assert rates.prompt_tokens_per_second == pytest.approx(18000 / 90.0)  # uncached prompt tokens per prompt second
+    assert rates.generation_tokens_per_second == pytest.approx(10000 / 400.0)
+    assert rates.cached_prompt_share == pytest.approx(2000 / 20000)
+    assert rates.draft_acceptance == pytest.approx(4000 / 6000)
+    assert (
+        "llama.cpp: prompt 200 tokens/s · 10% of prompt tokens cached · generation 25.0 tokens/s · "
+        "draft tokens accepted 67%" in "\n".join(describe_capacity(measurement))
+    )
+    app.close()

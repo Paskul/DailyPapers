@@ -23,6 +23,7 @@ from paperwatch.commands.collect_command import run_collect_command
 from paperwatch.commands.report_command import run_report_command
 from paperwatch.commands.work_command import run_single_work_cycle
 from paperwatch.config import load_app_config
+from paperwatch.db import CURRENT_SCHEMA_VERSION
 from paperwatch.deployment.daily_schedule import SCOPE_SYSTEM, render_daily_units
 from paperwatch.deployment.one_day_pilot import plan_one_day_pilot, render_pilot_units
 from paperwatch.errors import ConfigurationError
@@ -387,7 +388,7 @@ def test_monitor_json_command_runs_against_a_home(initialized_home):
     initialized_home.use_fake_model()
     result = initialized_home.run_cli("monitor", "--json", "--history-hours", "6")
     assert result.exit_code == 0, result.stderr
-    assert json.loads(result.stdout)["meta"]["schema_version"] == 10
+    assert json.loads(result.stdout)["meta"]["schema_version"] == CURRENT_SCHEMA_VERSION
 
 
 # --------------------------------------------------------------------------------------------------------------------

@@ -3,7 +3,8 @@
 Everything comes from what the pipeline already records, so it measures the actual model, reasoning settings, and
 context on this workstation:
   model_calls   one row per inference request: role, duration, outcome, tokens, job (repairs and failed attempts
-                included, so retries cost what they really cost);
+                included, so retries cost what they really cost), and llama.cpp's own timings: prompt processing
+                versus generation, prompt tokens served from its cache, and speculative-decoding acceptance;
   reviews       one row per completed reading, with its job and coverage (abstract_only / partial_text / full_text);
   jobs          the queue right now.
 The plan's estimate: daily capacity = available inference minutes / measured minutes per review, after reserving
@@ -55,7 +56,53 @@ class RoleCallSummary:
     outcomes: dict[str, int]  # outcome -> count
     successful_calls: DurationSummary
     all_calls_total_minutes: float  # failed and invalid calls cost model time too
-    completion_tokens_per_second: float | None
+    completion_tokens_per_second: float | None  # over the whole call, prompt processing included
+    server_rates: ServerRates  # from llama.cpp's timings (all None for calls recorded without them)
+
+
+@dataclass(frozen=True)
+class ServerRates:
+    """Where a role's model time goes, from llama.cpp's timings of its successful calls."""
+
+    prompt_tokens_per_second: float | None  # processing the uncached part of the prompt
+    generation_tokens_per_second: float | None  # generating the answer, reasoning included
+    cached_prompt_share: float | None  # share of all prompt tokens served from the server's prompt cache
+    draft_acceptance: float | None  # speculative decoding: accepted / drafted tokens
+
+    @classmethod
+    def of_calls(cls, call_rows: list[sqlite3.Row]) -> ServerRates:
+        timed_rows = [row for row in call_rows if row["prompt_seconds"] is not None]
+        uncached_prompt_tokens = sum(
+            (row["prompt_tokens"] or 0) - (row["cached_prompt_tokens"] or 0) for row in timed_rows
+        )
+        all_prompt_tokens = sum(row["prompt_tokens"] or 0 for row in timed_rows)
+        prompt_seconds = sum(row["prompt_seconds"] for row in timed_rows)
+        generated_tokens = sum(row["completion_tokens"] or 0 for row in timed_rows)
+        generation_seconds = sum(row["generation_seconds"] or 0.0 for row in timed_rows)
+        drafted_tokens = sum(row["draft_tokens"] or 0 for row in timed_rows)
+        accepted_tokens = sum(row["draft_tokens_accepted"] or 0 for row in timed_rows)
+        return cls(
+            prompt_tokens_per_second=uncached_prompt_tokens / prompt_seconds if prompt_seconds > 0 else None,
+            generation_tokens_per_second=generated_tokens / generation_seconds if generation_seconds > 0 else None,
+            cached_prompt_share=(
+                sum(row["cached_prompt_tokens"] or 0 for row in timed_rows) / all_prompt_tokens
+                if all_prompt_tokens > 0
+                else None
+            ),
+            draft_acceptance=accepted_tokens / drafted_tokens if drafted_tokens > 0 else None,
+        )
+
+    def describe(self) -> str | None:
+        parts = []
+        if self.prompt_tokens_per_second is not None:
+            parts.append(f"prompt {self.prompt_tokens_per_second:.0f} tokens/s")
+        if self.cached_prompt_share is not None:
+            parts.append(f"{self.cached_prompt_share:.0%} of prompt tokens cached")
+        if self.generation_tokens_per_second is not None:
+            parts.append(f"generation {self.generation_tokens_per_second:.1f} tokens/s")
+        if self.draft_acceptance is not None:
+            parts.append(f"draft tokens accepted {self.draft_acceptance:.0%}")
+        return " · ".join(parts) if parts else None
 
 
 @dataclass(frozen=True)
@@ -149,8 +196,9 @@ def measure_capacity(
 
 def _summarize_roles(connection: sqlite3.Connection, start_text: str, end_text: str) -> list[RoleCallSummary]:
     call_rows = connection.execute(
-        """SELECT role_name, outcome, duration_seconds, completion_tokens FROM model_calls
-           WHERE started_at >= ? AND started_at <= ? ORDER BY role_name""",
+        """SELECT role_name, outcome, duration_seconds, prompt_tokens, completion_tokens, prompt_seconds,
+                  generation_seconds, cached_prompt_tokens, draft_tokens, draft_tokens_accepted
+           FROM model_calls WHERE started_at >= ? AND started_at <= ? ORDER BY role_name""",
         (start_text, end_text),
     ).fetchall()
     roles: list[RoleCallSummary] = []
@@ -169,6 +217,7 @@ def _summarize_roles(connection: sqlite3.Connection, start_text: str, end_text: 
                 successful_calls=DurationSummary.of_seconds([row["duration_seconds"] for row in successful_rows]),
                 all_calls_total_minutes=sum(row["duration_seconds"] for row in role_rows) / 60.0,
                 completion_tokens_per_second=tokens / token_seconds if token_seconds > 0 else None,
+                server_rates=ServerRates.of_calls(successful_rows),
             )
         )
     return roles
@@ -209,6 +258,8 @@ def describe_capacity(measurement: CapacityMeasurement) -> list[str]:
             f"  {role.role_name:<15} {role.successful_calls.describe()}; total "
             f"{role.all_calls_total_minutes:.0f} min{speed}; outcomes: {outcome_text}"
         )
+        if (server_rates_text := role.server_rates.describe()) is not None:
+            lines.append(f"  {'':<15} llama.cpp: {server_rates_text}")
     lines.append(
         f"Completed reviews: {measurement.reviews_completed}"
         + (

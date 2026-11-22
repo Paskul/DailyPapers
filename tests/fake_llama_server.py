@@ -74,6 +74,13 @@ class FakeLlamaServer:
                         "model": "qwen-local",
                         "system_fingerprint": FAKE_SERVER_BUILD,
                         "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                        "timings": {
+                            "cache_n": 0,
+                            "prompt_n": 1,
+                            "prompt_ms": 2.0,
+                            "predicted_n": 1,
+                            "predicted_ms": 1.0,
+                        },
                     },
                 )
 

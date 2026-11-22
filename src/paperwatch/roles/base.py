@@ -53,7 +53,7 @@ from paperwatch.identifiers import MODEL_CALL_ID_PREFIX, new_internal_id
 from paperwatch.llm.inference_lock import hold_inference_lock
 from paperwatch.llm.inference_reservation import wait_while_inference_is_reserved
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, record_service_outage, record_service_success
-from paperwatch.llm.types import ModelClient, StructuredChatRequest, StructuredChatResponse
+from paperwatch.llm.types import ModelClient, ServerTimings, StructuredChatRequest, StructuredChatResponse
 from paperwatch.worker_stop import interruptible_model_wait
 
 if TYPE_CHECKING:
@@ -426,10 +426,12 @@ def _log_model_call(
     outcome: str,
     error_message: str | None,
 ) -> None:
+    timings = model_response.server_timings if model_response else ServerTimings()
     connection.execute(
         """INSERT INTO model_calls (call_id, role_name, prompt_version, job_id, model_identity, server_build,
-               started_at, duration_seconds, outcome, prompt_tokens, completion_tokens, error_message)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               started_at, duration_seconds, outcome, prompt_tokens, completion_tokens, error_message,
+               prompt_seconds, generation_seconds, cached_prompt_tokens, draft_tokens, draft_tokens_accepted)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             new_internal_id(MODEL_CALL_ID_PREFIX),
             role_name,
@@ -443,5 +445,10 @@ def _log_model_call(
             model_response.prompt_tokens if model_response else None,
             model_response.completion_tokens if model_response else None,
             error_message,
+            timings.prompt_seconds,
+            timings.generation_seconds,
+            timings.cached_prompt_tokens,
+            timings.draft_tokens,
+            timings.draft_tokens_accepted,
         ),
     )

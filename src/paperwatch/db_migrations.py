@@ -810,6 +810,15 @@ CREATE INDEX activity_log_by_parent ON activity_log(parent_activity_id);
 """
 
 
+MIGRATION_0011_MODEL_CALL_TIMINGS = """
+ALTER TABLE model_calls ADD COLUMN prompt_seconds REAL;            -- llama.cpp timings: the uncached prompt's processing
+ALTER TABLE model_calls ADD COLUMN generation_seconds REAL;        -- generating the answer, reasoning included
+ALTER TABLE model_calls ADD COLUMN cached_prompt_tokens INTEGER;   -- prompt tokens reused from the server's cache
+ALTER TABLE model_calls ADD COLUMN draft_tokens INTEGER;           -- speculative decoding: drafted tokens ...
+ALTER TABLE model_calls ADD COLUMN draft_tokens_accepted INTEGER;  -- ... and how many the model accepted
+"""
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("initial schema", MIGRATION_0001_INITIAL_SCHEMA),
     SchemaMigration(
@@ -841,4 +850,5 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
         MIGRATION_0009_DAILY_REPORT,
     ),
     SchemaMigration("activity log for the monitor", MIGRATION_0010_ACTIVITY_LOG),
+    SchemaMigration("model call timings reported by llama.cpp", MIGRATION_0011_MODEL_CALL_TIMINGS),
 )

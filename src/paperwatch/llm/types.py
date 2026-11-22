@@ -27,6 +27,17 @@ class StructuredChatRequest:
 
 
 @dataclass(frozen=True)
+class ServerTimings:
+    """What llama.cpp reports about one request (its `timings`); None where a server reports nothing."""
+
+    prompt_seconds: float | None = None  # processing the prompt tokens that were not in the server's cache
+    generation_seconds: float | None = None  # generating the answer, reasoning included
+    cached_prompt_tokens: int | None = None  # prompt tokens reused from the server's prompt cache
+    draft_tokens: int | None = None  # speculative decoding: tokens the draft proposed ...
+    draft_tokens_accepted: int | None = None  # ... and how many of them the model accepted
+
+
+@dataclass(frozen=True)
 class StructuredChatResponse:
     final_answer_text: str  # what the model answered, with any reasoning removed
     reasoning_text: str  # kept for debugging only; never parsed as the answer
@@ -36,6 +47,7 @@ class StructuredChatResponse:
     prompt_tokens: int | None
     completion_tokens: int | None
     duration_seconds: float
+    server_timings: ServerTimings = field(default_factory=ServerTimings)
 
 
 @dataclass(frozen=True)
