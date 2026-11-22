@@ -25,11 +25,11 @@ body = """
 footer = """
 ## Before 0.1.0
 
-The project was built before it used Conventional Commits; its earlier history is in `git log`.
-"""
-trim = true
+The project was built before it used Conventional Commits; its earlier history is in `git log`."""
+trim = false  # keep the blank lines between the header, the versions, and the footer
 
 [git]
+# Commits listed in .git-blame-ignore-revs (pure reformatting) are left out by git-cliff itself.
 conventional_commits = true
 filter_unconventional = true
 protect_breaking_commits = true
