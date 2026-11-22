@@ -99,7 +99,8 @@ DEFAULT_ROLE_LIMITS: dict[str, RoleLimits] = {
     "comparison": RoleLimits(max_output_tokens=12288, timeout_seconds=1200),  # compares two saved reviews
     # The report writer runs once per day under report.writer_deadline_minutes. Owner decision
     # (2026-11-20): medium reasoning, so the report usually appears 15-30 minutes after the cutoff.
-    "writer": RoleLimits(max_output_tokens=8192, timeout_seconds=1500, reasoning_effort="medium"),
+    # 2026-11-22 (second pilot): 8192 tokens cut off the answer for 15 papers, reasoning included, after 9 minutes.
+    "writer": RoleLimits(max_output_tokens=16384, timeout_seconds=1500, reasoning_effort="medium"),
 }
 # Room the reading roles need besides the passages themselves: system prompt, orientation (title + abstract), JSON
 # keys. Used by the load-time check that a reading section fits the context budget.

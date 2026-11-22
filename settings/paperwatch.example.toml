@@ -74,7 +74,7 @@ timeout_seconds = 1200
 reasoning_effort = "server-default"
 
 [roles.writer]                            # writes the daily report's overview from the frozen reviews
-max_output_tokens = 8192
+max_output_tokens = 16384                 # 2026-11-22: 8192 cut off a 15-paper answer (reasoning included)
 timeout_seconds = 1500
 reasoning_effort = "medium"               # also bounded by report.writer_deadline_minutes
 
