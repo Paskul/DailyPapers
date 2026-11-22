@@ -4,6 +4,7 @@ model endpoint unavailable. The CLI must report which component failed and prese
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 
@@ -143,3 +144,15 @@ def test_every_command_of_the_parser_has_a_runner_that_loads():
     assert parser_commands == set(cli.COMMAND_RUNNER_LOCATIONS) | {"init", "monitor"}
     for command_name in cli.COMMAND_RUNNER_LOCATIONS:
         assert callable(cli.load_command_runner(command_name))
+
+
+def test_paperwatch_runs_numpy_with_one_blas_thread_unless_the_operator_chose_otherwise():
+    probe = "import os, paperwatch, numpy; print(os.environ['OPENBLAS_NUM_THREADS'])"
+    for preset, expected in ((None, "1"), ("4", "4")):
+        environment = {key: value for key, value in os.environ.items() if key != "OPENBLAS_NUM_THREADS"}
+        if preset is not None:
+            environment["OPENBLAS_NUM_THREADS"] = preset
+        completed = subprocess.run(
+            [sys.executable, "-c", probe], env=environment, capture_output=True, text=True, timeout=60, check=False
+        )
+        assert completed.stdout.strip() == expected, completed.stderr
