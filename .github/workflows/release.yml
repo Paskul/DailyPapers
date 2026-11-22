@@ -1,0 +1,44 @@
+# A pushed version tag (v1.2.3) becomes a GitHub release whose notes list the Conventional Commits since the
+# previous tag (git-cliff, configured in cliff.toml). The tag must match __version__ in src/paperwatch/__init__.py.
+# How to cut a release: CONTRIBUTING.md, "Releases".
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions: {}
+
+jobs:
+  release:
+    name: Publish the GitHub release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write  # create the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # the notes cover the history since the previous tag
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false  # nothing cached may influence a release
+      - name: Check that the tag matches the package version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          package_version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/paperwatch/__init__.py)"
+          if [ "$TAG_NAME" != "v$package_version" ]; then
+            echo "::error::tag $TAG_NAME does not match __version__ = \"$package_version\""
+            exit 1
+          fi
+      - name: Check that the package builds
+        run: uv build
+      - name: Write the release notes
+        run: uvx git-cliff@2.14.2 --latest --strip all --output "$RUNNER_TEMP/release-notes.md"
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: gh release create "$TAG_NAME" --verify-tag --title "$TAG_NAME" --notes-file "$RUNNER_TEMP/release-notes.md"
