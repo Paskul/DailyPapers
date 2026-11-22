@@ -3,7 +3,10 @@
 Field shapes (every object rejects unknown fields):
     finding     {claim, conditions, passage_id, excerpt}    an AUTHORS' claim, quoted from one passage
     statement   {statement, evidence_status, supporting_passage_ids}
-                evidence_status "insufficient_evidence" lets the reviewer say the text does not support an answer
+                evidence_status "insufficient_evidence" lets the reviewer say the text does not support an answer.
+                A statement cites at most 6 passages; the reviewer's three single statements (research question,
+                method, evaluation setting) summarize the whole paper and may cite 10. In the second pilot the cap of
+                6 made the model join ids into one entry ("P18P19", "P35-P37"); roles/answer_salvage.py splits those.
     limitation  {statement, stated_by: authors|reviewer, supporting_passage_ids}
     inference   {inference, supporting_passage_ids}         the MODEL's reasoning, kept apart from authors' claims
     ambiguous   {passage_id, issue}                         a passage that can be read more than one way
@@ -29,12 +32,14 @@ EVIDENCE_STATUS_INSUFFICIENT = "insufficient_evidence"
 EVIDENCE_STATUS_SUPPORTED = "supported"
 MAXIMUM_STATEMENT_CHARACTERS = 1200
 MAXIMUM_PASSAGES_PER_STATEMENT = 6
+MAXIMUM_PASSAGES_PER_SINGLE_STATEMENT = 10
 
-PASSAGE_ID_LIST_SCHEMA: dict[str, Any] = {
-    "type": "array",
-    "items": {"type": "string"},
-    "maxItems": MAXIMUM_PASSAGES_PER_STATEMENT,
-}
+
+def passage_id_list_schema(maximum_passages: int) -> dict[str, Any]:
+    return {"type": "array", "items": {"type": "string"}, "maxItems": maximum_passages}
+
+
+PASSAGE_ID_LIST_SCHEMA: dict[str, Any] = passage_id_list_schema(MAXIMUM_PASSAGES_PER_STATEMENT)
 FINDING_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -55,6 +60,14 @@ STATEMENT_SCHEMA: dict[str, Any] = {
     },
     "required": ["statement", "evidence_status", "supporting_passage_ids"],
     "additionalProperties": False,
+}
+# The reviewer's research question, method and evaluation setting: one statement each for the whole paper.
+SINGLE_STATEMENT_SCHEMA: dict[str, Any] = {
+    **STATEMENT_SCHEMA,
+    "properties": {
+        **STATEMENT_SCHEMA["properties"],
+        "supporting_passage_ids": passage_id_list_schema(MAXIMUM_PASSAGES_PER_SINGLE_STATEMENT),
+    },
 }
 LIMITATION_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -91,9 +104,10 @@ def array_of(item_schema: dict[str, Any], maximum_items: int) -> dict[str, Any]:
     return {"type": "array", "items": item_schema, "maxItems": maximum_items}
 
 
-EVIDENCE_RULES_FOR_PROMPTS = """\
+EVIDENCE_RULES_FOR_PROMPTS = f"""\
 Evidence rules:
-- Cite passages only by the passage_id values given in the input. Never invent an id.
+- Cite passages only by the passage_id values given in the input. Never invent an id. Write each id as its own \
+list entry exactly as given ("P18", "P19"), never joined ("P18P19"), as a range ("P18-P21"), or as a quoted list.
 - A finding is the AUTHORS' claim. Its excerpt is a short contiguous quotation (3 to 60 words, no "...") copied \
 from the one passage it cites. Every number in its claim and conditions must appear in that passage.
 - Before you cite, find the passage whose text actually contains the words you quote and the numbers you state. \
@@ -106,7 +120,8 @@ evidence_status "insufficient_evidence".
 - Your own reasoning goes ONLY into reviewer inferences or limitations with stated_by "reviewer"; never present \
 it as the authors' claim.
 - Flag passages that can be read more than one way in ambiguous_passages, and tables or equations the text \
-extraction garbled in parser_problems."""
+extraction garbled in parser_problems.
+- Keep every text field under {MAXIMUM_STATEMENT_CHARACTERS} characters."""
 
 
 # Item checks: each takes ONE list item and the label used in its problems ("findings[3]"). The list checks below

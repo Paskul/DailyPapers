@@ -90,6 +90,9 @@ class RoleDefinition:
     find_semantic_problems: Callable[[dict[str, Any], RoleInput], list[str]] = field(default=_no_semantic_problems)
     # "Fix, then drop" (roles/answer_salvage.py); None: an answer that fails a host check is rejected as a whole.
     salvage_answer: Callable[[dict[str, Any], RoleInput], AnswerSalvage | None] | None = None
+    # The checks a corrected answer must pass; None: find_semantic_problems. The writer's corrected answer may leave
+    # out a paper's reason (the report then shows that paper's saved topic rationale), which a first answer may not.
+    find_salvage_problems: Callable[[dict[str, Any], RoleInput], list[str]] | None = None
     # Earlier prompt versions whose saved stage results may still be reused, after passing today's checks again
     # (paperwatch.reading.stage_results). Only for a prompt change that tightens guidance, never for a schema change.
     reusable_earlier_prompt_versions: tuple[str, ...] = ()
@@ -388,7 +391,8 @@ def _salvage_that_passes_every_check(
         return None
     if any(Draft202012Validator(role_definition.output_schema).iter_errors(salvage.salvaged_output)):
         return None
-    if role_definition.find_semantic_problems(salvage.salvaged_output, role_input):
+    find_problems_of_corrected_answer = role_definition.find_salvage_problems or role_definition.find_semantic_problems
+    if find_problems_of_corrected_answer(salvage.salvaged_output, role_input):
         return None
     return salvage
 

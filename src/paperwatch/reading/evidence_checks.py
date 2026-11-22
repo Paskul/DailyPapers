@@ -6,7 +6,8 @@ Every rule returns readable problems (an empty list means the answer passes):
     whitespace, hyphenation at line ends, ligatures, and quote or dash styles, but nothing else;
   * every number in a claim, its conditions, or a statement must occur in a passage it cites (so an invented metric
     such as "97.3% accuracy" is rejected unless the cited evidence says 97.3). Numbers that only label things
-    ("Table 2", "Section 3", "Eq. 4") are exempt. Two spellings of the SAME value count as occurring: a number word
+    ("Table 2", "Section 3", "Eq. 4") are exempt, and so are digits joined to a word by a hyphen, which name a thing
+    rather than state a value ("GPT-6", "Llama-3", "COVID-19", "top-5"). Two spellings of the SAME value count as occurring: a number word
     in the passage ("three" backs 3) and a fraction stated as a percentage or back ("0.924" backs 92.4).
 Exact matching checks attribution: it shows the words are in the paper. It cannot show the interpretation is sound;
 the note says so, and ambiguous passages are flagged by the reviewer itself.
@@ -21,7 +22,8 @@ from decimal import Decimal, InvalidOperation
 
 MINIMUM_EXCERPT_WORDS = 3
 MAXIMUM_EXCERPT_WORDS = 60
-NUMBER_PATTERN = re.compile(r"(?<![\w.])[-+−]?\d+(?:,\d{3})*(?:\.\d+)?(?![\w])")
+# A number not glued to a word: "Qwen3" and "x2" are names; "GPT-6" (a letter, a hyphen, digits) is one too.
+NUMBER_PATTERN = re.compile(r"(?<![\w.])(?<![^\W\d_]-)[-+−]?\d+(?:,\d{3})*(?:\.\d+)?(?![\w])")
 LABEL_BEFORE_NUMBER_PATTERN = re.compile(
     r"(?i)\b(?:table|tab\.|figure|fig\.|section|sec\.|§|eq\.|equation|eqn\.|theorem|lemma|corollary|definition|"
     r"proposition|appendix|algorithm|alg\.|line|step|chapter|page|p\.|pp\.|ref\.|reference|v)\s*\(?$"

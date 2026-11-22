@@ -15,6 +15,15 @@ selected reviews, that the passage is one that review cites, that the excerpt is
 that every number in the claim occurs in a cited passage (so the writer cannot invent a metric, a score, or a rank).
 A comparison may be named by id, but only one from the input.
 
+"Fix, then drop" (as for the evidence readers, roles/answer_salvage.py; second pilot, 2026-11-22: the writer's repair
+was rejected for two miscited excerpts and the whole overview was lost). Before an answer is rejected, the host
+  * moves an evidence item whose excerpt is not in its passage to the ONE passage of the same review that holds it,
+  * drops evidence items that still fail, unknown comparison ids, and duplicate or unknown paper reasons,
+  * drops a connected finding or a paper reason whose claim still fails (the report shows that paper's saved topic
+    rationale instead),
+and the corrected answer must pass every check again, except that it may lack some paper reasons. The overview and
+read_first are never dropped: if they still fail, the answer needs the repair call.
+
 Role input (plain data, built by paperwatch.reporting.report_synthesis):
     report_date, topics [{topic_id, question}],
     papers       [{review_id, entry_label, title, year, coverage, best_topic_id, summary, research_question, method,
@@ -24,10 +33,15 @@ Role input (plain data, built by paperwatch.reporting.report_synthesis):
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
 
-from paperwatch.reading.evidence_checks import check_excerpt_matches_passage, check_numbers_occur_in_passages
+from paperwatch.reading.evidence_checks import (
+    check_excerpt_matches_passage,
+    check_numbers_occur_in_passages,
+)
+from paperwatch.roles.answer_salvage import AnswerSalvage
 from paperwatch.roles.base import RoleDefinition, RoleInput
 from paperwatch.roles.output_guards import find_invented_web_addresses
 
@@ -150,7 +164,9 @@ def _render_writer_user_message(role_input: RoleInput) -> str:
     )
 
 
-def _find_writer_problems(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:
+def _find_writer_problems(
+    validated_output: dict[str, Any], role_input: RoleInput, *, require_every_paper_reason: bool = True
+) -> list[str]:
     papers = role_input["papers"]
     selected_review_ids = [paper["review_id"] for paper in papers]
     reviews_with_passages = {paper["review_id"] for paper in papers if paper["passages"]}
@@ -253,10 +269,165 @@ def _find_writer_problems(validated_output: dict[str, Any], role_input: RoleInpu
         if review_id in reviews_with_passages and not paper_reason["evidence"]:
             problems.append(f"{where}: cite at least one passage of review '{review_id}'")
     missing_reasons = [review_id for review_id in selected_review_ids if review_id not in reasons_seen]
-    if missing_reasons:
+    if missing_reasons and require_every_paper_reason:
         problems.append(f"paper_reasons: give a reason for every paper; missing {', '.join(missing_reasons)}")
     problems += find_invented_web_addresses(validated_output, role_input)
     return problems
+
+
+def _find_problems_of_corrected_writer_answer(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:
+    return _find_writer_problems(validated_output, role_input, require_every_paper_reason=False)
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# "Fix, then drop" for the writer (see the module doc)
+# --------------------------------------------------------------------------------------------------------------------
+
+
+class _WriterAnswerCorrections:
+    """Corrects one writer answer in place, logging each change the way AnswerSalvage.describe reports it."""
+
+    def __init__(self, role_input: RoleInput) -> None:
+        self.passage_text_by_review_id: dict[str, dict[str, str]] = {
+            paper["review_id"]: {passage["passage_id"]: passage["text"] for passage in paper["passages"]}
+            for paper in role_input["papers"]
+        }
+        self.passage_text_by_key = {
+            evidence_passage_key(review_id, passage_id): passage_text
+            for review_id, passages in self.passage_text_by_review_id.items()
+            for passage_id, passage_text in passages.items()
+        }
+        self.known_comparison_ids = {comparison["comparison_id"] for comparison in role_input["comparisons"]}
+        self.relocated_citations: list[str] = []
+        self.dropped_items: list[str] = []
+        self.droppable_item_count = 0
+
+    def fix_evidence(
+        self, evidence: list[dict[str, Any]], where: str, only_review_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        kept_evidence = []
+        for evidence_index, item in enumerate(evidence, start=1):
+            self.droppable_item_count += 1
+            item_where = f"{where}.evidence[{evidence_index}]"
+            review_passages = self.passage_text_by_review_id.get(item["review_id"])
+            if review_passages is None or (only_review_id is not None and item["review_id"] != only_review_id):
+                self.dropped_items.append(f"{item_where}: review '{item['review_id']}' cannot be cited here")
+                continue
+            cited_text = review_passages.get(item["passage_id"])
+            if cited_text is not None and not check_excerpt_matches_passage(
+                item["excerpt"], item["passage_id"], cited_text, item_where
+            ):
+                kept_evidence.append(item)
+                continue
+            holding_passage_id = _the_one_passage_that_holds_the_excerpt(item["excerpt"], review_passages)
+            if holding_passage_id is not None:
+                self.relocated_citations.append(f"{item_where}: {item['passage_id']} -> {holding_passage_id}")
+                kept_evidence.append({**item, "passage_id": holding_passage_id})
+                continue
+            self.dropped_items.append(f"{item_where}: excerpt does not occur in passage {item['passage_id']}")
+        return kept_evidence
+
+    def claim_problem(
+        self,
+        claim_text: str,
+        evidence: list[dict[str, Any]],
+        where: str,
+        maximum_characters: int,
+        *,
+        evidence_is_required: bool = True,
+    ) -> str:
+        """The first reason a corrected claim still fails ('' when it passes)."""
+        if len(claim_text) > maximum_characters:
+            return f"{where}: longer than {maximum_characters} characters"
+        if not evidence and evidence_is_required:
+            return f"{where}: no evidence left"
+        cited_keys = [evidence_passage_key(item["review_id"], item["passage_id"]) for item in evidence]
+        number_problems = check_numbers_occur_in_passages(claim_text, cited_keys, self.passage_text_by_key, where)
+        return number_problems[0] if number_problems else ""
+
+
+def _the_one_passage_that_holds_the_excerpt(excerpt: str, passage_text_by_id: dict[str, str]) -> str | None:
+    holding_passage_ids = [
+        passage_id
+        for passage_id, passage_text in passage_text_by_id.items()
+        if not check_excerpt_matches_passage(excerpt, passage_id, passage_text, "evidence")
+    ]
+    return holding_passage_ids[0] if len(holding_passage_ids) == 1 else None
+
+
+def _salvage_writer_answer(answer: dict[str, Any], role_input: RoleInput) -> AnswerSalvage | None:
+    if find_invented_web_addresses(answer, role_input):
+        return None
+    corrections = _WriterAnswerCorrections(role_input)
+    corrected = copy.deepcopy(answer)
+
+    corrected["overview"]["evidence"] = corrections.fix_evidence(corrected["overview"]["evidence"], "overview")
+    read_first = corrected["read_first"]
+    read_first["evidence"] = corrections.fix_evidence(
+        read_first["evidence"], "read_first", only_review_id=read_first["review_id"]
+    )
+
+    kept_findings = []
+    for finding_index, finding in enumerate(corrected["connected_findings"], start=1):
+        where = f"connected_findings[{finding_index}]"
+        corrections.droppable_item_count += 1
+        finding["evidence"] = corrections.fix_evidence(finding["evidence"], where)
+        unknown_comparison_ids = [
+            comparison_id
+            for comparison_id in finding["comparison_ids"]
+            if comparison_id not in corrections.known_comparison_ids
+        ]
+        if unknown_comparison_ids:
+            corrections.dropped_items.append(f"{where}: unknown comparison id(s) {', '.join(unknown_comparison_ids)}")
+            finding["comparison_ids"] = [
+                comparison_id
+                for comparison_id in finding["comparison_ids"]
+                if comparison_id not in unknown_comparison_ids
+            ]
+        problem = corrections.claim_problem(
+            finding["statement"], finding["evidence"], where, MAXIMUM_STATEMENT_CHARACTERS
+        )
+        if problem:
+            corrections.dropped_items.append(problem)
+        else:
+            kept_findings.append(finding)
+    corrected["connected_findings"] = kept_findings
+
+    # Each selected paper should have one reason: a missing, unknown, duplicate, or failing reason counts as dropped.
+    selected_review_ids = list(corrections.passage_text_by_review_id)
+    corrections.droppable_item_count += len(selected_review_ids)
+    kept_reasons: dict[str, dict[str, Any]] = {}
+    for reason_index, paper_reason in enumerate(corrected["paper_reasons"], start=1):
+        where = f"paper_reasons[{reason_index}]"
+        review_id = paper_reason["review_id"]
+        if review_id not in corrections.passage_text_by_review_id or review_id in kept_reasons:
+            corrections.dropped_items.append(f"{where}: unknown or repeated review '{review_id}'")
+            continue
+        paper_reason["evidence"] = corrections.fix_evidence(paper_reason["evidence"], where, only_review_id=review_id)
+        problem = corrections.claim_problem(
+            paper_reason["reason_to_read"],
+            paper_reason["evidence"],
+            where,
+            MAXIMUM_STATEMENT_CHARACTERS,
+            evidence_is_required=bool(corrections.passage_text_by_review_id[review_id]),
+        )
+        if problem:
+            corrections.dropped_items.append(problem)
+            continue
+        kept_reasons[review_id] = paper_reason
+    for review_id in selected_review_ids:
+        if review_id not in kept_reasons and not any(
+            reason["review_id"] == review_id for reason in answer["paper_reasons"]
+        ):
+            corrections.dropped_items.append(f"paper_reasons: no reason for review '{review_id}'")
+    corrected["paper_reasons"] = list(kept_reasons.values())
+
+    return AnswerSalvage(
+        salvaged_output=corrected,
+        relocated_citations=tuple(corrections.relocated_citations),
+        dropped_items=tuple(corrections.dropped_items),
+        droppable_item_count=corrections.droppable_item_count,
+    )
 
 
 WRITER_ROLE = RoleDefinition(
@@ -266,4 +437,6 @@ WRITER_ROLE = RoleDefinition(
     output_schema=WRITER_OUTPUT_SCHEMA,
     render_user_message=_render_writer_user_message,
     find_semantic_problems=_find_writer_problems,
+    salvage_answer=_salvage_writer_answer,
+    find_salvage_problems=_find_problems_of_corrected_writer_answer,
 )

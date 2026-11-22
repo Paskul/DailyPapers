@@ -257,7 +257,7 @@ def test_an_earlier_prompt_versions_stage_is_reused_only_if_it_passes_todays_che
     fake_model._canned_final_answers_by_role["section_reader"] = section_answer(GOOD_FINDING)
     stage = _run_or_load_stage(app, identity, "section:001", SECTION_READER_ROLE, SECTION_INPUT, None)
     assert bool(fake_model.requests_for_role("section_reader")) == model_is_called
-    assert stage.prompt_version == ("section-reader-v2" if model_is_called else "section-reader-v1")
+    assert stage.prompt_version == (SECTION_READER_ROLE.prompt_version if model_is_called else "section-reader-v1")
 
 
 # --------------------------------------------------------------------------------------------------------------------

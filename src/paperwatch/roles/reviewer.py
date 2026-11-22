@@ -25,7 +25,12 @@ import json
 from typing import Any
 
 from paperwatch.reading.evidence_checks import check_numbers_occur_in_passages
-from paperwatch.roles.answer_salvage import AnswerSalvage, DroppableListField, salvage_evidence_answer
+from paperwatch.roles.answer_salvage import (
+    AnswerSalvage,
+    DroppableListField,
+    SingleStatementField,
+    salvage_evidence_answer,
+)
 from paperwatch.roles.base import RoleDefinition, RoleInput
 from paperwatch.roles.evidence_fields import (
     AMBIGUOUS_PASSAGE_SCHEMA,
@@ -33,7 +38,9 @@ from paperwatch.roles.evidence_fields import (
     FINDING_SCHEMA,
     INFERENCE_SCHEMA,
     LIMITATION_SCHEMA,
+    MAXIMUM_PASSAGES_PER_SINGLE_STATEMENT,
     PARSER_PROBLEM_SCHEMA,
+    SINGLE_STATEMENT_SCHEMA,
     STATEMENT_SCHEMA,
     array_of,
     check_finding,
@@ -50,9 +57,12 @@ from paperwatch.roles.output_guards import find_invented_web_addresses
 
 REVIEWER_ROLE_NAME = "reviewer"
 # v1: passage ids, excerpts, separate topic assessment. v2 (2026-11-21): the evidence rules tell the model
-# to cite the passage that holds a quoted number; v1 syntheses are still reused after passing today's checks.
-REVIEWER_PROMPT_VERSION = "reviewer-evidence-v2"
-REVIEWER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("reviewer-evidence-v1",)
+# to cite the passage that holds a quoted number. v3 (2026-11-22, after the second pilot): the three single
+# statements may cite 10 passages instead of 6, ids are written one per entry, section summaries carry no citations,
+# and the 1200-character limit is stated. v3 only loosens a schema bound, so v1 and v2 syntheses still validate and
+# are reused after passing today's checks.
+REVIEWER_PROMPT_VERSION = "reviewer-evidence-v3"
+REVIEWER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("reviewer-evidence-v2", "reviewer-evidence-v1")
 READING_MODE_PASSAGES = "passages"
 READING_MODE_SECTION_NOTES = "section_notes"
 MAXIMUM_RESULTS = 8
@@ -74,6 +84,10 @@ and excerpts quoted in the section notes (section_notes mode).
 - If the coverage is abstract_only, say plainly when the abstract is not enough to describe the method or \
 evaluation, and use evidence_status "insufficient_evidence" there.
 - results: at most {MAXIMUM_RESULTS}, the most important first.
+- research_question, method and evaluation_setting may each cite up to {MAXIMUM_PASSAGES_PER_SINGLE_STATEMENT} \
+passages; every other statement up to 6. Cite the passages that hold the numbers you state.
+- In section_notes mode, a section_summary is an uncited overview: a number you take from it must cite the passage \
+of a finding (or another note) that states it, or be left out.
 
 {EVIDENCE_RULES_FOR_PROMPTS}
 
@@ -84,9 +98,9 @@ REVIEWER_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "one_sentence_summary": {"type": "string"},
-        "research_question": STATEMENT_SCHEMA,
-        "method": STATEMENT_SCHEMA,
-        "evaluation_setting": STATEMENT_SCHEMA,
+        "research_question": SINGLE_STATEMENT_SCHEMA,
+        "method": SINGLE_STATEMENT_SCHEMA,
+        "evaluation_setting": SINGLE_STATEMENT_SCHEMA,
         "assumptions": array_of(STATEMENT_SCHEMA, 6),
         "results": array_of(FINDING_SCHEMA, MAXIMUM_RESULTS),
         "limitations": array_of(LIMITATION_SCHEMA, 6),
@@ -169,7 +183,11 @@ def _find_reviewer_problems(validated_output: dict[str, Any], role_input: RoleIn
 
 
 # "Fix, then drop" (roles/answer_salvage.py). The three single statements (research question, method, evaluation
-# setting) and the summary cannot be dropped: a problem there still needs the repair call.
+# setting) get the citation fixes but cannot be dropped, nor can the summary: a problem left there still needs the
+# repair call.
+REVIEWER_SINGLE_STATEMENT_FIELDS = tuple(
+    SingleStatementField(field_name, MAXIMUM_PASSAGES_PER_SINGLE_STATEMENT) for field_name in SINGLE_STATEMENT_FIELDS
+)
 REVIEWER_DROPPABLE_FIELDS = (
     DroppableListField("assumptions", check_statement),
     DroppableListField("results", check_finding, holds_findings=True),
@@ -181,7 +199,13 @@ REVIEWER_DROPPABLE_FIELDS = (
 
 
 def _salvage_reviewer_answer(answer: dict[str, Any], role_input: RoleInput) -> AnswerSalvage | None:
-    return salvage_evidence_answer(answer, role_input, role_input["citable_passages"], REVIEWER_DROPPABLE_FIELDS)
+    return salvage_evidence_answer(
+        answer,
+        role_input,
+        role_input["citable_passages"],
+        REVIEWER_DROPPABLE_FIELDS,
+        REVIEWER_SINGLE_STATEMENT_FIELDS,
+    )
 
 
 REVIEWER_ROLE = RoleDefinition(

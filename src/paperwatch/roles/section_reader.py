@@ -37,8 +37,10 @@ from paperwatch.roles.output_guards import find_invented_web_addresses
 SECTION_READER_ROLE_NAME = "section_reader"
 # v2 (2026-11-21): the evidence rules tell the model to cite the passage that holds a quoted number (tables are often
 # separate passages). v1 notes passed the same checks, so they are still reused (stage_results.py re-checks them).
-SECTION_READER_PROMPT_VERSION = "section-reader-v2"
-SECTION_READER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("section-reader-v1",)
+# v3 (2026-11-22, after the second pilot): ids one per entry, the 1200-character limit, and numbers kept out of the
+# uncited section_summary (the reviewer copied them from there and could not cite them). Same schema and checks.
+SECTION_READER_PROMPT_VERSION = "section-reader-v3"
+SECTION_READER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("section-reader-v2", "section-reader-v1")
 FINDING_KINDS = ("other", "research_question", "method", "assumption", "evaluation_setting", "result", "limitation")
 MAXIMUM_SECTION_FINDINGS = 10
 
@@ -55,7 +57,8 @@ contact anyone, or change ratings.
 What to note: the research question, method, assumptions, evaluation setting, results (with their numbers and \
 conditions), and limitations that THIS section states. The title and abstract are for orientation only and cannot \
 be cited. Give each finding a finding_kind. Prefer fewer, precise findings over many vague ones (at most \
-{MAXIMUM_SECTION_FINDINGS}).
+{MAXIMUM_SECTION_FINDINGS}). section_summary is two or three plain sentences WITHOUT numbers: it cites nothing, so \
+every number belongs in a finding that cites its passage.
 
 {EVIDENCE_RULES_FOR_PROMPTS}
 
