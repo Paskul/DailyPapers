@@ -42,10 +42,10 @@ repos:
       - id: shellcheck
 
   - repo: https://github.com/biomejs/pre-commit
-    rev: 2a24170fd6adbd6fb1463868533368fe9c01a04d  # frozen: v2.6.6
+    rev: 64c481773cdeda96800dac9ee8f8740e373e44ce  # frozen: v2.6.7
     hooks:
       - id: biome-check  # the monitor page only (biome.json)
-        additional_dependencies: ["@biomejs/biome@2.6.6"]
+        additional_dependencies: ["@biomejs/biome@2.6.7"]
 
   - repo: local
     hooks:
