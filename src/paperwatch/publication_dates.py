@@ -88,9 +88,10 @@ def classify_release(
     A coarse date counts from its earliest possible day: a paper known only as "2026" is new only if found in the
     first week of 2026. This errs toward "older" rather than calling an old paper new.
     """
-    if normalize_partial_date(first_published_date) is None:
+    normalized_date = normalize_partial_date(first_published_date)  # also turns a full timestamp into its day
+    if normalized_date is None:
         return ReleaseClass.UNKNOWN
-    published_day = earliest_calendar_day(first_published_date)
+    published_day = earliest_calendar_day(normalized_date)
     if discovered_at.date() - published_day <= timedelta(days=fresh_window_days):
         return ReleaseClass.NEW_RELEASE
     return ReleaseClass.OLDER_LITERATURE

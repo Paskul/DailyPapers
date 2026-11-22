@@ -93,14 +93,12 @@ def dispatch_order_for_promoted_paper(
 
     The release class uses the ORIGINAL release date, never the discovery time: a 2018 paper found today is class 2.
     """
-    if (
-        classify_release(first_published_date, moment) == ReleaseClass.NEW_RELEASE
-        and normalize_partial_date(first_published_date) is not None
-    ):
+    release_date = normalize_partial_date(first_published_date)  # also turns a full timestamp into its day
+    if release_date is not None and classify_release(release_date, moment) == ReleaseClass.NEW_RELEASE:
         return JobDispatchOrder(
             JobPriorityClass.NEW_RELEASE,
             within_class_order_primary=screening_score,
-            new_release_fresh_until=format_utc_timestamp(compute_new_release_fresh_until(first_published_date)),
+            new_release_fresh_until=format_utc_timestamp(compute_new_release_fresh_until(release_date)),
         )
     return dispatch_order_for_older_paper(screening_score)
 

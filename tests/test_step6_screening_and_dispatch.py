@@ -50,6 +50,7 @@ from paperwatch.jobs import (
     summarize_queued_jobs_by_class,
     upgrade_queued_job_dispatch_order_if_higher,
 )
+from paperwatch.publication_dates import ReleaseClass, classify_release
 from paperwatch.research_profile import load_active_seed_library_paper_ids
 from paperwatch.screening.embedding_model_registry import PINNED_EMBEDDING_MODELS
 from paperwatch.screening.phrase_matching import find_matched_phrases, split_into_match_words
@@ -533,6 +534,13 @@ def test_release_class_uses_the_original_release_date_and_a_seven_day_window():
     for older_date in ("2026-11-11", "2018-06", "2026-11", None):  # "2026-11" counts from 2026-11-01
         older = dispatch_order_for_promoted_paper(older_date, 0.6, SCREENING_MOMENT)
         assert older.priority_class == JobPriorityClass.HISTORICAL_SEARCH and older.new_release_fresh_until is None
+
+
+def test_a_full_timestamp_counts_as_its_calendar_day():
+    # normalize_partial_date accepts "2026-11-17T18:59:38Z" as 2026-11-17; classification used to crash on it.
+    from_timestamp = dispatch_order_for_promoted_paper("2026-11-17T18:59:38Z", 0.6, SCREENING_MOMENT)
+    assert from_timestamp == dispatch_order_for_promoted_paper("2026-11-17", 0.6, SCREENING_MOMENT)
+    assert classify_release("2026-11-17T18:59:38Z", SCREENING_MOMENT) == ReleaseClass.NEW_RELEASE
 
 
 def test_all_four_job_types_are_claimed_in_class_order(tmp_path, monkeypatch):
