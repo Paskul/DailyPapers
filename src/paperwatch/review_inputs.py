@@ -25,8 +25,10 @@ TEXT_KIND_ABSTRACT = "abstract"
 TEXT_KIND_EXTRACTED_TEXT = "extracted_text"
 COVERAGE_ABSTRACT_ONLY = "abstract_only"
 # Key prefixes. The abstract prefix is the coverage label it always had, so keys stored before part 7 stay valid.
-REVIEW_INPUT_KEY_PREFIX_BY_TEXT_KIND = {TEXT_KIND_ABSTRACT: COVERAGE_ABSTRACT_ONLY,
-                                        TEXT_KIND_EXTRACTED_TEXT: TEXT_KIND_EXTRACTED_TEXT}
+REVIEW_INPUT_KEY_PREFIX_BY_TEXT_KIND = {
+    TEXT_KIND_ABSTRACT: COVERAGE_ABSTRACT_ONLY,
+    TEXT_KIND_EXTRACTED_TEXT: TEXT_KIND_EXTRACTED_TEXT,
+}
 INITIAL_READING_GENERATION = "initial"  # every automatic reading; operator rereads get a fresh "g_..." id
 REVIEW_INPUT_KEY_HASH_CHARACTERS = 32
 
@@ -44,8 +46,9 @@ class ReadingInputIdentity:
 
     @property
     def review_input_key(self) -> str:
-        return build_review_input_key(REVIEW_INPUT_KEY_PREFIX_BY_TEXT_KIND[self.text_kind], self.source_text_sha256,
-                                      self.reading_generation)
+        return build_review_input_key(
+            REVIEW_INPUT_KEY_PREFIX_BY_TEXT_KIND[self.text_kind], self.source_text_sha256, self.reading_generation
+        )
 
 
 def fingerprint_abstract_reading_text(title: str, abstract: str | None) -> str:
@@ -71,10 +74,13 @@ def build_review_input_key(key_prefix: str, source_text_sha256: str, reading_gen
     return review_input_key
 
 
-def build_abstract_reading_identity(edition_row, reading_generation: str = INITIAL_READING_GENERATION
-                                    ) -> ReadingInputIdentity:
+def build_abstract_reading_identity(
+    edition_row, reading_generation: str = INITIAL_READING_GENERATION
+) -> ReadingInputIdentity:
     """The abstract (or title-only) input of one edition. Edition rows are immutable text snapshots."""
     return ReadingInputIdentity(
-        edition_id=edition_row["edition_id"], text_kind=TEXT_KIND_ABSTRACT,
+        edition_id=edition_row["edition_id"],
+        text_kind=TEXT_KIND_ABSTRACT,
         source_text_sha256=fingerprint_abstract_reading_text(edition_row["title"], edition_row["abstract"]),
-        reading_generation=reading_generation)
+        reading_generation=reading_generation,
+    )

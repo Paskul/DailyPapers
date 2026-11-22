@@ -22,7 +22,8 @@ import httpx
 PUBLIC_ADDRESS = "93.184.216.34"
 ARXIV_API_QUERY_PATTERN = re.compile(
     r"^\((?:cat:(?P<category>[^)\s]+)|all:\"(?P<phrase>[^\"]+)\")\)(?: AND submittedDate:\[(?P<first>\d{8})\d{4} TO "
-    r"(?P<last>\d{8})\d{4}\])?$")
+    r"(?P<last>\d{8})\d{4}\])?$"
+)
 
 
 @dataclass
@@ -87,8 +88,9 @@ class FakePaperProviders:
         if request.url.host == "export.arxiv.org" and request.url.path == "/api/query":
             return self._arxiv_api(request)
         if request.url.host == "export.arxiv.org" and request.url.path.startswith("/pdf/"):
-            return _streamed(200, {"content-type": "application/pdf"},
-                             b"%PDF-1.4 synthetic " + request.url.path.encode())
+            return _streamed(
+                200, {"content-type": "application/pdf"}, b"%PDF-1.4 synthetic " + request.url.path.encode()
+            )
         if request.url.host == "api.openalex.org":
             return self._openalex(request)
         return _streamed(404, {"content-type": "text/plain"}, b"not found")
@@ -110,8 +112,11 @@ class FakePaperProviders:
         matching_papers = [paper for paper in self.arxiv_papers if _arxiv_paper_matches(paper, query_match)]
         matching_papers.sort(key=lambda paper: (paper.submitted_on, paper.arxiv_id), reverse=True)
         start, page_size = int(request.url.params["start"]), int(request.url.params["max_results"])
-        return _streamed(200, {"content-type": "application/atom+xml; charset=utf-8"},
-                         build_api_page_xml(matching_papers[start:start + page_size], len(matching_papers), start))
+        return _streamed(
+            200,
+            {"content-type": "application/atom+xml; charset=utf-8"},
+            build_api_page_xml(matching_papers[start : start + page_size], len(matching_papers), start),
+        )
 
     # ---- OpenAlex -------------------------------------------------------------------------------------------------
     def _openalex(self, request: httpx.Request) -> httpx.Response:
@@ -120,44 +125,57 @@ class FakePaperProviders:
         filters = dict(part.split(":", 1) for part in request.url.params.get("filter", "").split(",") if part)
         if "openalex" in filters:  # a batch of known ids (plan part 8)
             wanted_ids = filters["openalex"].split("|")
-            document = {"meta": {"count": 0, "next_cursor": None, "per_page": len(wanted_ids)},
-                        "results": [openalex_work_json(work) for work in self.openalex_works
-                                    if work.work_id in wanted_ids]}
+            document = {
+                "meta": {"count": 0, "next_cursor": None, "per_page": len(wanted_ids)},
+                "results": [openalex_work_json(work) for work in self.openalex_works if work.work_id in wanted_ids],
+            }
             document["meta"]["count"] = len(document["results"])
             return _streamed(200, {"content-type": "application/json"}, json.dumps(document).encode())
         phrase = (request.url.params.get("search") or filters.get("title_and_abstract.search", "").strip('"')).lower()
-        first_date = date.fromisoformat(filters["from_publication_date"]) if "from_publication_date" in filters \
-            else date.min
-        last_date = date.fromisoformat(filters["to_publication_date"]) if "to_publication_date" in filters \
-            else date.max
+        first_date = (
+            date.fromisoformat(filters["from_publication_date"]) if "from_publication_date" in filters else date.min
+        )
+        last_date = date.fromisoformat(filters["to_publication_date"]) if "to_publication_date" in filters else date.max
         now = self.current_time() if self.current_time else None
-        visible_works = [work for work in self.openalex_works
-                         if (work.visible_from is None or now is None or now >= work.visible_from)
-                         and first_date <= work.publication_date <= last_date
-                         and phrase in (work.title + " " + work.abstract).lower()]
+        visible_works = [
+            work
+            for work in self.openalex_works
+            if (work.visible_from is None or now is None or now >= work.visible_from)
+            and first_date <= work.publication_date <= last_date
+            and phrase in (work.title + " " + work.abstract).lower()
+        ]
         if request.url.params.get("sort") == "cited_by_count:desc":
             visible_works.sort(key=lambda work: (-work.cited_by_count, work.work_id))
         page_size = int(request.url.params["per-page"])
         cursor = request.url.params["cursor"]
         start = 0 if cursor == "*" else int(cursor.removeprefix("page"))
-        page_works = visible_works[start:start + page_size]
+        page_works = visible_works[start : start + page_size]
         next_cursor = f"page{start + page_size}" if start + page_size < len(visible_works) else None
-        document = {"meta": {"count": len(visible_works), "next_cursor": next_cursor, "per_page": page_size},
-                    "results": [openalex_work_json(work) for work in page_works]}
+        document = {
+            "meta": {"count": len(visible_works), "next_cursor": next_cursor, "per_page": page_size},
+            "results": [openalex_work_json(work) for work in page_works],
+        }
         return _streamed(200, {"content-type": "application/json"}, json.dumps(document).encode())
 
     def _openalex_single_work(self, work_reference: str) -> httpx.Response:
         for work in self.openalex_works:
-            if work_reference == work.work_id or (work.doi and work_reference.lower() == f"doi:{work.doi}".lower()) \
-                    or (work.arxiv_id and work_reference.lower() == f"doi:10.48550/arxiv.{work.arxiv_id}".lower()):
-                return _streamed(200, {"content-type": "application/json"},
-                                 json.dumps(openalex_work_json(work)).encode())
+            if (
+                work_reference == work.work_id
+                or (work.doi and work_reference.lower() == f"doi:{work.doi}".lower())
+                or (work.arxiv_id and work_reference.lower() == f"doi:10.48550/arxiv.{work.arxiv_id}".lower())
+            ):
+                return _streamed(
+                    200, {"content-type": "application/json"}, json.dumps(openalex_work_json(work)).encode()
+                )
         return _streamed(404, {"content-type": "application/json"}, b'{"error": "not found"}')
 
     # ---- inspection -----------------------------------------------------------------------------------------------
     def requests_to(self, host: str, path_prefix: str = "") -> list[httpx.Request]:
-        return [request for request in self.sent_requests
-                if request.url.host == host and request.url.path.startswith(path_prefix)]
+        return [
+            request
+            for request in self.sent_requests
+            if request.url.host == host and request.url.path.startswith(path_prefix)
+        ]
 
 
 def _arxiv_paper_matches(paper: FakeArxivPaper, query_match: re.Match) -> bool:
@@ -189,18 +207,18 @@ def build_feed_xml(category: str, announced_on: date | None, items: list[FeedIte
     <link href="https://arxiv.org/abs/{paper.arxiv_id}"/>
     <summary>arXiv:{paper.versioned_id} Announce Type: {item.announce_type}
 Abstract: {escape(paper.abstract)}</summary>
-    {''.join(f'<category term="{escape(c)}"/>' for c in paper.categories)}
+    {"".join(f'<category term="{escape(c)}"/>' for c in paper.categories)}
     <published>{announced_on.isoformat()}T00:00:00-05:00</published>
     <arxiv:announce_type>{item.announce_type}</arxiv:announce_type>
     <dc:rights>http://creativecommons.org/licenses/by/4.0/</dc:rights>
-    {f'<arxiv:DOI>{escape(paper.doi)}</arxiv:DOI>' if paper.doi else ''}
-    <dc:creator>{escape(', '.join(paper.authors))}</dc:creator>
+    {f"<arxiv:DOI>{escape(paper.doi)}</arxiv:DOI>" if paper.doi else ""}
+    <dc:creator>{escape(", ".join(paper.authors))}</dc:creator>
   </entry>""")
     return f"""<?xml version='1.0' encoding='UTF-8'?>
 <feed xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns="http://www.w3.org/2005/Atom" xml:lang="en-us">
   <id>http://rss.arxiv.org/atom/{category}</id>
   <title>{category} updates on arXiv.org</title>
-  <updated>{(announced_on or date(2026, 1, 1)).isoformat()}T05:01:26.819627+00:00</updated>{''.join(entries)}
+  <updated>{(announced_on or date(2026, 1, 1)).isoformat()}T05:01:26.819627+00:00</updated>{"".join(entries)}
 </feed>""".encode()
 
 
@@ -214,11 +232,11 @@ def build_api_page_xml(papers: list[FakeArxivPaper], total_results: int, start: 
     <title>{escape(paper.title)}</title>
     <updated>{updated_on.isoformat()}T18:59:38Z</updated>
     <summary>{escape(paper.abstract)}</summary>
-    {''.join(f'<category term="{escape(c)}" scheme="http://arxiv.org/schemas/atom"/>' for c in paper.categories)}
+    {"".join(f'<category term="{escape(c)}" scheme="http://arxiv.org/schemas/atom"/>' for c in paper.categories)}
     <published>{paper.submitted_on.isoformat()}T18:59:38Z</published>
-    {f'<arxiv:comment>{escape(paper.comment)}</arxiv:comment>' if paper.comment else ''}
-    {f'<arxiv:doi>{escape(paper.doi)}</arxiv:doi>' if paper.doi else ''}
-    {''.join(f'<author><name>{escape(name)}</name></author>' for name in paper.authors)}
+    {f"<arxiv:comment>{escape(paper.comment)}</arxiv:comment>" if paper.comment else ""}
+    {f"<arxiv:doi>{escape(paper.doi)}</arxiv:doi>" if paper.doi else ""}
+    {"".join(f"<author><name>{escape(name)}</name></author>" for name in paper.authors)}
   </entry>""")
     return f"""<?xml version='1.0' encoding='UTF-8'?>
 <feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
@@ -226,7 +244,7 @@ def build_api_page_xml(papers: list[FakeArxivPaper], total_results: int, start: 
   <title>arXiv Query</title>
   <opensearch:itemsPerPage>{len(papers)}</opensearch:itemsPerPage>
   <opensearch:totalResults>{total_results}</opensearch:totalResults>
-  <opensearch:startIndex>{start}</opensearch:startIndex>{''.join(entries)}
+  <opensearch:startIndex>{start}</opensearch:startIndex>{"".join(entries)}
 </feed>""".encode()
 
 
@@ -237,26 +255,49 @@ def openalex_work_json(work: FakeOpenAlexWork) -> dict:
         inverted_index.setdefault(word, []).append(position)
     locations = []
     if work.doi:
-        locations.append({"id": f"doi:{work.doi}", "doi": f"https://doi.org/{work.doi}",
-                          "landing_page_url": f"https://doi.org/{work.doi}", "pdf_url": None,
-                          "source": {"display_name": "Synthetic Journal"}, "version": "publishedVersion"})
+        locations.append(
+            {
+                "id": f"doi:{work.doi}",
+                "doi": f"https://doi.org/{work.doi}",
+                "landing_page_url": f"https://doi.org/{work.doi}",
+                "pdf_url": None,
+                "source": {"display_name": "Synthetic Journal"},
+                "version": "publishedVersion",
+            }
+        )
     if work.arxiv_id:
-        locations.append({"landing_page_url": f"https://arxiv.org/abs/{work.arxiv_id}",
-                          "pdf_url": f"https://arxiv.org/pdf/{work.arxiv_id}",
-                          "source": {"display_name": "arXiv (Cornell University)"}, "version": "submittedVersion"})
-        locations.append({"id": f"doi:10.48550/arxiv.{work.arxiv_id}",
-                          "landing_page_url": f"https://doi.org/10.48550/arxiv.{work.arxiv_id}"})
-    return {"id": f"https://openalex.org/{work.work_id}",
-            "doi": f"https://doi.org/{work.doi}" if work.doi else None,
-            "display_name": work.title, "publication_date": work.publication_date.isoformat(),
-            "publication_year": work.publication_date.year, "type": "article", "is_retracted": work.is_retracted,
-            "cited_by_count": work.cited_by_count,
-            "authorships": [{"author": {"display_name": "C. Synthetic"}}],
-            "abstract_inverted_index": inverted_index,
-            "ids": {"openalex": f"https://openalex.org/{work.work_id}",
-                    **({"doi": f"https://doi.org/{work.doi}"} if work.doi else {})},
-            "locations": locations,
-            "referenced_works": [f"https://openalex.org/{work_id}" for work_id in work.referenced_work_ids]}
+        locations.append(
+            {
+                "landing_page_url": f"https://arxiv.org/abs/{work.arxiv_id}",
+                "pdf_url": f"https://arxiv.org/pdf/{work.arxiv_id}",
+                "source": {"display_name": "arXiv (Cornell University)"},
+                "version": "submittedVersion",
+            }
+        )
+        locations.append(
+            {
+                "id": f"doi:10.48550/arxiv.{work.arxiv_id}",
+                "landing_page_url": f"https://doi.org/10.48550/arxiv.{work.arxiv_id}",
+            }
+        )
+    return {
+        "id": f"https://openalex.org/{work.work_id}",
+        "doi": f"https://doi.org/{work.doi}" if work.doi else None,
+        "display_name": work.title,
+        "publication_date": work.publication_date.isoformat(),
+        "publication_year": work.publication_date.year,
+        "type": "article",
+        "is_retracted": work.is_retracted,
+        "cited_by_count": work.cited_by_count,
+        "authorships": [{"author": {"display_name": "C. Synthetic"}}],
+        "abstract_inverted_index": inverted_index,
+        "ids": {
+            "openalex": f"https://openalex.org/{work.work_id}",
+            **({"doi": f"https://doi.org/{work.doi}"} if work.doi else {}),
+        },
+        "locations": locations,
+        "referenced_works": [f"https://openalex.org/{work_id}" for work_id in work.referenced_work_ids],
+    }
 
 
 def _streamed(status_code: int, headers: dict, content: bytes) -> httpx.Response:
@@ -268,7 +309,10 @@ def search_windows_sent(requests: list[httpx.Request]) -> list[str]:
     windows = []
     for request in requests:
         query_text = request.url.params.get("search_query") or request.url.params.get("filter") or ""
-        window_match = re.search(r"submittedDate:\[(\d{8})\d{4} TO (\d{8})\d{4}\]|from_publication_date:([\d-]+),"
-                                 r"to_publication_date:([\d-]+)", urllib.parse.unquote(query_text))
+        window_match = re.search(
+            r"submittedDate:\[(\d{8})\d{4} TO (\d{8})\d{4}\]|from_publication_date:([\d-]+),"
+            r"to_publication_date:([\d-]+)",
+            urllib.parse.unquote(query_text),
+        )
         windows.append("..".join(group for group in window_match.groups() if group) if window_match else "")
     return windows

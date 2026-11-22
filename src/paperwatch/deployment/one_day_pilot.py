@@ -49,8 +49,15 @@ REPORT_SERVICE = f"{PILOT_UNIT_PREFIX}report.service"
 REPORT_TIMER = f"{PILOT_UNIT_PREFIX}report.timer"
 FINISH_SERVICE = f"{PILOT_UNIT_PREFIX}finish.service"
 FINISH_TIMER = f"{PILOT_UNIT_PREFIX}finish.timer"
-ALL_PILOT_UNIT_NAMES = (COLLECT_SERVICE, COLLECT_TIMER, WORKER_SERVICE, REPORT_SERVICE, REPORT_TIMER, FINISH_SERVICE,
-                        FINISH_TIMER)
+ALL_PILOT_UNIT_NAMES = (
+    COLLECT_SERVICE,
+    COLLECT_TIMER,
+    WORKER_SERVICE,
+    REPORT_SERVICE,
+    REPORT_TIMER,
+    FINISH_SERVICE,
+    FINISH_TIMER,
+)
 PILOT_TIMER_NAMES = (COLLECT_TIMER, REPORT_TIMER, FINISH_TIMER)
 
 REPORT_START_DELAY = timedelta(seconds=30)  # start just after the cutoff, so the report date is surely due
@@ -65,6 +72,7 @@ DEFAULT_PAPERWATCH_EXECUTABLE = Path("/opt/paperwatch/venv/bin/paperwatch")
 @dataclass(frozen=True)
 class OneDayPilotPlan:
     """Everything the unit files depend on. All moments are aware datetimes."""
+
     pilot_date: date  # the day the pilot starts; its report is the one for pilot_date + 1
     timezone_name: str
     collect_moments: tuple[datetime, ...]  # future collect times before the cutoff
@@ -95,26 +103,41 @@ class OneDayPilotPlan:
         return self.report_cutoff + FINISH_DELAY
 
 
-def plan_one_day_pilot(app_config: AppConfig, *, now: datetime, collector_uid: int,
-                       paperwatch_executable: Path = DEFAULT_PAPERWATCH_EXECUTABLE) -> OneDayPilotPlan:
+def plan_one_day_pilot(
+    app_config: AppConfig,
+    *,
+    now: datetime,
+    collector_uid: int,
+    paperwatch_executable: Path = DEFAULT_PAPERWATCH_EXECUTABLE,
+) -> OneDayPilotPlan:
     """The pilot that starts today (in report.timezone) and reports tomorrow at report.publish_time."""
     pilot_timezone = ZoneInfo(app_config.report.timezone)
     pilot_date = now.astimezone(pilot_timezone).date()
-    report_cutoff = datetime.combine(pilot_date + timedelta(days=1),
-                                     parse_clock_time(app_config.report.publish_time), tzinfo=pilot_timezone)
+    report_cutoff = datetime.combine(
+        pilot_date + timedelta(days=1), parse_clock_time(app_config.report.publish_time), tzinfo=pilot_timezone
+    )
     collect_moments = sorted(
-        moment for day in (pilot_date, pilot_date + timedelta(days=1))
+        moment
+        for day in (pilot_date, pilot_date + timedelta(days=1))
         for clock_text in app_config.schedule.collect_times
-        if now < (moment := datetime.combine(day, parse_clock_time(clock_text), tzinfo=pilot_timezone))
-        < report_cutoff)
+        if now < (moment := datetime.combine(day, parse_clock_time(clock_text), tzinfo=pilot_timezone)) < report_cutoff
+    )
     if report_cutoff <= now:
         raise ValueError("the report cutoff of this pilot is not in the future")
     return OneDayPilotPlan(
-        pilot_date=pilot_date, timezone_name=app_config.report.timezone, collect_moments=tuple(collect_moments),
-        report_cutoff=report_cutoff, paperwatch_home=app_config.home_dir, state_dir=app_config.state_dir,
-        output_dir=app_config.output_dir, paperwatch_executable=paperwatch_executable,
-        collector_account=app_config.access.collector_account, collector_uid=collector_uid,
-        worker_account=app_config.access.worker_account, shared_state_group=app_config.access.shared_state_group)
+        pilot_date=pilot_date,
+        timezone_name=app_config.report.timezone,
+        collect_moments=tuple(collect_moments),
+        report_cutoff=report_cutoff,
+        paperwatch_home=app_config.home_dir,
+        state_dir=app_config.state_dir,
+        output_dir=app_config.output_dir,
+        paperwatch_executable=paperwatch_executable,
+        collector_account=app_config.access.collector_account,
+        collector_uid=collector_uid,
+        worker_account=app_config.access.worker_account,
+        shared_state_group=app_config.access.shared_state_group,
+    )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -130,14 +153,18 @@ def systemd_calendar_time(moment: datetime, timezone_name: str) -> str:
 def only_before_condition(deadline: datetime) -> str:
     """ExecCondition: exit 0 (run) only before `deadline`. `$$` and `%%` are systemd's escapes for `$` and `%`."""
     deadline_epoch = int(deadline.timestamp())
-    return (f"# Skip (never run) at or after {deadline.astimezone(timezone.utc):%Y-%m-%dT%H:%M:%SZ}, whoever starts "
-            f"this unit.\nExecCondition=/usr/bin/sh -c 'test \"$$(date +%%s)\" -lt {deadline_epoch}'")
+    return (
+        f"# Skip (never run) at or after {deadline.astimezone(timezone.utc):%Y-%m-%dT%H:%M:%SZ}, whoever starts "
+        f"this unit.\nExecCondition=/usr/bin/sh -c 'test \"$$(date +%%s)\" -lt {deadline_epoch}'"
+    )
 
 
 def _pilot_notice(plan: OneDayPilotPlan) -> str:
-    return (f"# ONE-DAY PILOT of paperwatch (plan part 10), {plan.pilot_date} -> report {plan.report_date}.\n"
-            f"# Generated by paperwatch.deployment.one_day_pilot. Runs once; {FINISH_SERVICE} deletes this file at\n"
-            f"# {systemd_calendar_time(plan.finish_moment, plan.timezone_name)}.\n")
+    return (
+        f"# ONE-DAY PILOT of paperwatch (plan part 10), {plan.pilot_date} -> report {plan.report_date}.\n"
+        f"# Generated by paperwatch.deployment.one_day_pilot. Runs once; {FINISH_SERVICE} deletes this file at\n"
+        f"# {systemd_calendar_time(plan.finish_moment, plan.timezone_name)}.\n"
+    )
 
 
 def _paperwatch_command(plan: OneDayPilotPlan, *arguments: str) -> str:
@@ -146,15 +173,20 @@ def _paperwatch_command(plan: OneDayPilotPlan, *arguments: str) -> str:
 
 def _worker_sandbox_lines(plan: OneDayPilotPlan) -> str:
     """systemd sandbox for `work` and `report` (the processes that talk to the model)."""
-    return worker_sandbox_lines(worker_account=plan.worker_account, shared_state_group=plan.shared_state_group,
-                                state_dir=plan.state_dir, output_dir=plan.output_dir)
+    return worker_sandbox_lines(
+        worker_account=plan.worker_account,
+        shared_state_group=plan.shared_state_group,
+        state_dir=plan.state_dir,
+        output_dir=plan.output_dir,
+    )
 
 
 def render_pilot_units(plan: OneDayPilotPlan) -> dict[str, str]:
     """{unit file name: content} for every pilot unit."""
     notice = _pilot_notice(plan)
-    collect_calendar_lines = "\n".join(f"OnCalendar={systemd_calendar_time(moment, plan.timezone_name)}"
-                                       for moment in plan.collect_moments)
+    collect_calendar_lines = "\n".join(
+        f"OnCalendar={systemd_calendar_time(moment, plan.timezone_name)}" for moment in plan.collect_moments
+    )
     unit_paths = " ".join(f"/etc/systemd/system/{unit_name}" for unit_name in ALL_PILOT_UNIT_NAMES)
     unit_names = " ".join(ALL_PILOT_UNIT_NAMES)
     stamp_paths = " ".join(str(SYSTEMD_TIMER_STAMP_DIR / f"stamp-{timer_name}") for timer_name in PILOT_TIMER_NAMES)
@@ -273,11 +305,15 @@ WantedBy=timers.target
 
 def describe_pilot_plan(plan: OneDayPilotPlan) -> list[str]:
     describe = lambda moment: systemd_calendar_time(moment, plan.timezone_name)  # noqa: E731
-    return ([f"Pilot {plan.pilot_date} -> report {plan.report_date}"] +
-            [f"  collect  {describe(moment)}" for moment in plan.collect_moments] +
-            [f"  worker   with each collect, until {describe(plan.report_cutoff)}",
-             f"  report   {describe(plan.report_start)} (retried until {describe(plan.report_window_end)})",
-             f"  finish   {describe(plan.finish_moment)}: worker stopped, every pilot unit disabled and deleted"])
+    return (
+        [f"Pilot {plan.pilot_date} -> report {plan.report_date}"]
+        + [f"  collect  {describe(moment)}" for moment in plan.collect_moments]
+        + [
+            f"  worker   with each collect, until {describe(plan.report_cutoff)}",
+            f"  report   {describe(plan.report_start)} (retried until {describe(plan.report_window_end)})",
+            f"  finish   {describe(plan.finish_moment)}: worker stopped, every pilot unit disabled and deleted",
+        ]
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -287,9 +323,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--paperwatch-executable", type=Path, default=DEFAULT_PAPERWATCH_EXECUTABLE)
     arguments = parser.parse_args(argv)
     app_config = load_app_config(arguments.home)
-    plan = plan_one_day_pilot(app_config, now=datetime.now(timezone.utc),
-                              collector_uid=pwd.getpwnam(app_config.access.collector_account).pw_uid,
-                              paperwatch_executable=arguments.paperwatch_executable)
+    plan = plan_one_day_pilot(
+        app_config,
+        now=datetime.now(timezone.utc),
+        collector_uid=pwd.getpwnam(app_config.access.collector_account).pw_uid,
+        paperwatch_executable=arguments.paperwatch_executable,
+    )
     for unit_name, unit_text in render_pilot_units(plan).items():
         unit_path = arguments.unit_dir / unit_name
         unit_path.write_text(unit_text)

@@ -43,21 +43,26 @@ def build_public_query_catalog(topics: tuple[TopicDefinition, ...]) -> dict[str,
             normalized_phrase = collapse_whitespace(raw_phrase)
             phrase_hash = hashlib.sha256(normalized_phrase.lower().encode("utf-8")).hexdigest()
             for provider_name in KEYWORD_SEARCH_PROVIDERS:
-                query_id = f"{topic.topic_id}:{provider_name}:{QUERY_KIND_KEYWORDS}:" \
-                           f"{phrase_hash[:KEYWORD_ID_HASH_CHARACTERS]}"
-                catalog[query_id] = PublicQuery(query_id, topic.topic_id, provider_name, QUERY_KIND_KEYWORDS,
-                                                normalized_phrase)
+                query_id = (
+                    f"{topic.topic_id}:{provider_name}:{QUERY_KIND_KEYWORDS}:{phrase_hash[:KEYWORD_ID_HASH_CHARACTERS]}"
+                )
+                catalog[query_id] = PublicQuery(
+                    query_id, topic.topic_id, provider_name, QUERY_KIND_KEYWORDS, normalized_phrase
+                )
         for arxiv_category in topic.arxiv_categories:
             for provider_name in CATEGORY_SEARCH_PROVIDERS:
                 query_id = f"{topic.topic_id}:{provider_name}:{QUERY_KIND_CATEGORY}:{arxiv_category}"
-                catalog[query_id] = PublicQuery(query_id, topic.topic_id, provider_name, QUERY_KIND_CATEGORY,
-                                                arxiv_category)
+                catalog[query_id] = PublicQuery(
+                    query_id, topic.topic_id, provider_name, QUERY_KIND_CATEGORY, arxiv_category
+                )
     return catalog
 
 
 def find_public_query(catalog: dict[str, PublicQuery], query_id: str) -> PublicQuery:
     """The approved entry for `query_id`, or SourceAccessDenied. Never builds a query from the id text itself."""
     if not isinstance(query_id, str) or query_id not in catalog:
-        raise SourceAccessDenied(f"'{query_id}' is not an approved public query id; only ids from the query "
-                                 "catalog (built from topics.toml public terms) may be searched")
+        raise SourceAccessDenied(
+            f"'{query_id}' is not an approved public query id; only ids from the query "
+            "catalog (built from topics.toml public terms) may be searched"
+        )
     return catalog[query_id]

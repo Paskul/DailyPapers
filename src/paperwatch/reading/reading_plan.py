@@ -35,17 +35,29 @@ COVERAGE_PARTIAL_TEXT = "partial_text"
 COVERAGE_ABSTRACT_ONLY = "abstract_only"
 
 READING_PRIORITY_BY_SECTION_KIND: dict[SectionKind, int] = {
-    SectionKind.METHOD: 0, SectionKind.RESULTS: 0,
-    SectionKind.DISCUSSION: 1, SectionKind.CONCLUSION: 1,
-    SectionKind.INTRODUCTION: 2, SectionKind.OTHER: 2,
-    SectionKind.BACKGROUND: 3, SectionKind.ABSTRACT: 3, SectionKind.TITLE: 3,
+    SectionKind.METHOD: 0,
+    SectionKind.RESULTS: 0,
+    SectionKind.DISCUSSION: 1,
+    SectionKind.CONCLUSION: 1,
+    SectionKind.INTRODUCTION: 2,
+    SectionKind.OTHER: 2,
+    SectionKind.BACKGROUND: 3,
+    SectionKind.ABSTRACT: 3,
+    SectionKind.TITLE: 3,
     SectionKind.FRONT_MATTER: 4,
     SectionKind.APPENDIX: 5,
 }
 NEVER_READ_SECTION_KINDS = frozenset({SectionKind.REFERENCES, SectionKind.ACKNOWLEDGMENTS})
 OPTIONAL_SECTION_KINDS = frozenset({SectionKind.FRONT_MATTER, SectionKind.APPENDIX})  # not needed for full_text
-CLOSING_SECTION_KINDS = frozenset({SectionKind.CONCLUSION, SectionKind.DISCUSSION, SectionKind.REFERENCES,
-                                   SectionKind.ACKNOWLEDGMENTS, SectionKind.APPENDIX})
+CLOSING_SECTION_KINDS = frozenset(
+    {
+        SectionKind.CONCLUSION,
+        SectionKind.DISCUSSION,
+        SectionKind.REFERENCES,
+        SectionKind.ACKNOWLEDGMENTS,
+        SectionKind.APPENDIX,
+    }
+)
 PER_PASSAGE_PROMPT_OVERHEAD_CHARACTERS = 60  # JSON keys, id, page, and section name around each passage
 
 
@@ -103,11 +115,18 @@ class ReadingPlan:
             "plan_version": READING_PLAN_VERSION,
             "segmentation_version": PASSAGE_SEGMENTATION_VERSION,
             "coverage": self.coverage,
-            "sections_read": [{"section_number": section.section_number, "titles": list(section.section_titles),
-                               "passages": f"{section.passage_ids[0]}-{section.passage_ids[-1]}"}
-                              for section in self.sections_to_read],
-            "sections_not_read": [{"section_number": section.section_number,
-                                   "titles": list(section.section_titles)} for section in self.unread_sections],
+            "sections_read": [
+                {
+                    "section_number": section.section_number,
+                    "titles": list(section.section_titles),
+                    "passages": f"{section.passage_ids[0]}-{section.passage_ids[-1]}",
+                }
+                for section in self.sections_to_read
+            ],
+            "sections_not_read": [
+                {"section_number": section.section_number, "titles": list(section.section_titles)}
+                for section in self.unread_sections
+            ],
             "skipped_not_substantive": list(self.skipped_section_titles),
             "partial_reasons": list(self.partial_reasons),
         }
@@ -115,72 +134,104 @@ class ReadingPlan:
 
 def plan_abstract_reading(passages: tuple[Passage, ...]) -> ReadingPlan:
     reading_section = ReadingSection(1, passages, 0, True)
-    return ReadingPlan(COVERAGE_ABSTRACT_ONLY, (reading_section,), (reading_section,), (), (),
-                       _plan_sha256(COVERAGE_ABSTRACT_ONLY, (reading_section,), (reading_section,), 0, 0))
+    return ReadingPlan(
+        COVERAGE_ABSTRACT_ONLY,
+        (reading_section,),
+        (reading_section,),
+        (),
+        (),
+        _plan_sha256(COVERAGE_ABSTRACT_ONLY, (reading_section,), (reading_section,), 0, 0),
+    )
 
 
-def plan_full_text_reading(passages: tuple[Passage, ...], *, section_max_characters: int,
-                           max_sections_per_paper: int) -> ReadingPlan:
+def plan_full_text_reading(
+    passages: tuple[Passage, ...], *, section_max_characters: int, max_sections_per_paper: int
+) -> ReadingPlan:
     if passages and all(passage.section_kind == SectionKind.FRONT_MATTER for passage in passages):
         has_recognized_structure = False  # no heading was recognized: everything is required, completeness unknown
     else:
         has_recognized_structure = True
     readable_passages = [passage for passage in passages if passage.section_kind not in NEVER_READ_SECTION_KINDS]
-    skipped_titles = tuple(dict.fromkeys(passage.section_title for passage in passages
-                                         if passage.section_kind in NEVER_READ_SECTION_KINDS))
+    skipped_titles = tuple(
+        dict.fromkeys(passage.section_title for passage in passages if passage.section_kind in NEVER_READ_SECTION_KINDS)
+    )
     all_sections = _build_reading_sections(readable_passages, section_max_characters, has_recognized_structure)
-    chosen_sections = sorted(all_sections, key=lambda section: (section.reading_priority,
-                                                                section.section_number))[:max_sections_per_paper]
+    chosen_sections = sorted(all_sections, key=lambda section: (section.reading_priority, section.section_number))[
+        :max_sections_per_paper
+    ]
     sections_to_read = tuple(sorted(chosen_sections, key=lambda section: section.section_number))
 
     partial_reasons: list[str] = []
     read_numbers = {section.section_number for section in sections_to_read}
-    unread_required = [section for section in all_sections
-                       if section.has_required_content and section.section_number not in read_numbers]
+    unread_required = [
+        section
+        for section in all_sections
+        if section.has_required_content and section.section_number not in read_numbers
+    ]
     if unread_required:
-        partial_reasons.append(f"{len(unread_required)} reading section(s) with substantive content not read "
-                               f"(limit: {max_sections_per_paper} per paper)")
+        partial_reasons.append(
+            f"{len(unread_required)} reading section(s) with substantive content not read "
+            f"(limit: {max_sections_per_paper} per paper)"
+        )
     if not has_recognized_structure:
         partial_reasons.append("no section headings recognized, so completeness cannot be confirmed")
     elif not any(passage.section_kind in CLOSING_SECTION_KINDS for passage in passages):
-        partial_reasons.append("no closing section (conclusion, discussion, references) found: the extraction may "
-                               "be truncated")
+        partial_reasons.append(
+            "no closing section (conclusion, discussion, references) found: the extraction may be truncated"
+        )
     if not sections_to_read:
         partial_reasons.append("the extracted text holds no readable passages")
     coverage = COVERAGE_PARTIAL_TEXT if partial_reasons else COVERAGE_FULL_TEXT
-    return ReadingPlan(coverage, all_sections, sections_to_read, skipped_titles, tuple(partial_reasons),
-                       _plan_sha256(coverage, all_sections, sections_to_read, section_max_characters,
-                                    max_sections_per_paper))
+    return ReadingPlan(
+        coverage,
+        all_sections,
+        sections_to_read,
+        skipped_titles,
+        tuple(partial_reasons),
+        _plan_sha256(coverage, all_sections, sections_to_read, section_max_characters, max_sections_per_paper),
+    )
 
 
-def _build_reading_sections(readable_passages: list[Passage], section_max_characters: int,
-                            has_recognized_structure: bool) -> tuple[ReadingSection, ...]:
+def _build_reading_sections(
+    readable_passages: list[Passage], section_max_characters: int, has_recognized_structure: bool
+) -> tuple[ReadingSection, ...]:
     document_sections = _group_consecutive_passages_by_section(readable_passages)
     reading_sections: list[list[Passage]] = [[]]
     for document_section in document_sections:
-        section_characters = sum(len(passage.text) + PER_PASSAGE_PROMPT_OVERHEAD_CHARACTERS
-                                 for passage in document_section)
+        section_characters = sum(
+            len(passage.text) + PER_PASSAGE_PROMPT_OVERHEAD_CHARACTERS for passage in document_section
+        )
         current_characters = _characters(reading_sections[-1])
-        if reading_sections[-1] and current_characters + section_characters > section_max_characters \
-                and section_characters <= section_max_characters:
+        if (
+            reading_sections[-1]
+            and current_characters + section_characters > section_max_characters
+            and section_characters <= section_max_characters
+        ):
             reading_sections.append([])  # keep a section that fits a fresh reading section whole
         for passage in document_section:
             passage_characters = len(passage.text) + PER_PASSAGE_PROMPT_OVERHEAD_CHARACTERS
             if reading_sections[-1] and _characters(reading_sections[-1]) + passage_characters > section_max_characters:
                 reading_sections.append([])
             reading_sections[-1].append(passage)
-    return tuple(ReadingSection(
-        section_number=section_index, passages=tuple(section_passages),
-        reading_priority=min(_reading_priority(passage, has_recognized_structure) for passage in section_passages),
-        has_required_content=any(_is_required(passage, has_recognized_structure) for passage in section_passages))
-        for section_index, section_passages in enumerate((group for group in reading_sections if group), start=1))
+    return tuple(
+        ReadingSection(
+            section_number=section_index,
+            passages=tuple(section_passages),
+            reading_priority=min(_reading_priority(passage, has_recognized_structure) for passage in section_passages),
+            has_required_content=any(_is_required(passage, has_recognized_structure) for passage in section_passages),
+        )
+        for section_index, section_passages in enumerate((group for group in reading_sections if group), start=1)
+    )
 
 
 def _group_consecutive_passages_by_section(passages: list[Passage]) -> list[list[Passage]]:
     groups: list[list[Passage]] = []
     for passage in passages:
-        if groups and groups[-1][-1].section_title == passage.section_title and \
-                groups[-1][-1].section_kind == passage.section_kind:
+        if (
+            groups
+            and groups[-1][-1].section_title == passage.section_title
+            and groups[-1][-1].section_kind == passage.section_kind
+        ):
             groups[-1].append(passage)
         else:
             groups.append([passage])
@@ -190,7 +241,9 @@ def _group_consecutive_passages_by_section(passages: list[Passage]) -> list[list
 def _reading_priority(passage: Passage, has_recognized_structure: bool) -> int:
     if not has_recognized_structure:
         return READING_PRIORITY_BY_SECTION_KIND[SectionKind.OTHER]
-    return READING_PRIORITY_BY_SECTION_KIND.get(passage.section_kind, READING_PRIORITY_BY_SECTION_KIND[SectionKind.OTHER])
+    return READING_PRIORITY_BY_SECTION_KIND.get(
+        passage.section_kind, READING_PRIORITY_BY_SECTION_KIND[SectionKind.OTHER]
+    )
 
 
 def _is_required(passage: Passage, has_recognized_structure: bool) -> bool:
@@ -201,12 +254,19 @@ def _characters(passages: list[Passage]) -> int:
     return sum(len(passage.text) + PER_PASSAGE_PROMPT_OVERHEAD_CHARACTERS for passage in passages)
 
 
-def _plan_sha256(coverage: str, all_sections: tuple[ReadingSection, ...], sections_to_read: tuple[ReadingSection, ...],
-                 section_max_characters: int, max_sections_per_paper: int) -> str:
+def _plan_sha256(
+    coverage: str,
+    all_sections: tuple[ReadingSection, ...],
+    sections_to_read: tuple[ReadingSection, ...],
+    section_max_characters: int,
+    max_sections_per_paper: int,
+) -> str:
     """Saved section results are reused only under the same plan, so changed limits never mix two cuttings."""
     plan_fields = {
-        "plan_version": READING_PLAN_VERSION, "segmentation_version": PASSAGE_SEGMENTATION_VERSION,
-        "coverage": coverage, "limits": [section_max_characters, max_sections_per_paper],
+        "plan_version": READING_PLAN_VERSION,
+        "segmentation_version": PASSAGE_SEGMENTATION_VERSION,
+        "coverage": coverage,
+        "limits": [section_max_characters, max_sections_per_paper],
         "sections": [list(section.passage_ids) for section in all_sections],
         "read": [section.section_number for section in sections_to_read],
     }

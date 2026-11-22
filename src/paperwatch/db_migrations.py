@@ -15,10 +15,19 @@ from pathlib import Path
 
 from paperwatch.errors import SourceInputError
 from paperwatch.identifiers import EDITION_ID_PREFIX, new_internal_id
-from paperwatch.review_inputs import (COVERAGE_ABSTRACT_ONLY, INITIAL_READING_GENERATION, build_review_input_key,
-                                      fingerprint_abstract_reading_text, fingerprint_extracted_reading_text)
-from paperwatch.scholarly_identifiers import (build_edition_key, normalize_identifier, parse_version_number,
-                                             resolve_edition_version_label)
+from paperwatch.review_inputs import (
+    COVERAGE_ABSTRACT_ONLY,
+    INITIAL_READING_GENERATION,
+    build_review_input_key,
+    fingerprint_abstract_reading_text,
+    fingerprint_extracted_reading_text,
+)
+from paperwatch.scholarly_identifiers import (
+    build_edition_key,
+    normalize_identifier,
+    parse_version_number,
+    resolve_edition_version_label,
+)
 from paperwatch.text_normalization import build_title_match_key
 
 
@@ -276,14 +285,19 @@ def _backfill_schema_v1_rows_for_identity_and_editions(connection: sqlite3.Conne
     paper_rows = connection.execute("SELECT * FROM papers ORDER BY discovered_at, paper_id").fetchall()
     for paper_row in paper_rows:
         paper_id = paper_row["paper_id"]
-        connection.execute("UPDATE papers SET title_match_key = ? WHERE paper_id = ?",
-                           (build_title_match_key(paper_row["title"]), paper_id))
-        connection.execute("UPDATE paper_aliases SET asserted_by_route = ?, first_seen_at = ? WHERE paper_id = ?",
-                           (paper_row["origin_route"], paper_row["discovered_at"], paper_id))
+        connection.execute(
+            "UPDATE papers SET title_match_key = ? WHERE paper_id = ?",
+            (build_title_match_key(paper_row["title"]), paper_id),
+        )
+        connection.execute(
+            "UPDATE paper_aliases SET asserted_by_route = ?, first_seen_at = ? WHERE paper_id = ?",
+            (paper_row["origin_route"], paper_row["discovered_at"], paper_id),
+        )
 
         first_alias_row = connection.execute(
             "SELECT provider, provider_paper_id FROM paper_aliases WHERE paper_id = ? ORDER BY provider LIMIT 1",
-            (paper_id,)).fetchone()
+            (paper_id,),
+        ).fetchone()
         version_label = None
         try:
             primary_identifier = normalize_identifier(first_alias_row["provider"], first_alias_row["provider_paper_id"])
@@ -296,31 +310,62 @@ def _backfill_schema_v1_rows_for_identity_and_editions(connection: sqlite3.Conne
             """INSERT INTO paper_editions (edition_id, paper_id, edition_key, version_label, version_number, title,
                    authors_json, abstract, published_date, first_seen_route, first_seen_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (edition_id, paper_id, edition_key, version_label, parse_version_number(version_label),
-             paper_row["title"], paper_row["authors_json"], paper_row["abstract"], paper_row["first_published_date"],
-             paper_row["origin_route"], paper_row["discovered_at"]))
+            (
+                edition_id,
+                paper_id,
+                edition_key,
+                version_label,
+                parse_version_number(version_label),
+                paper_row["title"],
+                paper_row["authors_json"],
+                paper_row["abstract"],
+                paper_row["first_published_date"],
+                paper_row["origin_route"],
+                paper_row["discovered_at"],
+            ),
+        )
 
         source_text_sha256 = fingerprint_abstract_reading_text(paper_row["title"], paper_row["abstract"])
-        review_input_key = build_review_input_key(COVERAGE_ABSTRACT_ONLY, source_text_sha256,
-                                                  INITIAL_READING_GENERATION)
+        review_input_key = build_review_input_key(
+            COVERAGE_ABSTRACT_ONLY, source_text_sha256, INITIAL_READING_GENERATION
+        )
         for review_row in connection.execute("SELECT * FROM reviews WHERE paper_id = ?", (paper_id,)).fetchall():
             connection.execute(
                 """UPDATE reviews SET edition_id = ?, source_text_sha256 = ?, review_input_key = ?
-                   WHERE review_id = ?""", (edition_id, source_text_sha256, review_input_key, review_row["review_id"]))
+                   WHERE review_id = ?""",
+                (edition_id, source_text_sha256, review_input_key, review_row["review_id"]),
+            )
             for topic_assessment in json.loads(review_row["review_json"]).get("topic_relevance", []):
                 connection.execute(
                     """INSERT OR IGNORE INTO review_topic_assessments (review_id, topic_id, topic_profile_sha256,
                            topic_score, score_scale, assessment_json, role_name, prompt_version, assessed_at)
                        VALUES (?, ?, '', ?, 'rating_0_to_4', ?, ?, ?, ?)""",
-                    (review_row["review_id"], topic_assessment["topic_id"], topic_assessment["relevance_rating"],
-                     json.dumps(topic_assessment, ensure_ascii=False), review_row["role_name"],
-                     review_row["prompt_version"], review_row["completed_at"]))
+                    (
+                        review_row["review_id"],
+                        topic_assessment["topic_id"],
+                        topic_assessment["relevance_rating"],
+                        json.dumps(topic_assessment, ensure_ascii=False),
+                        review_row["role_name"],
+                        review_row["prompt_version"],
+                        review_row["completed_at"],
+                    ),
+                )
         connection.execute(
             """UPDATE jobs SET input_version = ?, job_key = 'review_paper:' || paper_id || ':' || ?, input_json = ?
                WHERE paper_id = ? AND kind = 'review_paper'""",
-            (review_input_key, review_input_key,
-             json.dumps({"coverage": COVERAGE_ABSTRACT_ONLY, "edition_id": edition_id,
-                         "reading_generation": INITIAL_READING_GENERATION}), paper_id))
+            (
+                review_input_key,
+                review_input_key,
+                json.dumps(
+                    {
+                        "coverage": COVERAGE_ABSTRACT_ONLY,
+                        "edition_id": edition_id,
+                        "reading_generation": INITIAL_READING_GENERATION,
+                    }
+                ),
+                paper_id,
+            ),
+        )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -535,21 +580,24 @@ def _backfill_full_text_reading_identity(connection: sqlite3.Connection) -> None
     database_file = Path(connection.execute("PRAGMA database_list").fetchone()["file"] or ".")
     source_files_dir = database_file.parent / "cache" / "sources"
     for text_row in connection.execute(
-            """SELECT edition_id, extracted_text_file_name FROM edition_source_texts
-               WHERE extraction_status = 'extracted' AND extracted_text_file_name IS NOT NULL""").fetchall():
-        if not INTERNAL_EDITION_ID_PATTERN.match(text_row["edition_id"]) or \
-                not CACHED_TEXT_FILE_NAME_PATTERN.match(text_row["extracted_text_file_name"]):
+        """SELECT edition_id, extracted_text_file_name FROM edition_source_texts
+               WHERE extraction_status = 'extracted' AND extracted_text_file_name IS NOT NULL"""
+    ).fetchall():
+        if not INTERNAL_EDITION_ID_PATTERN.match(text_row["edition_id"]) or not CACHED_TEXT_FILE_NAME_PATTERN.match(
+            text_row["extracted_text_file_name"]
+        ):
             continue
         try:
-            extracted_text = (source_files_dir / text_row["edition_id"] / text_row["extracted_text_file_name"]
-                              ).read_text(encoding="utf-8", errors="replace")
+            extracted_text = (
+                source_files_dir / text_row["edition_id"] / text_row["extracted_text_file_name"]
+            ).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         connection.execute(
             """UPDATE edition_source_texts SET normalized_text_sha256 = ?, extracted_text_characters = ?
                WHERE edition_id = ?""",
-            (fingerprint_extracted_reading_text(extracted_text), len(extracted_text.strip()),
-             text_row["edition_id"]))
+            (fingerprint_extracted_reading_text(extracted_text), len(extracted_text.strip()), text_row["edition_id"]),
+        )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -764,21 +812,35 @@ CREATE INDEX activity_log_by_parent ON activity_log(parent_activity_id);
 
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration("initial schema (plan part 1)", MIGRATION_0001_INITIAL_SCHEMA),
-    SchemaMigration("paper identity, editions, reading identity and part-2 records",
-                    MIGRATION_0002_IDENTITY_EDITIONS_AND_RECORDS,
-                    _backfill_schema_v1_rows_for_identity_and_editions),
-    SchemaMigration("outbound request log and provider request budgets (plan part 3)",
-                    MIGRATION_0003_OUTBOUND_REQUEST_LEDGER),
+    SchemaMigration(
+        "paper identity, editions, reading identity and part-2 records",
+        MIGRATION_0002_IDENTITY_EDITIONS_AND_RECORDS,
+        _backfill_schema_v1_rows_for_identity_and_editions,
+    ),
+    SchemaMigration(
+        "outbound request log and provider request budgets (plan part 3)", MIGRATION_0003_OUTBOUND_REQUEST_LEDGER
+    ),
     SchemaMigration("seed cache for Zotero and CSL JSON seeds (plan part 4)", MIGRATION_0004_SEED_CACHE),
-    SchemaMigration("route reports, withdrawals, and acquired source text (plan part 5)",
-                    MIGRATION_0005_COLLECTION_ROUTES_WITHDRAWALS_AND_SOURCE_TEXT),
-    SchemaMigration("screening scores, embedding cache, promotions, and dispatch order (plan part 6)",
-                    MIGRATION_0006_SCREENING_AND_DISPATCH_ORDER),
-    SchemaMigration("evidence-backed reading: stage results, cited passages, reading records (plan part 7)",
-                    MIGRATION_0007_EVIDENCE_BACKED_READING, _backfill_full_text_reading_identity),
-    SchemaMigration("important references, research branches, and comparisons (plan part 8)",
-                    MIGRATION_0008_REFERENCES_AND_COMPARISONS),
-    SchemaMigration("daily report: report states, frozen snapshot, entry labels, inference reservation (plan part 9)",
-                    MIGRATION_0009_DAILY_REPORT),
+    SchemaMigration(
+        "route reports, withdrawals, and acquired source text (plan part 5)",
+        MIGRATION_0005_COLLECTION_ROUTES_WITHDRAWALS_AND_SOURCE_TEXT,
+    ),
+    SchemaMigration(
+        "screening scores, embedding cache, promotions, and dispatch order (plan part 6)",
+        MIGRATION_0006_SCREENING_AND_DISPATCH_ORDER,
+    ),
+    SchemaMigration(
+        "evidence-backed reading: stage results, cited passages, reading records (plan part 7)",
+        MIGRATION_0007_EVIDENCE_BACKED_READING,
+        _backfill_full_text_reading_identity,
+    ),
+    SchemaMigration(
+        "important references, research branches, and comparisons (plan part 8)",
+        MIGRATION_0008_REFERENCES_AND_COMPARISONS,
+    ),
+    SchemaMigration(
+        "daily report: report states, frozen snapshot, entry labels, inference reservation (plan part 9)",
+        MIGRATION_0009_DAILY_REPORT,
+    ),
     SchemaMigration("activity log for the monitor", MIGRATION_0010_ACTIVITY_LOG),
 )

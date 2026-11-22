@@ -23,12 +23,13 @@ def run_backup_command(app: AppContext, arguments: argparse.Namespace) -> int:
         for problem in restore_check.problems:
             print(f"restore check: PROBLEM {problem}", file=sys.stderr)
         if restore_check.passed:
-            print(f"restore check: {restore_check.restored_home} is a complete, consistent paperwatch home "
-                  f"(use it with --home {restore_check.restored_home})")
+            print(
+                f"restore check: {restore_check.restored_home} is a complete, consistent paperwatch home "
+                f"(use it with --home {restore_check.restored_home})"
+            )
         return 0 if restore_check.passed else EXIT_CODE_BACKUP_FAILED
     if arguments.destination_dir is None:
-        print("paperwatch: FAILED [backup] give a DESTINATION directory or --check-restore BACKUP_DIR",
-              file=sys.stderr)
+        print("paperwatch: FAILED [backup] give a DESTINATION directory or --check-restore BACKUP_DIR", file=sys.stderr)
         return EXIT_CODE_BACKUP_FAILED
     try:
         backup_result = create_backup(app.config, arguments.destination_dir, moment=utc_now())

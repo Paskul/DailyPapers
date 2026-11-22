@@ -50,8 +50,12 @@ class CollectorCredentials:
 
     def all_secret_values(self) -> frozenset[str]:
         """Every secret, so log writers can scrub them from any text as a last resort."""
-        return frozenset(value for provider_values in self.values_by_provider.values()
-                         for field_name, value in provider_values.items() if field_name in SECRET_FIELD_NAMES)
+        return frozenset(
+            value
+            for provider_values in self.values_by_provider.values()
+            for field_name, value in provider_values.items()
+            if field_name in SECRET_FIELD_NAMES
+        )
 
     def __repr__(self) -> str:
         configured = {provider: sorted(values) for provider, values in self.values_by_provider.items()}
@@ -71,26 +75,32 @@ def load_collector_credentials(credentials_path: Path) -> CollectorCredentials:
     except tomllib.TOMLDecodeError as decode_error:
         raise ConfigurationError(f"credentials file {credentials_path} is not valid TOML: {decode_error}") from None
     except PermissionError:
-        raise ConfigurationError(f"credentials file {credentials_path} is not readable by this account",
-                                 operator_hint="only the collector account may read it; run `collect` as that "
-                                               "account") from None
+        raise ConfigurationError(
+            f"credentials file {credentials_path} is not readable by this account",
+            operator_hint="only the collector account may read it; run `collect` as that account",
+        ) from None
 
     values_by_provider: dict[str, dict[str, str]] = {}
     for provider_name, raw_provider_values in raw_credentials.items():
         if provider_name not in ALLOWED_CREDENTIAL_FIELDS:
-            raise ConfigurationError(f"unknown provider [{provider_name}] in {credentials_path}; "
-                                     f"allowed: {sorted(ALLOWED_CREDENTIAL_FIELDS)}")
+            raise ConfigurationError(
+                f"unknown provider [{provider_name}] in {credentials_path}; "
+                f"allowed: {sorted(ALLOWED_CREDENTIAL_FIELDS)}"
+            )
         if not isinstance(raw_provider_values, dict):
             raise ConfigurationError(f"[{provider_name}] in {credentials_path} must be a table")
         unknown_fields = set(raw_provider_values) - ALLOWED_CREDENTIAL_FIELDS[provider_name]
         if unknown_fields:
-            raise ConfigurationError(f"unknown key(s) {sorted(unknown_fields)} in [{provider_name}] of "
-                                     f"{credentials_path}")
+            raise ConfigurationError(
+                f"unknown key(s) {sorted(unknown_fields)} in [{provider_name}] of {credentials_path}"
+            )
         for field_name, value in raw_provider_values.items():
             if not isinstance(value, str) or not CREDENTIAL_VALUE_PATTERN.match(value):
                 # Never echo the value: it may be a real key with a typo.
-                raise ConfigurationError(f"[{provider_name}].{field_name} in {credentials_path} must be a "
-                                         "non-empty string of printable characters without spaces")
+                raise ConfigurationError(
+                    f"[{provider_name}].{field_name} in {credentials_path} must be a "
+                    "non-empty string of printable characters without spaces"
+                )
         values_by_provider[provider_name] = dict(raw_provider_values)
     _validate_zotero_library(values_by_provider.get("zotero", {}), credentials_path)
     return CollectorCredentials(values_by_provider=values_by_provider, source_path=credentials_path)
@@ -116,16 +126,19 @@ def _require_private_file(credentials_path: Path) -> None:
         raise ConfigurationError(
             f"credentials file {credentials_path} is accessible to other accounts "
             f"(mode {stat.S_IMODE(file_status.st_mode):04o})",
-            operator_hint=f"run: chmod 600 {credentials_path} (as the collector account)")
+            operator_hint=f"run: chmod 600 {credentials_path} (as the collector account)",
+        )
     if file_status.st_uid != os.geteuid():
-        raise ConfigurationError(f"credentials file {credentials_path} belongs to another account (uid "
-                                 f"{file_status.st_uid}); it must belong to the collector account")
+        raise ConfigurationError(
+            f"credentials file {credentials_path} belongs to another account (uid "
+            f"{file_status.st_uid}); it must belong to the collector account"
+        )
 
 
 def _validate_zotero_library(zotero_values: dict[str, str], credentials_path: Path) -> None:
     if not zotero_values:
         return
     if zotero_values.get("library_type", "user") not in ("user", "group"):
-        raise ConfigurationError(f"[zotero].library_type in {credentials_path} must be \"user\" or \"group\"")
+        raise ConfigurationError(f'[zotero].library_type in {credentials_path} must be "user" or "group"')
     if "library_id" in zotero_values and not zotero_values["library_id"].isdigit():
         raise ConfigurationError(f"[zotero].library_id in {credentials_path} must be the numeric library id")

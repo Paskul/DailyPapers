@@ -29,7 +29,8 @@ def hold_inference_lock(lock_file_path: Path, maximum_wait_seconds: float) -> It
                 if time.monotonic() >= wait_deadline:
                     raise InferenceLockTimeout(
                         f"waited {maximum_wait_seconds:.0f} s for the inference lock {lock_file_path}; another "
-                        "paperwatch process is still using the model") from None
+                        "paperwatch process is still using the model"
+                    ) from None
                 time.sleep(LOCK_RETRY_INTERVAL_SECONDS)
         try:
             yield

@@ -48,6 +48,7 @@ TABLE_HEADER_PATTERN = re.compile(r"^\s*(\[\[?)\s*([A-Za-z0-9_\-]+)(?:\.[A-Za-z0
 @dataclass(frozen=True)
 class SetupSettings:
     """The [setup] table. Defaults are the documented defaults of the example file."""
+
     home: str = "/srv/paperwatch"
     mode: str = "hardened"
     credentials_file: str = "collector_credentials.toml"
@@ -78,8 +79,10 @@ def split_settings_text(settings_text: str, source_label: str = SETTINGS_FILE_NA
         raise ConfigurationError(f"{source_label} is not valid TOML: {decode_error}") from None
     misplaced_keys = [key for key, value in whole.items() if not isinstance(value, (dict, list))]
     if misplaced_keys:
-        raise ConfigurationError(f"{source_label}: key(s) {misplaced_keys} are outside any [table]; every setting "
-                                 "belongs to a table such as [setup], [model], or [[topics]]")
+        raise ConfigurationError(
+            f"{source_label}: key(s) {misplaced_keys} are outside any [table]; every setting "
+            "belongs to a table such as [setup], [model], or [[topics]]"
+        )
 
     buckets: dict[str, list[str]] = {"preamble": [], SETUP_SECTION: [], "config": [], TOPICS_SECTION: []}
     current_bucket = "preamble"
@@ -101,17 +104,24 @@ def split_settings_text(settings_text: str, source_label: str = SETTINGS_FILE_NA
     expected_config = {key: value for key, value in whole.items() if key not in (SETUP_SECTION, TOPICS_SECTION)}
     expected_topics = {TOPICS_SECTION: whole[TOPICS_SECTION]} if TOPICS_SECTION in whole else {}
     try:
-        exact = (tomllib.loads(config_text) == expected_config and tomllib.loads(topics_text) == expected_topics
-                 and tomllib.loads(setup_text).get(SETUP_SECTION, {}) == whole.get(SETUP_SECTION, {}))
+        exact = (
+            tomllib.loads(config_text) == expected_config
+            and tomllib.loads(topics_text) == expected_topics
+            and tomllib.loads(setup_text).get(SETUP_SECTION, {}) == whole.get(SETUP_SECTION, {})
+        )
     except tomllib.TOMLDecodeError:
         exact = False
     if not exact:
         raise ConfigurationError(
             f"{source_label} could not be split into config.toml and topics.toml exactly",
             operator_hint="keep each table's keys directly under its [header] (no dotted keys that reach into "
-                          "another table, no table headers inside multi-line strings)")
-    return SplitSettings(setup=parse_setup_table(whole.get(SETUP_SECTION, {}), source_label),
-                         config_text=config_text, topics_text=topics_text)
+            "another table, no table headers inside multi-line strings)",
+        )
+    return SplitSettings(
+        setup=parse_setup_table(whole.get(SETUP_SECTION, {}), source_label),
+        config_text=config_text,
+        topics_text=topics_text,
+    )
 
 
 def _pop_trailing_comment_block(lines: list[str]) -> list[str]:
@@ -138,22 +148,26 @@ def parse_setup_table(raw_setup: Any, source_label: str = SETTINGS_FILE_NAME) ->
     known_fields = {field.name: field for field in dataclasses.fields(SetupSettings)}
     unknown_keys = sorted(set(raw_setup) - set(known_fields))
     if unknown_keys:
-        raise ConfigurationError(f"unknown key(s) {unknown_keys} in [setup] of {source_label}",
-                                 operator_hint=f"known keys: {', '.join(known_fields)}")
+        raise ConfigurationError(
+            f"unknown key(s) {unknown_keys} in [setup] of {source_label}",
+            operator_hint=f"known keys: {', '.join(known_fields)}",
+        )
     for key, value in raw_setup.items():
         expected_type = {"bool": bool, "int": int, "str": str}[str(known_fields[key].type)]
         if type(value) is not expected_type:
-            raise ConfigurationError(f"[setup] {key} in {source_label} must be a {expected_type.__name__}, "
-                                     f"not {value!r}")
+            raise ConfigurationError(
+                f"[setup] {key} in {source_label} must be a {expected_type.__name__}, not {value!r}"
+            )
     setup = SetupSettings(**raw_setup)
     if setup.mode not in MODES:
         raise ConfigurationError(f"[setup] mode must be one of {list(MODES)}, not '{setup.mode}'")
     if not Path(setup.home).is_absolute():
         raise ConfigurationError(f"[setup] home must be an absolute path, not '{setup.home}'")
     if setup.mode == "hardened" and Path(setup.home).resolve().is_relative_to(Path.home().resolve()):
-        raise ConfigurationError(f"[setup] home {setup.home} is inside your home directory, which the service "
-                                 "accounts cannot enter", operator_hint="use a path such as /srv/paperwatch, or "
-                                                                         "mode = \"local\"")
+        raise ConfigurationError(
+            f"[setup] home {setup.home} is inside your home directory, which the service accounts cannot enter",
+            operator_hint='use a path such as /srv/paperwatch, or mode = "local"',
+        )
     if not 1 <= setup.monitor_port <= 65535:
         raise ConfigurationError(f"[setup] monitor_port must be 1..65535, not {setup.monitor_port}")
     validate_listen_address(setup.monitor_listen_address)
@@ -187,15 +201,20 @@ def stage_settings(settings_path: Path, stage_dir: Path, *, extractor_image: str
         for seed_file in topic.csl_json_files:
             seed_path = Path(seed_file)
             if not seed_path.is_absolute() and not (settings_dir / seed_path).is_file():
-                problems.append(f"topic '{topic.topic_id}': CSL JSON file {seed_file} is not in "
-                                f"{settings_dir} (expected {settings_dir / seed_path})")
+                problems.append(
+                    f"topic '{topic.topic_id}': CSL JSON file {seed_file} is not in "
+                    f"{settings_dir} (expected {settings_dir / seed_path})"
+                )
     if any(topic.zotero_collections for topic in app_config.topics):
         if credentials is None:
-            problems.append(f"topics use zotero_collections, but there is no credentials file "
-                            f"({credentials_path or 'credentials_file is empty'})")
+            problems.append(
+                f"topics use zotero_collections, but there is no credentials file "
+                f"({credentials_path or 'credentials_file is empty'})"
+            )
         elif not (credentials.has("zotero", "api_key") and credentials.has("zotero", "library_id")):
-            problems.append(f"topics use zotero_collections, but {credentials_path} lacks [zotero] api_key or "
-                            "library_id")
+            problems.append(
+                f"topics use zotero_collections, but {credentials_path} lacks [zotero] api_key or library_id"
+            )
     if problems:
         raise ConfigurationError("; ".join(problems))
 
@@ -206,8 +225,9 @@ def stage_settings(settings_path: Path, stage_dir: Path, *, extractor_image: str
         "SETUP_MODE": split.setup.mode,
         "CREDENTIALS_FILE": str(credentials_path) if credentials is not None else "",
         "SEEDS_DIR": str(seeds_dir) if seeds_dir.is_dir() and any(seeds_dir.iterdir()) else "",
-        "INSTALL_EMBEDDING_MODEL": _flag(split.setup.install_embedding_model
-                                         and app_config.screening.embedding_backend == "onnx"),
+        "INSTALL_EMBEDDING_MODEL": _flag(
+            split.setup.install_embedding_model and app_config.screening.embedding_backend == "onnx"
+        ),
         "EMBEDDING_MODEL_NAME": app_config.screening.embedding_model,
         "BUILD_EXTRACTOR_IMAGE": _flag(split.setup.build_extractor_image),
         "CONFIGURED_EXTRACTOR_IMAGE": app_config.extractor.image,
@@ -222,9 +242,12 @@ def stage_settings(settings_path: Path, stage_dir: Path, *, extractor_image: str
         "TOPIC_IDS": " ".join(topic.topic_id for topic in app_config.topics),
     }
     (stage_dir / SETUP_ENV_FILE_NAME).write_text(
-        "".join(f"{name}={shlex.quote(value)}\n" for name, value in shell_values.items()), encoding="utf-8")
-    return [f"settings valid: {len(app_config.topics)} topic(s) ({shell_values['TOPIC_IDS'] or 'none'}), mode "
-            f"{split.setup.mode}, home {split.setup.home}"]
+        "".join(f"{name}={shlex.quote(value)}\n" for name, value in shell_values.items()), encoding="utf-8"
+    )
+    return [
+        f"settings valid: {len(app_config.topics)} topic(s) ({shell_values['TOPIC_IDS'] or 'none'}), mode "
+        f"{split.setup.mode}, home {split.setup.home}"
+    ]
 
 
 def set_extractor_image(config_text: str, image_id: str) -> str:
@@ -242,7 +265,7 @@ def set_extractor_image(config_text: str, image_id: str) -> str:
             in_extractor = line.strip().split("#")[0].strip() == "[extractor]"
             continue
         if in_extractor and re.match(r"^\s*image\s*=", line):
-            comment = line[line.index("#"):] if "#" in line.split("=", 1)[1] else ""
+            comment = line[line.index("#") :] if "#" in line.split("=", 1)[1] else ""
             lines[index] = f'image = "{image_id}"' + (f"   {comment}" if comment else "")
             return "\n".join(lines) + "\n"
     if in_extractor:
@@ -342,20 +365,35 @@ def _template_config_body() -> str:
 
 
 def build_example_settings_text() -> str:
-    return "\n".join([SETTINGS_FILE_HEADER, SETUP_TABLE_TEXT, CONFIG_DIVIDER + _template_config_body().rstrip(),
-                      "", TOPICS_HEADER_COMMENT + EXAMPLE_TOPICS_TEXT])
+    return "\n".join(
+        [
+            SETTINGS_FILE_HEADER,
+            SETUP_TABLE_TEXT,
+            CONFIG_DIVIDER + _template_config_body().rstrip(),
+            "",
+            TOPICS_HEADER_COMMENT + EXAMPLE_TOPICS_TEXT,
+        ]
+    )
 
 
 def build_migrated_settings_text(config_text: str, topics_text: str, *, home: str, mode: str) -> str:
     """One settings file from a former settings/config.toml + settings/topics.toml pair (contents unchanged)."""
     setup_text = SETUP_TABLE_TEXT.replace('home = "/srv/paperwatch"', f'home = "{home}"', 1)
     setup_text = setup_text.replace('mode = "hardened"', f'mode = "{mode}"', 1)
-    config_body = config_text[config_text.index("\n[") + 1:] if not config_text.startswith("[") else config_text
+    config_body = config_text[config_text.index("\n[") + 1 :] if not config_text.startswith("[") else config_text
     topic_lines = [line for line in topics_text.splitlines()]
-    first_topic = next((index for index, line in enumerate(topic_lines) if line.strip().startswith("[[topics]]")),
-                       len(topic_lines))
-    return "\n".join([SETTINGS_FILE_HEADER, setup_text, CONFIG_DIVIDER + config_body.rstrip(), "",
-                      TOPICS_HEADER_COMMENT + "\n".join(topic_lines[first_topic:]).rstrip() + "\n"])
+    first_topic = next(
+        (index for index, line in enumerate(topic_lines) if line.strip().startswith("[[topics]]")), len(topic_lines)
+    )
+    return "\n".join(
+        [
+            SETTINGS_FILE_HEADER,
+            setup_text,
+            CONFIG_DIVIDER + config_body.rstrip(),
+            "",
+            TOPICS_HEADER_COMMENT + "\n".join(topic_lines[first_topic:]).rstrip() + "\n",
+        ]
+    )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -381,8 +419,9 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == "stage":
-            for line in stage_settings(arguments.settings_path, arguments.stage_dir,
-                                       extractor_image=arguments.extractor_image):
+            for line in stage_settings(
+                arguments.settings_path, arguments.stage_dir, extractor_image=arguments.extractor_image
+            ):
                 print(line)
         elif arguments.command == "write-example":
             arguments.output_path.write_text(build_example_settings_text(), encoding="utf-8")
@@ -390,8 +429,11 @@ def main(argv: list[str] | None = None) -> int:
             if arguments.output_path.exists():
                 raise ConfigurationError(f"{arguments.output_path} already exists; not overwritten")
             migrated_text = build_migrated_settings_text(
-                arguments.config_path.read_text(encoding="utf-8"), arguments.topics_path.read_text(encoding="utf-8"),
-                home=arguments.home, mode=arguments.mode)
+                arguments.config_path.read_text(encoding="utf-8"),
+                arguments.topics_path.read_text(encoding="utf-8"),
+                home=arguments.home,
+                mode=arguments.mode,
+            )
             split_settings_text(migrated_text, str(arguments.output_path))  # prove it splits back exactly
             arguments.output_path.touch(mode=0o600)
             arguments.output_path.write_text(migrated_text, encoding="utf-8")

@@ -80,8 +80,9 @@ def earliest_calendar_day(partial_date: str) -> date:
     return date(int(year_text), int(month_text or 1), int(day_text or 1))
 
 
-def classify_release(first_published_date: str | None, discovered_at: datetime,
-                     fresh_window_days: int = NEW_RELEASE_FRESH_WINDOW_DAYS) -> ReleaseClass:
+def classify_release(
+    first_published_date: str | None, discovered_at: datetime, fresh_window_days: int = NEW_RELEASE_FRESH_WINDOW_DAYS
+) -> ReleaseClass:
     """New release if first published no more than `fresh_window_days` before discovery; else older literature.
 
     A coarse date counts from its earliest possible day: a paper known only as "2026" is new only if found in the

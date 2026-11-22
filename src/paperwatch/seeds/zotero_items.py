@@ -15,9 +15,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from paperwatch.errors import SourceResponseRejected
-from paperwatch.seeds.seed_items import (MAXIMUM_SEED_ABSTRACT_CHARACTERS, MAXIMUM_SEED_TITLE_CHARACTERS,
-                                         SEED_SOURCE_ZOTERO, SeedItem, bound_author_names, clean_seed_text,
-                                         find_arxiv_id, find_doi, find_publication_year)
+from paperwatch.seeds.seed_items import (
+    MAXIMUM_SEED_ABSTRACT_CHARACTERS,
+    MAXIMUM_SEED_TITLE_CHARACTERS,
+    SEED_SOURCE_ZOTERO,
+    SeedItem,
+    bound_author_names,
+    clean_seed_text,
+    find_arxiv_id,
+    find_doi,
+    find_publication_year,
+)
 
 ZOTERO_ITEM_KEY_PATTERN = re.compile(r"^[A-Z0-9]{8}$")
 NON_BIBLIOGRAPHIC_ZOTERO_ITEM_TYPES = frozenset({"note", "attachment", "annotation"})
@@ -91,8 +99,9 @@ def _convert_zotero_item(raw_item: Any) -> tuple[SeedItem | None, str]:
         item_type=item_type,
         item_version=item_version if isinstance(item_version, int) and not isinstance(item_version, bool) else None,
         doi=find_doi(item_data.get("DOI"), item_data.get("url"), extra_field_text),
-        arxiv_id=find_arxiv_id(item_data.get("archiveID"), item_data.get("url"), extra_field_text,
-                               item_data.get("DOI")),
+        arxiv_id=find_arxiv_id(
+            item_data.get("archiveID"), item_data.get("url"), extra_field_text, item_data.get("DOI")
+        ),
     ), ""
 
 

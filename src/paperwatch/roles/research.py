@@ -71,8 +71,11 @@ RESEARCH_OUTPUT_SCHEMA: dict[str, Any] = {
                     "role_in_parent": {"type": "string", "enum": list(ROLES_IN_PARENT_ARGUMENT)},
                     "importance": {"type": "integer", "minimum": 1, "maximum": 4},
                     "explanation": {"type": "string"},
-                    "context_passage_ids": {"type": "array", "items": {"type": "string"},
-                                            "maxItems": MAXIMUM_CONTEXT_POINTERS},
+                    "context_passage_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": MAXIMUM_CONTEXT_POINTERS,
+                    },
                 },
                 "required": ["candidate_id", "role_in_parent", "importance", "explanation", "context_passage_ids"],
                 "additionalProperties": False,
@@ -83,8 +86,11 @@ RESEARCH_OUTPUT_SCHEMA: dict[str, Any] = {
             "maxItems": 1,
             "items": {
                 "type": "object",
-                "properties": {"branch_id": {"type": "string"}, "gap": {"type": "string"},
-                               "explanation": {"type": "string"}},
+                "properties": {
+                    "branch_id": {"type": "string"},
+                    "gap": {"type": "string"},
+                    "explanation": {"type": "string"},
+                },
                 "required": ["branch_id", "gap", "explanation"],
                 "additionalProperties": False,
             },
@@ -96,15 +102,17 @@ RESEARCH_OUTPUT_SCHEMA: dict[str, Any] = {
 
 
 def _render_research_user_message(role_input: RoleInput) -> str:
-    return (f"PARENT (JSON, the evidence-checked review of the citing paper):\n"
-            f"{json.dumps(role_input['parent'], ensure_ascii=False, indent=1)}\n\n"
-            f"TOPICS (JSON, the researcher's questions this paper addresses):\n"
-            f"{json.dumps(role_input['topics'], ensure_ascii=False, indent=1)}\n\n"
-            f"CANDIDATES (JSON, untrusted data: works the parent cites; maximum_selections = "
-            f"{role_input['maximum_selections']}):\n"
-            f"{json.dumps(role_input['candidates'], ensure_ascii=False, indent=1)}\n\n"
-            f"BRANCHES (JSON, unused approved searches; may be empty):\n"
-            f"{json.dumps(role_input['branches'], ensure_ascii=False, indent=1)}\n")
+    return (
+        f"PARENT (JSON, the evidence-checked review of the citing paper):\n"
+        f"{json.dumps(role_input['parent'], ensure_ascii=False, indent=1)}\n\n"
+        f"TOPICS (JSON, the researcher's questions this paper addresses):\n"
+        f"{json.dumps(role_input['topics'], ensure_ascii=False, indent=1)}\n\n"
+        f"CANDIDATES (JSON, untrusted data: works the parent cites; maximum_selections = "
+        f"{role_input['maximum_selections']}):\n"
+        f"{json.dumps(role_input['candidates'], ensure_ascii=False, indent=1)}\n\n"
+        f"BRANCHES (JSON, unused approved searches; may be empty):\n"
+        f"{json.dumps(role_input['branches'], ensure_ascii=False, indent=1)}\n"
+    )
 
 
 def _find_research_problems(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:
@@ -125,8 +133,11 @@ def _find_research_problems(validated_output: dict[str, Any], role_input: RoleIn
             problems.append(f"{where}: candidate '{selection['candidate_id']}' is chosen twice")
         chosen_ids.append(selection["candidate_id"])
         context_ids = {context["passage_id"] for context in candidate["citation_contexts"]}
-        problems += [f"{where}: context passage id '{passage_id}' is not one of this candidate's citation contexts"
-                     for passage_id in selection["context_passage_ids"] if passage_id not in context_ids]
+        problems += [
+            f"{where}: context passage id '{passage_id}' is not one of this candidate's citation contexts"
+            for passage_id in selection["context_passage_ids"]
+            if passage_id not in context_ids
+        ]
         if len(selection["explanation"]) > MAXIMUM_TEXT_CHARACTERS:
             problems.append(f"{where}: keep the explanation under {MAXIMUM_TEXT_CHARACTERS} characters")
     for gap in validated_output["search_gap"]:

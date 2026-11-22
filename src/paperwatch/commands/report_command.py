@@ -36,22 +36,34 @@ from paperwatch.rendering.review_notes import load_selected_review, write_paper_
 from paperwatch.reporting.publication_lock import hold_report_publication_lock
 from paperwatch.reporting.report_comparisons import load_comparison_summaries
 from paperwatch.reporting.report_schedule import resolve_report_timing
-from paperwatch.reporting.report_snapshot import (REPORT_STATUS_PENDING, REPORT_STATUS_PUBLISHED,
-                                                  REPORT_STATUS_WRITING, ReportSnapshot, freeze_report_snapshot,
-                                                  load_frozen_report_snapshot)
+from paperwatch.reporting.report_snapshot import (
+    REPORT_STATUS_PENDING,
+    REPORT_STATUS_PUBLISHED,
+    REPORT_STATUS_WRITING,
+    ReportSnapshot,
+    freeze_report_snapshot,
+    load_frozen_report_snapshot,
+)
 from paperwatch.reporting.report_synthesis import ReportSynthesis, write_report_synthesis
 from paperwatch.research_profile import load_active_seed_library_paper_ids
 
 
 def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
-    timing = resolve_report_timing(app.config.report, utc_now(), arguments.report_date,
-                                   publish_early=getattr(arguments, "publish_early", False))
+    timing = resolve_report_timing(
+        app.config.report, utc_now(), arguments.report_date, publish_early=getattr(arguments, "publish_early", False)
+    )
     report_date = timing.report_date
     report_output_path = app.config.daily_reports_dir / f"{report_date}.md"
 
-    with (hold_report_publication_lock(app.config.report_publication_lock_path),
-          recorded_activity(app.connection, "run", {"report_date": report_date, "early": timing.published_early},
-                            component=COMPONENT_REPORT) as run_activity):
+    with (
+        hold_report_publication_lock(app.config.report_publication_lock_path),
+        recorded_activity(
+            app.connection,
+            "run",
+            {"report_date": report_date, "early": timing.published_early},
+            component=COMPONENT_REPORT,
+        ) as run_activity,
+    ):
         report_row = _load_report_row(app.connection, report_date)
         if report_row is not None and report_row["status"] == REPORT_STATUS_PUBLISHED:
             if not report_output_path.exists():  # restore a deleted file from the saved bytes
@@ -64,9 +76,13 @@ def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
 
         if report_row is None:  # stage 1
             with recorded_activity(app.connection, "freeze"):
-                freeze_report_snapshot(app.connection, app.config, timing, report_output_path,
-                                       active_seed_paper_ids=load_active_seed_library_paper_ids(app.connection,
-                                                                                                app.config))
+                freeze_report_snapshot(
+                    app.connection,
+                    app.config,
+                    timing,
+                    report_output_path,
+                    active_seed_paper_ids=load_active_seed_library_paper_ids(app.connection, app.config),
+                )
             report_row = _load_report_row(app.connection, report_date)
         if report_row["status"] == REPORT_STATUS_WRITING:  # stages 2 and 3 (also after a crash in them)
             with recorded_activity(app.connection, "synthesize"):
@@ -76,8 +92,10 @@ def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
         run_activity.add_detail(papers=published_paper_count)
 
     synthesis_status = _load_report_row(app.connection, report_date)["synthesis_status"]
-    print(f"published report for {report_date} with {published_paper_count} paper(s) "
-          f"(synthesis: {synthesis_status}): {report_output_path}")
+    print(
+        f"published report for {report_date} with {published_paper_count} paper(s) "
+        f"(synthesis: {synthesis_status}): {report_output_path}"
+    )
     return 0
 
 
@@ -94,42 +112,57 @@ def _synthesize_and_render(app: AppContext, report_date: str) -> None:
     _save_rendered_report(app.connection, report_date, report_bytes, synthesis)
 
 
-def load_selected_reviews_as_frozen(connection: sqlite3.Connection,
-                                    snapshot: ReportSnapshot) -> list[SelectedReview]:
+def load_selected_reviews_as_frozen(connection: sqlite3.Connection, snapshot: ReportSnapshot) -> list[SelectedReview]:
     """The selected reviews in rank order, with topic assessments as of the cutoff."""
-    return [load_selected_review(connection, entry.review_id, rank=entry.rank,
-                                 assessed_no_later_than=snapshot.cutoff_at) for entry in snapshot.entries]
+    return [
+        load_selected_review(connection, entry.review_id, rank=entry.rank, assessed_no_later_than=snapshot.cutoff_at)
+        for entry in snapshot.entries
+    ]
 
 
-def _save_rendered_report(connection: sqlite3.Connection, report_date: str, report_bytes: bytes,
-                          synthesis: ReportSynthesis) -> None:
+def _save_rendered_report(
+    connection: sqlite3.Connection, report_date: str, report_bytes: bytes, synthesis: ReportSynthesis
+) -> None:
     synthesis_record = synthesis.synthesis_record()
     with write_transaction(connection):
         connection.execute(
             """UPDATE reports SET status = ?, rendered_bytes = ?, rendered_sha256 = ?, synthesis_status = ?,
                    synthesis_json = ?, fallback_reason = ?
                WHERE report_date = ? AND status = ?""",
-            (REPORT_STATUS_PENDING, report_bytes, hashlib.sha256(report_bytes).hexdigest(),
-             synthesis.synthesis_status,
-             None if synthesis_record is None else json.dumps(synthesis_record, ensure_ascii=False),
-             synthesis.fallback_reason, report_date, REPORT_STATUS_WRITING))
+            (
+                REPORT_STATUS_PENDING,
+                report_bytes,
+                hashlib.sha256(report_bytes).hexdigest(),
+                synthesis.synthesis_status,
+                None if synthesis_record is None else json.dumps(synthesis_record, ensure_ascii=False),
+                synthesis.fallback_reason,
+                report_date,
+                REPORT_STATUS_WRITING,
+            ),
+        )
 
 
 def _publish_saved_report(app: AppContext, report_date: str, report_output_path: Path) -> int:
     """Restore missing notes first, then write the saved bytes atomically, then mark the report published."""
     report_row = _load_report_row(app.connection, report_date)
-    item_rows = app.connection.execute("SELECT review_id FROM report_items WHERE report_date = ? ORDER BY rank",
-                                       (report_date,)).fetchall()
+    item_rows = app.connection.execute(
+        "SELECT review_id FROM report_items WHERE report_date = ? ORDER BY rank", (report_date,)
+    ).fetchall()
     for item_row in item_rows:  # notes render from the saved review, exactly as the worker wrote them
-        write_paper_note_if_missing(app.config.paper_notes_dir, load_selected_review(app.connection,
-                                                                                     item_row["review_id"]))
+        write_paper_note_if_missing(
+            app.config.paper_notes_dir, load_selected_review(app.connection, item_row["review_id"])
+        )
     for previous_row in app.connection.execute(  # an update links the earlier note too
-            "SELECT previous_review_id FROM report_items WHERE report_date = ? AND previous_review_id IS NOT NULL",
-            (report_date,)):
-        write_paper_note_if_missing(app.config.paper_notes_dir,
-                                    load_selected_review(app.connection, previous_row["previous_review_id"]))
+        "SELECT previous_review_id FROM report_items WHERE report_date = ? AND previous_review_id IS NOT NULL",
+        (report_date,),
+    ):
+        write_paper_note_if_missing(
+            app.config.paper_notes_dir, load_selected_review(app.connection, previous_row["previous_review_id"])
+        )
     restore_missing_comparison_notes(app.connection, app.config.comparison_notes_dir)
     write_output_file_atomically(report_output_path, report_row["rendered_bytes"])
-    app.connection.execute("UPDATE reports SET status = ?, published_at = ? WHERE report_date = ?",
-                           (REPORT_STATUS_PUBLISHED, utc_now_timestamp(), report_date))
+    app.connection.execute(
+        "UPDATE reports SET status = ?, published_at = ? WHERE report_date = ?",
+        (REPORT_STATUS_PUBLISHED, utc_now_timestamp(), report_date),
+    )
     return len(item_rows)

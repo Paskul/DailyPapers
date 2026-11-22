@@ -23,10 +23,14 @@ from typing import Any
 from paperwatch.errors import SourceResponseRejected
 from paperwatch.publication_dates import normalize_partial_date
 from paperwatch.scholarly_identifiers import ARXIV_DATACITE_DOI_PREFIX, ARXIV_SCHEME, DOI_SCHEME, OPENALEX_SCHEME
-from paperwatch.sources.record_cleaning import (MAXIMUM_ABSTRACT_CHARACTERS, MAXIMUM_TITLE_CHARACTERS,
-                                                clean_author_names, clean_provider_text, keep_valid_identifiers)
-from paperwatch.sources.types import (WITHDRAWAL_NOTICE_RETRACTED, CollectedPaperRecord, ParsedSearchPage,
-                                      RawIdentifier)
+from paperwatch.sources.record_cleaning import (
+    MAXIMUM_ABSTRACT_CHARACTERS,
+    MAXIMUM_TITLE_CHARACTERS,
+    clean_author_names,
+    clean_provider_text,
+    keep_valid_identifiers,
+)
+from paperwatch.sources.types import WITHDRAWAL_NOTICE_RETRACTED, CollectedPaperRecord, ParsedSearchPage, RawIdentifier
 
 SKIPPED_WORK_TYPES = frozenset({"paratext", "erratum", "retraction", "peer-review", "editorial", "letter"})
 ARXIV_LANDING_PAGE_PATTERN = re.compile(r"^https?://(?:export\.)?arxiv\.org/abs/\S+$", re.IGNORECASE)
@@ -97,19 +101,28 @@ def convert_openalex_work(raw_work: Any, discovery_route: str) -> tuple[Collecte
     title = clean_provider_text(raw_work.get("display_name") or raw_work.get("title"), MAXIMUM_TITLE_CHARACTERS)
     if title is None:
         return None, "no title"
-    author_names = [(authorship.get("author") or {}).get("display_name")
-                    for authorship in _list_of_objects(raw_work.get("authorships"))]
+    author_names = [
+        (authorship.get("author") or {}).get("display_name")
+        for authorship in _list_of_objects(raw_work.get("authorships"))
+    ]
     first_published_date = normalize_partial_date(raw_work.get("publication_date"))
     if first_published_date is None and isinstance(raw_work.get("publication_year"), int):
         first_published_date = normalize_partial_date(f"{raw_work['publication_year']:04d}")
     is_retracted = raw_work.get("is_retracted") is True
     return CollectedPaperRecord(
-        provider=OPENALEX_SCHEME, provider_paper_id=work_id, title=title, authors=clean_author_names(author_names),
+        provider=OPENALEX_SCHEME,
+        provider_paper_id=work_id,
+        title=title,
+        authors=clean_author_names(author_names),
         abstract=rebuild_abstract_from_inverted_index(raw_work.get("abstract_inverted_index")),
-        first_published_date=first_published_date, latest_revision_date=None, source_version=None,
-        discovery_route=discovery_route, linked_identifiers=keep_valid_identifiers(_stated_identifier_links(raw_work)),
+        first_published_date=first_published_date,
+        latest_revision_date=None,
+        source_version=None,
+        discovery_route=discovery_route,
+        linked_identifiers=keep_valid_identifiers(_stated_identifier_links(raw_work)),
         withdrawal_notice=WITHDRAWAL_NOTICE_RETRACTED if is_retracted else None,
-        withdrawal_evidence="OpenAlex marks this work as retracted (is_retracted)" if is_retracted else None), ""
+        withdrawal_evidence="OpenAlex marks this work as retracted (is_retracted)" if is_retracted else None,
+    ), ""
 
 
 def rebuild_abstract_from_inverted_index(inverted_index: Any) -> str | None:

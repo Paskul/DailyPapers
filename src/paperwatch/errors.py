@@ -53,8 +53,14 @@ class ModelOutputInvalid(PaperwatchError):
     process_exit_code = 5
     model_call_outcome = "invalid_output"
 
-    def __init__(self, message: str, *, operator_hint: str | None = None, rejected_answer_text: str | None = None,
-                 problems: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        operator_hint: str | None = None,
+        rejected_answer_text: str | None = None,
+        problems: tuple[str, ...] = (),
+    ) -> None:
         super().__init__(message, operator_hint=operator_hint)
         self.rejected_answer_text = rejected_answer_text
         self.problems = problems or (message,)
@@ -148,8 +154,14 @@ class ProviderUnavailable(PaperwatchError):
     process_exit_code = 7
     is_service_outage = True
 
-    def __init__(self, message: str, *, provider_name: str, retry_after_seconds: float | None = None,
-                 operator_hint: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider_name: str,
+        retry_after_seconds: float | None = None,
+        operator_hint: str | None = None,
+    ) -> None:
         super().__init__(message, operator_hint=operator_hint)
         self.provider_name = provider_name
         self.retry_after_seconds = retry_after_seconds  # the provider's own Retry-After, honoured as a minimum pause
@@ -212,8 +224,9 @@ def describe_failure_for_operator(failure: PaperwatchError, *, message_override:
     (plan part 10): no credentials, no long quotes of paper or model text; the full message stays in the database."""
     from paperwatch.service_log_redaction import redact_service_log_text  # local import: errors.py has no deps
 
-    description = f"paperwatch: FAILED [{failure.failed_component}] " \
-                  f"{redact_service_log_text(str(message_override or failure))}"
+    description = (
+        f"paperwatch: FAILED [{failure.failed_component}] {redact_service_log_text(str(message_override or failure))}"
+    )
     if failure.operator_hint:
         description += f"\n  hint: {redact_service_log_text(failure.operator_hint)}"
     return description

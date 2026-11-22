@@ -31,8 +31,10 @@ EARLIEST_PUBLICATION_YEAR = 1900
 ARXIV_CATEGORY_PATTERN = re.compile(r"^[a-z][a-z-]*(\.[A-Za-z][A-Za-z-]*)?$")
 ENTITY_TAG_PATTERN = re.compile(r'^(W/)?"?[A-Za-z0-9._:+/=-]{1,200}"?$')  # an HTTP ETag as the server sent it
 # Only the fields the OpenAlex parser reads (paperwatch.sources.openalex_works); a smaller, cheaper response.
-OPENALEX_SELECTED_FIELDS = ("id,doi,display_name,title,publication_date,publication_year,authorships,"
-                            "abstract_inverted_index,ids,locations,is_retracted,type")
+OPENALEX_SELECTED_FIELDS = (
+    "id,doi,display_name,title,publication_date,publication_year,authorships,"
+    "abstract_inverted_index,ids,locations,is_retracted,type"
+)
 
 
 @dataclass(frozen=True)
@@ -77,9 +79,13 @@ class PublicationWindow:
 # --------------------------------------------------------------------------------------------------------------------
 
 
-def build_search_request(public_query: PublicQuery, cursor: str | None, page_size: int,
-                         publication_window: PublicationWindow | None = None,
-                         result_order: SearchResultOrder = SearchResultOrder.PROVIDER_DEFAULT) -> ProviderRequest:
+def build_search_request(
+    public_query: PublicQuery,
+    cursor: str | None,
+    page_size: int,
+    publication_window: PublicationWindow | None = None,
+    result_order: SearchResultOrder = SearchResultOrder.PROVIDER_DEFAULT,
+) -> ProviderRequest:
     result_order = SearchResultOrder(result_order)  # refuses anything but the fixed values
     if public_query.provider_name == "arxiv":
         return _build_arxiv_search_request(public_query, cursor, page_size, publication_window, result_order)
@@ -88,9 +94,13 @@ def build_search_request(public_query: PublicQuery, cursor: str | None, page_siz
     raise SourceAccessDenied(f"provider '{public_query.provider_name}' has no search operation")
 
 
-def _build_arxiv_search_request(public_query: PublicQuery, cursor: str | None, page_size: int,
-                                publication_window: PublicationWindow | None,
-                                result_order: SearchResultOrder) -> ProviderRequest:
+def _build_arxiv_search_request(
+    public_query: PublicQuery,
+    cursor: str | None,
+    page_size: int,
+    publication_window: PublicationWindow | None,
+    result_order: SearchResultOrder,
+) -> ProviderRequest:
     if public_query.query_kind == QUERY_KIND_KEYWORDS:
         phrase_without_quotes = public_query.public_value.replace('"', " ").strip()
         search_expression = f'all:"{phrase_without_quotes}"'
@@ -99,25 +109,38 @@ def _build_arxiv_search_request(public_query: PublicQuery, cursor: str | None, p
     else:
         raise SourceAccessDenied(f"arXiv cannot search query kind '{public_query.query_kind}'")
     if publication_window is not None:
-        search_expression = (f"({search_expression}) AND submittedDate:"
-                             f"[{publication_window.first_date:%Y%m%d}0000 TO {publication_window.last_date:%Y%m%d}2359]")
+        search_expression = (
+            f"({search_expression}) AND submittedDate:"
+            f"[{publication_window.first_date:%Y%m%d}0000 TO {publication_window.last_date:%Y%m%d}2359]"
+        )
     start_offset = _parse_arxiv_start_offset(cursor)
-    return ProviderRequest("arxiv", OPERATION_SEARCH, "/api/query", (
-        ("search_query", search_expression), ("start", str(start_offset)), ("max_results", str(page_size)),
-        ("sortBy", "submittedDate" if result_order == SearchResultOrder.PROVIDER_DEFAULT else "relevance"),
-        ("sortOrder", "descending")))
+    return ProviderRequest(
+        "arxiv",
+        OPERATION_SEARCH,
+        "/api/query",
+        (
+            ("search_query", search_expression),
+            ("start", str(start_offset)),
+            ("max_results", str(page_size)),
+            ("sortBy", "submittedDate" if result_order == SearchResultOrder.PROVIDER_DEFAULT else "relevance"),
+            ("sortOrder", "descending"),
+        ),
+    )
 
 
-def _build_openalex_search_request(public_query: PublicQuery, cursor: str | None, page_size: int,
-                                   publication_window: PublicationWindow | None,
-                                   result_order: SearchResultOrder) -> ProviderRequest:
+def _build_openalex_search_request(
+    public_query: PublicQuery,
+    cursor: str | None,
+    page_size: int,
+    publication_window: PublicationWindow | None,
+    result_order: SearchResultOrder,
+) -> ProviderRequest:
     if public_query.query_kind != QUERY_KIND_KEYWORDS:
         raise SourceAccessDenied(f"OpenAlex cannot search query kind '{public_query.query_kind}'")
     openalex_cursor = cursor or "*"
     if not OPENALEX_CURSOR_PATTERN.match(openalex_cursor):
         raise SourceAccessDenied("OpenAlex cursor has an unexpected form; refusing to send it")
-    query_parameters = [("per-page", str(page_size)), ("cursor", openalex_cursor),
-                        ("select", OPENALEX_SELECTED_FIELDS)]
+    query_parameters = [("per-page", str(page_size)), ("cursor", openalex_cursor), ("select", OPENALEX_SELECTED_FIELDS)]
     filter_parts = []
     if result_order == SearchResultOrder.MOST_CITED:
         filter_parts.append(f'title_and_abstract.search:"{_phrase_safe_inside_openalex_filter(public_query)}"')
@@ -125,8 +148,10 @@ def _build_openalex_search_request(public_query: PublicQuery, cursor: str | None
     else:
         query_parameters.insert(0, ("search", public_query.public_value))
     if publication_window is not None:
-        filter_parts += [f"from_publication_date:{publication_window.first_date.isoformat()}",
-                         f"to_publication_date:{publication_window.last_date.isoformat()}"]
+        filter_parts += [
+            f"from_publication_date:{publication_window.first_date.isoformat()}",
+            f"to_publication_date:{publication_window.last_date.isoformat()}",
+        ]
     if filter_parts:
         query_parameters.append(("filter", ",".join(filter_parts)))
     return ProviderRequest("openalex", OPERATION_SEARCH, "/works", tuple(query_parameters))
@@ -173,8 +198,9 @@ def build_get_work_request(identifier: NormalizedIdentifier) -> ProviderRequest:
     if identifier.scheme == OPENALEX_SCHEME:
         return ProviderRequest("openalex", OPERATION_GET_WORK, f"/works/{identifier.value}")
     if identifier.scheme == DOI_SCHEME:
-        return ProviderRequest("openalex", OPERATION_GET_WORK,
-                               f"/works/doi:{urllib.parse.quote(identifier.value, safe='/')}")
+        return ProviderRequest(
+            "openalex", OPERATION_GET_WORK, f"/works/doi:{urllib.parse.quote(identifier.value, safe='/')}"
+        )
     raise SourceAccessDenied(f"no provider lookup exists for '{identifier.scheme}' identifiers")
 
 
@@ -189,13 +215,22 @@ def build_get_works_request(openalex_identifiers: list[NormalizedIdentifier]) ->
     """One request for the metadata of up to 100 works: filter=openalex:W1|W2|..., the parser's fields only."""
     if not 1 <= len(openalex_identifiers) <= MAXIMUM_OPENALEX_IDS_PER_REQUEST:
         raise SourceAccessDenied(f"a works lookup takes 1 to {MAXIMUM_OPENALEX_IDS_PER_REQUEST} ids")
-    if any(identifier.scheme != OPENALEX_SCHEME or not re.fullmatch(r"W\d+", identifier.value)
-           for identifier in openalex_identifiers):
+    if any(
+        identifier.scheme != OPENALEX_SCHEME or not re.fullmatch(r"W\d+", identifier.value)
+        for identifier in openalex_identifiers
+    ):
         raise SourceAccessDenied("a works lookup accepts normalized OpenAlex work ids only")
     unique_work_ids = list(dict.fromkeys(identifier.value for identifier in openalex_identifiers))
-    return ProviderRequest("openalex", OPERATION_GET_WORKS, "/works",
-                           (("filter", "openalex:" + "|".join(unique_work_ids)),
-                            ("per-page", str(len(unique_work_ids))), ("select", OPENALEX_SELECTED_FIELDS)))
+    return ProviderRequest(
+        "openalex",
+        OPERATION_GET_WORKS,
+        "/works",
+        (
+            ("filter", "openalex:" + "|".join(unique_work_ids)),
+            ("per-page", str(len(unique_work_ids))),
+            ("select", OPENALEX_SELECTED_FIELDS),
+        ),
+    )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -207,10 +242,13 @@ def build_get_text_request(edition_identifier: NormalizedIdentifier) -> Provider
     """The text of exactly one edition: a VERSIONED arXiv PDF, or an OpenAlex content PDF."""
     if edition_identifier.scheme == ARXIV_SCHEME:
         if edition_identifier.version_number is None:
-            raise SourceAccessDenied(f"arXiv edition {edition_identifier.value} has no version; only a versioned "
-                                     "PDF identifies the exact text that will be read")
-        return ProviderRequest("arxiv", OPERATION_GET_TEXT,
-                               f"/pdf/{edition_identifier.value}v{edition_identifier.version_number}")
+            raise SourceAccessDenied(
+                f"arXiv edition {edition_identifier.value} has no version; only a versioned "
+                "PDF identifies the exact text that will be read"
+            )
+        return ProviderRequest(
+            "arxiv", OPERATION_GET_TEXT, f"/pdf/{edition_identifier.value}v{edition_identifier.version_number}"
+        )
     if edition_identifier.scheme == OPENALEX_SCHEME:
         return ProviderRequest("openalex", OPERATION_GET_TEXT, f"/works/{edition_identifier.value}.pdf")
     raise SourceAccessDenied(f"no permitted text route for '{edition_identifier.scheme}' editions")
@@ -221,8 +259,15 @@ def build_get_text_request(edition_identifier: NormalizedIdentifier) -> Provider
 # --------------------------------------------------------------------------------------------------------------------
 
 
-def build_seed_items_request(*, library_type: str, library_id: str, collection_key: str, start: int,
-                             page_size: int, if_modified_since_library_version: int | None = None) -> ProviderRequest:
+def build_seed_items_request(
+    *,
+    library_type: str,
+    library_id: str,
+    collection_key: str,
+    start: int,
+    page_size: int,
+    if_modified_since_library_version: int | None = None,
+) -> ProviderRequest:
     """One page of the top-level items of one approved collection: bibliographic data only.
 
     Pages are ordered by date added (oldest first) so paging is stable while the library version stays the same.
@@ -232,14 +277,24 @@ def build_seed_items_request(*, library_type: str, library_id: str, collection_k
         raise SourceAccessDenied("invalid Zotero library or paging values")
     # "-attachment || note" asks Zotero to leave out attachments and notes; the seed parser
     # (paperwatch.seeds.zotero_items) still drops any note or attachment item it receives.
-    query_parameters = (("format", "json"), ("include", "data"), ("itemType", "-attachment || note"),
-                        ("sort", "dateAdded"), ("direction", "asc"), ("start", str(start)),
-                        ("limit", str(page_size)))
+    query_parameters = (
+        ("format", "json"),
+        ("include", "data"),
+        ("itemType", "-attachment || note"),
+        ("sort", "dateAdded"),
+        ("direction", "asc"),
+        ("start", str(start)),
+        ("limit", str(page_size)),
+    )
     request_headers: tuple[tuple[str, str], ...] = ()
     if if_modified_since_library_version is not None:
         if isinstance(if_modified_since_library_version, bool) or int(if_modified_since_library_version) < 0:
             raise SourceAccessDenied("invalid Zotero library version")
         request_headers = (("If-Modified-Since-Version", str(int(if_modified_since_library_version))),)
-    return ProviderRequest("zotero", OPERATION_LIST_SEED_ITEMS,
-                           f"/{library_type}s/{library_id}/collections/{collection_key}/items/top",
-                           query_parameters, request_headers)
+    return ProviderRequest(
+        "zotero",
+        OPERATION_LIST_SEED_ITEMS,
+        f"/{library_type}s/{library_id}/collections/{collection_key}/items/top",
+        query_parameters,
+        request_headers,
+    )

@@ -426,8 +426,10 @@ class AppConfig:
 
     def limits_for_role(self, role_name: str) -> RoleLimits:
         if role_name not in self.role_limits:
-            raise ConfigurationError(f"no limits configured for model role '{role_name}'",
-                                     operator_hint=f"add a [roles.{role_name}] section to config.toml")
+            raise ConfigurationError(
+                f"no limits configured for model role '{role_name}'",
+                operator_hint=f"add a [roles.{role_name}] section to config.toml",
+            )
         return self.role_limits[role_name]
 
 
@@ -441,8 +443,22 @@ def load_app_config(home_dir: Path) -> AppConfig:
     raw_config = _read_toml_file(home_dir / CONFIG_FILE_NAME)
     raw_topics = _read_toml_file(home_dir / TOPICS_FILE_NAME)
 
-    known_sections = {"paths", "model", "roles", "worker", "report", "schedule", "collector", "collection",
-                      "screening", "reading", "extractor", "access", "references", "comparisons"}
+    known_sections = {
+        "paths",
+        "model",
+        "roles",
+        "worker",
+        "report",
+        "schedule",
+        "collector",
+        "collection",
+        "screening",
+        "reading",
+        "extractor",
+        "access",
+        "references",
+        "comparisons",
+    }
     unknown_sections = set(raw_config) - known_sections
     if unknown_sections:
         raise ConfigurationError(f"unknown section(s) {sorted(unknown_sections)} in {CONFIG_FILE_NAME}")
@@ -475,13 +491,16 @@ def _read_toml_file(file_path: Path) -> dict[str, Any]:
             return tomllib.load(toml_file)
     except PermissionError:
         # Under the service-account layout (plan part 3) only members of the shared state group may read the home.
-        raise ConfigurationError(f"{file_path} is not readable by this account",
-                                 operator_hint="run as a paperwatch service account, or as a member of the shared "
-                                               "state group (after adding yourself, log out and in, or use "
-                                               "`sg paperwatch-state -c '...'`)") from None
+        raise ConfigurationError(
+            f"{file_path} is not readable by this account",
+            operator_hint="run as a paperwatch service account, or as a member of the shared "
+            "state group (after adding yourself, log out and in, or use "
+            "`sg paperwatch-state -c '...'`)",
+        ) from None
     except FileNotFoundError:
-        raise ConfigurationError(f"{file_path} does not exist",
-                                 operator_hint=f"run `paperwatch --home {file_path.parent} init` first") from None
+        raise ConfigurationError(
+            f"{file_path} does not exist", operator_hint=f"run `paperwatch --home {file_path.parent} init` first"
+        ) from None
     except IsADirectoryError:
         raise ConfigurationError(f"{file_path} is a directory, not a TOML file") from None
     except tomllib.TOMLDecodeError as decode_error:
@@ -498,15 +517,18 @@ def _build_role_limits(raw_roles_section: Any) -> dict[str, RoleLimits]:
         if not isinstance(raw_role_section, dict):
             raise ConfigurationError(f"[roles.{role_name}] in config.toml must be a table")
         merged_role_limits[role_name] = _build_settings_section(
-            RoleLimits, {**base_values, **raw_role_section}, f"roles.{role_name}")
+            RoleLimits, {**base_values, **raw_role_section}, f"roles.{role_name}"
+        )
     return merged_role_limits
 
 
 def _build_topics(raw_topics_file: dict[str, Any]) -> tuple[TopicDefinition, ...]:
     unknown_top_level_keys = set(raw_topics_file) - {"topics"}
     if unknown_top_level_keys:
-        raise ConfigurationError(f"unknown key(s) {sorted(unknown_top_level_keys)} in {TOPICS_FILE_NAME}; "
-                                 "topics are declared as [[topics]] entries")
+        raise ConfigurationError(
+            f"unknown key(s) {sorted(unknown_top_level_keys)} in {TOPICS_FILE_NAME}; "
+            "topics are declared as [[topics]] entries"
+        )
     raw_topic_entries = raw_topics_file.get("topics", [])
     if not isinstance(raw_topic_entries, list):
         raise ConfigurationError(f"`topics` in {TOPICS_FILE_NAME} must be an array of tables ([[topics]])")
@@ -535,28 +557,40 @@ def _validate_public_topic_terms(topic: TopicDefinition) -> None:
     """Check the terms the collector may send to providers. The private question is never checked here: it never
     leaves the machine, so it may contain anything."""
     for public_query in topic.public_queries:
-        if not public_query.strip() or len(public_query) > MAXIMUM_PUBLIC_QUERY_CHARACTERS or \
-                any(not character.isprintable() for character in public_query):
+        if (
+            not public_query.strip()
+            or len(public_query) > MAXIMUM_PUBLIC_QUERY_CHARACTERS
+            or any(not character.isprintable() for character in public_query)
+        ):
             raise ConfigurationError(
                 f"topic '{topic.topic_id}': public query {public_query!r} must be 1-{MAXIMUM_PUBLIC_QUERY_CHARACTERS} "
-                "printable characters on one line")
+                "printable characters on one line"
+            )
     for arxiv_category in topic.arxiv_categories:
         if not ARXIV_CATEGORY_PATTERN.match(arxiv_category):
-            raise ConfigurationError(f"topic '{topic.topic_id}': '{arxiv_category}' is not an arXiv category "
-                                     "such as cs.RO or hep-th")
+            raise ConfigurationError(
+                f"topic '{topic.topic_id}': '{arxiv_category}' is not an arXiv category such as cs.RO or hep-th"
+            )
     for collection_key in topic.zotero_collections:
         if not ZOTERO_COLLECTION_KEY_PATTERN.match(collection_key):
-            raise ConfigurationError(f"topic '{topic.topic_id}': '{collection_key}' is not a Zotero collection key "
-                                     "(8 characters A-Z / 0-9, e.g. from the collection URL)")
+            raise ConfigurationError(
+                f"topic '{topic.topic_id}': '{collection_key}' is not a Zotero collection key "
+                "(8 characters A-Z / 0-9, e.g. from the collection URL)"
+            )
 
 
 def _validate_seed_file_paths(topic: TopicDefinition) -> None:
     """CSL JSON seed files are read locally by the collector; the path itself never leaves the machine."""
     for seed_file_path in topic.csl_json_files:
-        if not seed_file_path.strip() or len(seed_file_path) > MAXIMUM_SEED_FILE_PATH_CHARACTERS or \
-                any(not character.isprintable() for character in seed_file_path):
-            raise ConfigurationError(f"topic '{topic.topic_id}': CSL JSON file path {seed_file_path!r} must be "
-                                     f"1-{MAXIMUM_SEED_FILE_PATH_CHARACTERS} printable characters")
+        if (
+            not seed_file_path.strip()
+            or len(seed_file_path) > MAXIMUM_SEED_FILE_PATH_CHARACTERS
+            or any(not character.isprintable() for character in seed_file_path)
+        ):
+            raise ConfigurationError(
+                f"topic '{topic.topic_id}': CSL JSON file path {seed_file_path!r} must be "
+                f"1-{MAXIMUM_SEED_FILE_PATH_CHARACTERS} printable characters"
+            )
 
 
 def _build_settings_section(settings_class: type, raw_section: Any, section_label: str):
@@ -567,10 +601,13 @@ def _build_settings_section(settings_class: type, raw_section: Any, section_labe
     known_field_names = {settings_field.name for settings_field in dataclasses.fields(settings_class)}
     unknown_keys = set(raw_section) - known_field_names
     if unknown_keys:
-        raise ConfigurationError(f"unknown key(s) {sorted(unknown_keys)} in [{section_label}]; "
-                                 f"allowed keys: {sorted(known_field_names)}")
-    coerced_values = {key: _coerce_toml_value(value, field_type_hints[key], f"{section_label}.{key}")
-                      for key, value in raw_section.items()}
+        raise ConfigurationError(
+            f"unknown key(s) {sorted(unknown_keys)} in [{section_label}]; allowed keys: {sorted(known_field_names)}"
+        )
+    coerced_values = {
+        key: _coerce_toml_value(value, field_type_hints[key], f"{section_label}.{key}")
+        for key, value in raw_section.items()
+    }
     try:
         return settings_class(**coerced_values)
     except TypeError as construction_error:
@@ -602,8 +639,9 @@ def _coerce_toml_value(raw_value: Any, expected_type: Any, key_label: str) -> An
 def _validate_cross_field_rules(app_config: AppConfig) -> None:
     model_settings = app_config.model
     if model_settings.backend not in SUPPORTED_MODEL_BACKENDS:
-        raise ConfigurationError(f"model.backend must be one of {SUPPORTED_MODEL_BACKENDS}, "
-                                 f"got '{model_settings.backend}'")
+        raise ConfigurationError(
+            f"model.backend must be one of {SUPPORTED_MODEL_BACKENDS}, got '{model_settings.backend}'"
+        )
     parsed_model_url = urllib.parse.urlparse(model_settings.base_url)
     if parsed_model_url.scheme not in ("http", "https") or not parsed_model_url.hostname:
         raise ConfigurationError(f"model.base_url must be an http(s) URL, got '{model_settings.base_url}'")
@@ -611,7 +649,8 @@ def _validate_cross_field_rules(app_config: AppConfig) -> None:
         raise ConfigurationError(
             f"model.base_url host '{parsed_model_url.hostname}' is not a loopback address",
             operator_hint="paperwatch only talks to a local model; set model.allow_non_loopback_host = true "
-                          "only for a model server you control on your own network")
+            "only for a model server you control on your own network",
+        )
 
     for role_name, role_limits in app_config.role_limits.items():
         if role_limits.max_output_tokens <= 0 or role_limits.timeout_seconds <= 0:
@@ -638,52 +677,75 @@ def _validate_cross_field_rules(app_config: AppConfig) -> None:
     worker_settings = app_config.worker
     if worker_settings.max_attempts_per_job <= 0:
         raise ConfigurationError("worker.max_attempts_per_job must be positive")
-    if worker_settings.lease_renewal_interval_seconds <= 0 or \
-            worker_settings.lease_seconds < 2 * worker_settings.lease_renewal_interval_seconds:
+    if (
+        worker_settings.lease_renewal_interval_seconds <= 0
+        or worker_settings.lease_seconds < 2 * worker_settings.lease_renewal_interval_seconds
+    ):
         raise ConfigurationError(
             "worker.lease_seconds must be at least twice worker.lease_renewal_interval_seconds (and both positive), "
-            "so one missed renewal does not let another worker reclaim a live job")
+            "so one missed renewal does not let another worker reclaim a live job"
+        )
 
 
 def _validate_collection_settings(collection_settings: CollectionSettings) -> None:
-    non_negative_limits = {name: value for name, value in dataclasses.asdict(collection_settings).items()
-                           if isinstance(value, int)}
+    non_negative_limits = {
+        name: value for name, value in dataclasses.asdict(collection_settings).items() if isinstance(value, int)
+    }
     for limit_name, limit_value in non_negative_limits.items():
         if limit_value < 0:
             raise ConfigurationError(f"collection.{limit_name} must not be negative")
     if collection_settings.current_release_reserved_candidates > collection_settings.daily_new_candidate_budget:
-        raise ConfigurationError("collection.current_release_reserved_candidates cannot exceed "
-                                 "collection.daily_new_candidate_budget")
+        raise ConfigurationError(
+            "collection.current_release_reserved_candidates cannot exceed collection.daily_new_candidate_budget"
+        )
     if not 1800 <= collection_settings.historical_earliest_year:
         raise ConfigurationError("collection.historical_earliest_year must be 1800 or later")
-    if collection_settings.historical_half_life_years <= 0 or not 1 <= collection_settings.historical_window_count \
-            <= 50 or collection_settings.historical_citation_ordering_min_age_years < 0:
-        raise ConfigurationError("collection.historical_half_life_years must be positive, "
-                                 "collection.historical_window_count between 1 and 50, and "
-                                 "collection.historical_citation_ordering_min_age_years not negative")
+    if (
+        collection_settings.historical_half_life_years <= 0
+        or not 1 <= collection_settings.historical_window_count <= 50
+        or collection_settings.historical_citation_ordering_min_age_years < 0
+    ):
+        raise ConfigurationError(
+            "collection.historical_half_life_years must be positive, "
+            "collection.historical_window_count between 1 and 50, and "
+            "collection.historical_citation_ordering_min_age_years not negative"
+        )
     if not collection_settings.local_sources_dir.strip():
         raise ConfigurationError("collection.local_sources_dir must name a directory")
 
 
 def _validate_screening_settings(screening_settings: ScreeningSettings) -> None:
     if screening_settings.embedding_backend not in SUPPORTED_EMBEDDING_BACKENDS:
-        raise ConfigurationError(f"screening.embedding_backend must be one of {SUPPORTED_EMBEDDING_BACKENDS}, "
-                                 f"got '{screening_settings.embedding_backend}'")
+        raise ConfigurationError(
+            f"screening.embedding_backend must be one of {SUPPORTED_EMBEDDING_BACKENDS}, "
+            f"got '{screening_settings.embedding_backend}'"
+        )
     if not screening_settings.embedding_model_dir.strip():
         raise ConfigurationError("screening.embedding_model_dir must name a directory")
-    signal_weights = (screening_settings.question_similarity_weight, screening_settings.seed_similarity_weight,
-                      screening_settings.phrase_match_weight)
+    signal_weights = (
+        screening_settings.question_similarity_weight,
+        screening_settings.seed_similarity_weight,
+        screening_settings.phrase_match_weight,
+    )
     if any(weight < 0 for weight in signal_weights) or sum(signal_weights) <= 0:
-        raise ConfigurationError("the screening signal weights must not be negative, and at least one must be "
-                                 "positive")
-    if screening_settings.embedding_threads <= 0 or screening_settings.embedding_batch_size <= 0 or \
-            screening_settings.closest_seed_count <= 0:
-        raise ConfigurationError("screening.embedding_threads, embedding_batch_size, and closest_seed_count must be "
-                                 "positive")
-    if screening_settings.daily_promotion_limit < 0 or screening_settings.near_cutoff_promotions < 0 or \
-            screening_settings.near_cutoff_promotions > screening_settings.daily_promotion_limit:
-        raise ConfigurationError("screening.daily_promotion_limit must not be negative, and "
-                                 "screening.near_cutoff_promotions must lie between 0 and the daily limit")
+        raise ConfigurationError("the screening signal weights must not be negative, and at least one must be positive")
+    if (
+        screening_settings.embedding_threads <= 0
+        or screening_settings.embedding_batch_size <= 0
+        or screening_settings.closest_seed_count <= 0
+    ):
+        raise ConfigurationError(
+            "screening.embedding_threads, embedding_batch_size, and closest_seed_count must be positive"
+        )
+    if (
+        screening_settings.daily_promotion_limit < 0
+        or screening_settings.near_cutoff_promotions < 0
+        or screening_settings.near_cutoff_promotions > screening_settings.daily_promotion_limit
+    ):
+        raise ConfigurationError(
+            "screening.daily_promotion_limit must not be negative, and "
+            "screening.near_cutoff_promotions must lie between 0 and the daily limit"
+        )
     if not 0.0 <= screening_settings.minimum_screening_score <= 1.0:
         raise ConfigurationError("screening.minimum_screening_score must lie between 0 and 1")
 
@@ -693,14 +755,19 @@ def _validate_reading_settings(app_config: AppConfig) -> None:
     for setting_name, setting_value in dataclasses.asdict(reading_settings).items():
         if setting_value <= 0:
             raise ConfigurationError(f"reading.{setting_name} must be positive")
-    if not reading_settings.passage_min_characters <= reading_settings.passage_max_characters \
-            <= reading_settings.section_max_characters:
-        raise ConfigurationError("reading.passage_min_characters <= passage_max_characters <= "
-                                 "section_max_characters must hold")
+    if (
+        not reading_settings.passage_min_characters
+        <= reading_settings.passage_max_characters
+        <= reading_settings.section_max_characters
+    ):
+        raise ConfigurationError(
+            "reading.passage_min_characters <= passage_max_characters <= section_max_characters must hold"
+        )
     # Plan part 7: reserve context space for reasoning and the final answer. One reading section plus the prompt
     # around it plus the section reader's whole output limit must fit the context paperwatch may rely on.
     section_prompt_tokens = READING_PROMPT_OVERHEAD_TOKENS + int(
-        reading_settings.section_max_characters / READING_CHARACTERS_PER_TOKEN_ESTIMATE)
+        reading_settings.section_max_characters / READING_CHARACTERS_PER_TOKEN_ESTIMATE
+    )
     for reading_role_name in ("section_reader", "reviewer"):
         reserved_output_tokens = app_config.role_limits[reading_role_name].max_output_tokens
         if section_prompt_tokens + reserved_output_tokens > app_config.model.required_context_tokens:
@@ -710,7 +777,8 @@ def _validate_reading_settings(app_config: AppConfig) -> None:
                 f"{reserved_output_tokens} exceeds model.required_context_tokens = "
                 f"{app_config.model.required_context_tokens}",
                 operator_hint="lower reading.section_max_characters or the role's max_output_tokens, or raise "
-                              "model.required_context_tokens if the server's per-slot context allows it")
+                "model.required_context_tokens if the server's per-slot context allows it",
+            )
 
 
 MAXIMUM_REFERENCES_PER_PAPER = 3  # plan part 8: "choose up to three"; the research role's schema allows no more
@@ -724,33 +792,39 @@ def _validate_reference_and_comparison_settings(app_config: AppConfig) -> None:
                 raise ConfigurationError(f"{section_name}.{setting_name} must not be negative")
     reference_settings = app_config.references
     if not 1 <= reference_settings.references_per_paper <= MAXIMUM_REFERENCES_PER_PAPER:
-        raise ConfigurationError(f"references.references_per_paper must lie between 1 and "
-                                 f"{MAXIMUM_REFERENCES_PER_PAPER}")
+        raise ConfigurationError(
+            f"references.references_per_paper must lie between 1 and {MAXIMUM_REFERENCES_PER_PAPER}"
+        )
     if not 0 <= reference_settings.minimum_parent_question_fit <= 4:
         raise ConfigurationError("references.minimum_parent_question_fit is a rubric rating between 0 and 4")
     if reference_settings.candidates_offered_per_selection == 0:
         raise ConfigurationError("references.candidates_offered_per_selection must be positive")
     if app_config.comparisons.minimum_shared_evidence_dimensions > 3:
-        raise ConfigurationError("comparisons.minimum_shared_evidence_dimensions counts assumptions, guarantees and "
-                                 "evaluation setting, so it cannot exceed 3")
+        raise ConfigurationError(
+            "comparisons.minimum_shared_evidence_dimensions counts assumptions, guarantees and "
+            "evaluation setting, so it cannot exceed 3"
+        )
 
 
 def _validate_extractor_settings(extractor_settings: ExtractorSettings) -> None:
     if extractor_settings.image and not PINNED_IMAGE_REFERENCE_PATTERN.match(extractor_settings.image):
         raise ConfigurationError(
             f"extractor.image '{extractor_settings.image}' is not pinned (a tag such as ':latest' can change)",
-            operator_hint="use the 64-hex image id printed by deploy/build_extractor_image.sh, or name@sha256:<digest>")
-    numeric_limits = {"timeout_seconds": extractor_settings.timeout_seconds,
-                      "max_input_megabytes": extractor_settings.max_input_megabytes,
-                      "max_output_megabytes": extractor_settings.max_output_megabytes,
-                      "memory_megabytes": extractor_settings.memory_megabytes,
-                      "temporary_space_megabytes": extractor_settings.temporary_space_megabytes,
-                      "cpu_limit": extractor_settings.cpu_limit}
+            operator_hint="use the 64-hex image id printed by deploy/build_extractor_image.sh, or name@sha256:<digest>",
+        )
+    numeric_limits = {
+        "timeout_seconds": extractor_settings.timeout_seconds,
+        "max_input_megabytes": extractor_settings.max_input_megabytes,
+        "max_output_megabytes": extractor_settings.max_output_megabytes,
+        "memory_megabytes": extractor_settings.memory_megabytes,
+        "temporary_space_megabytes": extractor_settings.temporary_space_megabytes,
+        "cpu_limit": extractor_settings.cpu_limit,
+    }
     for limit_name, limit_value in numeric_limits.items():
         if limit_value <= 0:
             raise ConfigurationError(f"extractor.{limit_name} must be positive")
     if not extractor_settings.container_runtime.strip():
-        raise ConfigurationError("extractor.container_runtime must name an executable, e.g. \"podman\"")
+        raise ConfigurationError('extractor.container_runtime must name an executable, e.g. "podman"')
 
 
 def _is_loopback_host(hostname: str) -> bool:

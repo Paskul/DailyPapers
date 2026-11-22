@@ -38,8 +38,18 @@ BACKUP_DIRECTORY_PREFIX = "paperwatch-backup-"
 MANIFEST_FILE_NAME = "BACKUP_MANIFEST.json"
 SEEDS_DIRECTORY_NAME = "seeds"
 # Tables whose row counts are recorded and compared on restore: what the user would miss if it were lost.
-COUNTED_TABLES = ("papers", "paper_editions", "reviews", "review_topic_assessments", "review_evidence_passages",
-                  "comparisons", "reports", "report_items", "jobs", "model_calls")
+COUNTED_TABLES = (
+    "papers",
+    "paper_editions",
+    "reviews",
+    "review_topic_assessments",
+    "review_evidence_passages",
+    "comparisons",
+    "reports",
+    "report_items",
+    "jobs",
+    "model_calls",
+)
 
 
 class BackupError(RuntimeError):
@@ -53,10 +63,12 @@ class BackupResult:
 
     def describe(self) -> str:
         counts = self.manifest["row_counts"]
-        return (f"backup written to {self.backup_dir}: schema v{self.manifest['schema_version']}, "
-                f"{counts.get('papers', 0)} papers, {counts.get('reviews', 0)} reviews, "
-                f"{counts.get('reports', 0)} reports, {self.manifest['extracted_text_files']} extracted text file(s), "
-                f"{self.manifest['output_files']} output file(s); integrity {self.manifest['integrity_check']}")
+        return (
+            f"backup written to {self.backup_dir}: schema v{self.manifest['schema_version']}, "
+            f"{counts.get('papers', 0)} papers, {counts.get('reviews', 0)} reviews, "
+            f"{counts.get('reports', 0)} reports, {self.manifest['extracted_text_files']} extracted text file(s), "
+            f"{self.manifest['output_files']} output file(s); integrity {self.manifest['integrity_check']}"
+        )
 
 
 def create_backup(app_config: AppConfig, destination_dir: Path, *, moment: datetime) -> BackupResult:
@@ -78,13 +90,18 @@ def create_backup(app_config: AppConfig, destination_dir: Path, *, moment: datet
         backup_database_path = partial_dir / "state" / app_config.database_path.name
         backup_database_path.parent.mkdir(mode=0o700)
         _snapshot_database(app_config.database_path, backup_database_path)
-        extracted_text_files = _copy_extracted_texts(app_config.source_cache_dir,
-                                                     partial_dir / "state" / app_config.source_cache_dir.name)
+        extracted_text_files = _copy_extracted_texts(
+            app_config.source_cache_dir, partial_dir / "state" / app_config.source_cache_dir.name
+        )
         output_files = _copy_output(app_config.output_dir, partial_dir / "output")
-        manifest = {"created_at": f"{moment:%Y-%m-%dT%H:%M:%SZ}", "source_home": str(home_dir),
-                    "source_paths": {"state_dir": str(app_config.state_dir), "output_dir": str(app_config.output_dir)},
-                    "extracted_text_files": extracted_text_files, "output_files": output_files,
-                    **_describe_database(backup_database_path)}
+        manifest = {
+            "created_at": f"{moment:%Y-%m-%dT%H:%M:%SZ}",
+            "source_home": str(home_dir),
+            "source_paths": {"state_dir": str(app_config.state_dir), "output_dir": str(app_config.output_dir)},
+            "extracted_text_files": extracted_text_files,
+            "output_files": output_files,
+            **_describe_database(backup_database_path),
+        }
         if manifest["integrity_check"] != "ok":
             raise BackupError(f"the database snapshot failed its integrity check: {manifest['integrity_check']}")
         (partial_dir / MANIFEST_FILE_NAME).write_text(json.dumps(manifest, indent=1) + "\n")
@@ -119,13 +136,17 @@ def check_restored_home(restored_home: Path) -> RestoreCheck:
         return RestoreCheck([f"the restored config does not load: {load_error}"], restored_home)
     for path_name, restored_path in (("state_dir", app_config.state_dir), ("output_dir", app_config.output_dir)):
         if restored_home.resolve() not in restored_path.resolve().parents:
-            problems.append(f"{path_name} points outside the restored home ({restored_path}); edit [paths] in "
-                            f"{restored_home / CONFIG_FILE_NAME} before using it")
+            problems.append(
+                f"{path_name} points outside the restored home ({restored_path}); edit [paths] in "
+                f"{restored_home / CONFIG_FILE_NAME} before using it"
+            )
     restored_description = _describe_database(app_config.database_path)
     for compared_key in ("schema_version", "row_counts", "integrity_check"):
         if restored_description[compared_key] != manifest[compared_key]:
-            problems.append(f"{compared_key} differs: backup {manifest[compared_key]!r}, restored "
-                            f"{restored_description[compared_key]!r}")
+            problems.append(
+                f"{compared_key} differs: backup {manifest[compared_key]!r}, restored "
+                f"{restored_description[compared_key]!r}"
+            )
     restored_output_files = _count_files(app_config.output_dir)
     if restored_output_files != manifest["output_files"]:
         problems.append(f"output files: backup {manifest['output_files']}, restored {restored_output_files}")
@@ -199,9 +220,14 @@ def _describe_database(database_path: Path) -> dict:
     connection = _open_read_only(database_path)
     try:
         existing_tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        return {"schema_version": read_schema_version(connection),
-                "integrity_check": connection.execute("PRAGMA integrity_check").fetchone()[0],
-                "row_counts": {table_name: connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
-                               for table_name in COUNTED_TABLES if table_name in existing_tables}}
+        return {
+            "schema_version": read_schema_version(connection),
+            "integrity_check": connection.execute("PRAGMA integrity_check").fetchone()[0],
+            "row_counts": {
+                table_name: connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+                for table_name in COUNTED_TABLES
+                if table_name in existing_tables
+            },
+        }
     finally:
         connection.close()

@@ -29,25 +29,36 @@ from paperwatch.catalog import load_paper_aliases
 from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp
 from paperwatch.collection.source_cache_limit import prune_replaceable_downloads
 from paperwatch.collection.collection_context import CollectionContext
-from paperwatch.collection.local_source_files import (LocalSourceFolder, file_stems_for_edition, file_stems_for_paper,
-                                                      read_local_source_bytes)
+from paperwatch.collection.local_source_files import (
+    LocalSourceFolder,
+    file_stems_for_edition,
+    file_stems_for_paper,
+    read_local_source_bytes,
+)
 from paperwatch.db import write_transaction
-from paperwatch.errors import (ExtractionError, ProviderUnavailable, SourceAccessDenied, SourceInputError,
-                               SourceRecordNotFound, SourceRequestBudgetExhausted)
+from paperwatch.errors import (
+    ExtractionError,
+    ProviderUnavailable,
+    SourceAccessDenied,
+    SourceInputError,
+    SourceRecordNotFound,
+    SourceRequestBudgetExhausted,
+)
 from paperwatch.jobs import REVIEW_PAPER_JOB_KIND
 from paperwatch.readings import FULL_TEXT_EDITION_ORDER_SQL
 from paperwatch.review_inputs import fingerprint_extracted_reading_text
 from paperwatch.screening.review_promotion import queue_new_reading_for_promoted_paper_in_transaction
 from paperwatch.sandboxed_extractor import BYTES_PER_MEGABYTE, extract_text_in_sandbox
 from paperwatch.scholarly_identifiers import ARXIV_SCHEME, OPENALEX_SCHEME
-from paperwatch.source_cache import (CachedSourceFile, cached_edition_directory, store_extracted_text,
-                                     store_source_bytes)
+from paperwatch.source_cache import CachedSourceFile, cached_edition_directory, store_extracted_text, store_source_bytes
 
 TEXT_ROUTE_LOCAL_FILE = "local_file"
 TEXT_ROUTE_ARXIV_PDF = "arxiv_pdf"
 TEXT_ROUTE_OPENALEX_CONTENT = "openalex_content"
-NETWORK_TEXT_ROUTE_BY_SCHEME = {ARXIV_SCHEME: (TEXT_ROUTE_ARXIV_PDF, "arxiv"),
-                                OPENALEX_SCHEME: (TEXT_ROUTE_OPENALEX_CONTENT, "openalex")}
+NETWORK_TEXT_ROUTE_BY_SCHEME = {
+    ARXIV_SCHEME: (TEXT_ROUTE_ARXIV_PDF, "arxiv"),
+    OPENALEX_SCHEME: (TEXT_ROUTE_OPENALEX_CONTENT, "openalex"),
+}
 RETRY_UNAVAILABLE_AFTER = timedelta(days=1)
 MAXIMUM_ACQUISITION_ATTEMPTS = 3
 MAXIMUM_PAPERS_CONSIDERED_PER_RUN = 200
@@ -67,19 +78,22 @@ class SourceTextRunCounts:
     readings_switched_to_full_text: int = 0
 
     def describe(self, downloads_remaining: int) -> str:
-        return (f"Source text: {self.from_local_files} from local files, {self.downloaded} downloaded "
-                f"({downloads_remaining} download(s) left today), {self.unavailable} unavailable (abstract only), "
-                f"{self.waiting_for_download_budget} waiting for download budget; extraction: {self.extracted} "
-                f"extracted, {self.extraction_failed} failed, {self.extraction_not_configured} waiting for the "
-                f"extractor image (set extractor.image); {self.readings_switched_to_full_text} reading(s) switched "
-                "to full text")
+        return (
+            f"Source text: {self.from_local_files} from local files, {self.downloaded} downloaded "
+            f"({downloads_remaining} download(s) left today), {self.unavailable} unavailable (abstract only), "
+            f"{self.waiting_for_download_budget} waiting for download budget; extraction: {self.extracted} "
+            f"extracted, {self.extraction_failed} failed, {self.extraction_not_configured} waiting for the "
+            f"extractor image (set extractor.image); {self.readings_switched_to_full_text} reading(s) switched "
+            "to full text"
+        )
 
 
 def acquire_source_texts(context: CollectionContext, *, allow_network: bool) -> list[str]:
     collection_settings = context.app_config.collection
     local_folder = LocalSourceFolder(context.app_config.local_sources_dir)
-    downloads_remaining = max(0, collection_settings.daily_source_text_budget
-                              - count_network_downloads_today(context.connection, context))
+    downloads_remaining = max(
+        0, collection_settings.daily_source_text_budget - count_network_downloads_today(context.connection, context)
+    )
     unavailable_providers: set[str] = set()  # paused or out of request budget for the rest of this run
     run_counts = SourceTextRunCounts()
 
@@ -116,33 +130,39 @@ def acquire_source_texts(context: CollectionContext, *, allow_network: bool) -> 
 
 def papers_waiting_for_source_text(connection: sqlite3.Connection, limit: int) -> list[str]:
     """Papers with a queued review job and no acquired text yet, in queue order."""
-    return [paper_row["paper_id"] for paper_row in connection.execute(
-        """SELECT paper_id, MIN(priority) AS best_priority, MIN(created_at) AS first_queued_at FROM jobs
+    return [
+        paper_row["paper_id"]
+        for paper_row in connection.execute(
+            """SELECT paper_id, MIN(priority) AS best_priority, MIN(created_at) AS first_queued_at FROM jobs
            WHERE kind = ? AND status = 'queued' AND paper_id IS NOT NULL
              AND paper_id NOT IN (SELECT paper_id FROM edition_source_texts WHERE acquisition_status = 'acquired')
            GROUP BY paper_id ORDER BY best_priority, first_queued_at, paper_id LIMIT ?""",
-        (REVIEW_PAPER_JOB_KIND, limit))]
+            (REVIEW_PAPER_JOB_KIND, limit),
+        )
+    ]
 
 
 def editions_in_text_preference_order(connection: sqlite3.Connection, paper_id: str) -> list[sqlite3.Row]:
     """arXiv editions first (newest version first), then OpenAlex, then the rest (newest sighting first). The same
     order picks the edition a full-text reading uses (paperwatch.readings.select_reading_input)."""
     return connection.execute(
-        f"SELECT * FROM paper_editions WHERE paper_id = ? ORDER BY {FULL_TEXT_EDITION_ORDER_SQL}",
-        (paper_id,)).fetchall()
+        f"SELECT * FROM paper_editions WHERE paper_id = ? ORDER BY {FULL_TEXT_EDITION_ORDER_SQL}", (paper_id,)
+    ).fetchall()
 
 
 def count_network_downloads_today(connection: sqlite3.Connection, context: CollectionContext) -> int:
     day_start = format_utc_timestamp(context.started_at.replace(hour=0, minute=0, second=0, microsecond=0))
     return connection.execute(
-        "SELECT COUNT(*) FROM edition_source_texts WHERE downloaded_from_network = 1 AND acquired_at >= ?",
-        (day_start,)).fetchone()[0]
+        "SELECT COUNT(*) FROM edition_source_texts WHERE downloaded_from_network = 1 AND acquired_at >= ?", (day_start,)
+    ).fetchone()[0]
 
 
 def _is_due_for_another_attempt(context: CollectionContext, paper_id: str) -> bool:
     last_attempt_row = context.connection.execute(
         """SELECT MAX(attempts) AS attempts, MAX(updated_at) AS last_attempt_at FROM edition_source_texts
-           WHERE paper_id = ? AND acquisition_status IN ('unavailable', 'failed')""", (paper_id,)).fetchone()
+           WHERE paper_id = ? AND acquisition_status IN ('unavailable', 'failed')""",
+        (paper_id,),
+    ).fetchone()
     if last_attempt_row["last_attempt_at"] is None:
         return True
     if last_attempt_row["attempts"] >= MAXIMUM_ACQUISITION_ATTEMPTS:
@@ -155,8 +175,9 @@ def _is_due_for_another_attempt(context: CollectionContext, paper_id: str) -> bo
 # --------------------------------------------------------------------------------------------------------------------
 
 
-def _try_local_file(context: CollectionContext, local_folder: LocalSourceFolder, paper_id: str,
-                    edition_rows: list[sqlite3.Row]) -> bool:
+def _try_local_file(
+    context: CollectionContext, local_folder: LocalSourceFolder, paper_id: str, edition_rows: list[sqlite3.Row]
+) -> bool:
     if local_folder.is_empty:
         return False
     candidates = [(edition_row, file_stems_for_edition(edition_row["edition_key"])) for edition_row in edition_rows]
@@ -169,18 +190,19 @@ def _try_local_file(context: CollectionContext, local_folder: LocalSourceFolder,
         try:
             file_bytes = read_local_source_bytes(local_source_file, maximum_bytes)
         except (OSError, ValueError) as unusable_file:
-            _record_not_acquired(context, edition_row, "failed",
-                                 f"local file {local_source_file.file_path.name} {unusable_file}")
+            _record_not_acquired(
+                context, edition_row, "failed", f"local file {local_source_file.file_path.name} {unusable_file}"
+            )
             continue
-        cached_file = store_source_bytes(context.app_config.source_cache_dir, edition_row["edition_id"], file_bytes,
-                                         local_source_file.content_type)
+        cached_file = store_source_bytes(
+            context.app_config.source_cache_dir, edition_row["edition_id"], file_bytes, local_source_file.content_type
+        )
         _record_acquired(context, edition_row, cached_file, TEXT_ROUTE_LOCAL_FILE, downloaded_from_network=False)
         return True
     return False
 
 
-def _try_downloads(context: CollectionContext, edition_rows: list[sqlite3.Row],
-                   unavailable_providers: set[str]) -> str:
+def _try_downloads(context: CollectionContext, edition_rows: list[sqlite3.Row], unavailable_providers: set[str]) -> str:
     """'downloaded', 'unavailable' (every route answered no), or 'temporary' (try again next run)."""
     reasons: list[str] = []
     had_temporary_problem = False
@@ -206,8 +228,12 @@ def _try_downloads(context: CollectionContext, edition_rows: list[sqlite3.Row],
         return "downloaded"
     if had_temporary_problem:
         return "temporary"
-    _record_not_acquired(context, edition_rows[0], "unavailable",
-                         "; ".join(reasons) or "no permitted text route for this paper's editions")
+    _record_not_acquired(
+        context,
+        edition_rows[0],
+        "unavailable",
+        "; ".join(reasons) or "no permitted text route for this paper's editions",
+    )
     return "unavailable"
 
 
@@ -221,30 +247,45 @@ def _extract_pending_texts(context: CollectionContext, run_counts: SourceTextRun
     pending_rows = context.connection.execute(
         """SELECT * FROM edition_source_texts WHERE acquisition_status = 'acquired'
                AND extraction_status IN ('pending', 'not_configured')
-           ORDER BY acquired_at, edition_id LIMIT ?""", (MAXIMUM_EXTRACTIONS_PER_RUN,)).fetchall()
+           ORDER BY acquired_at, edition_id LIMIT ?""",
+        (MAXIMUM_EXTRACTIONS_PER_RUN,),
+    ).fetchall()
     for text_row in pending_rows:
         if not extractor_settings.image:
             _update_extraction(context, text_row["edition_id"], extraction_status="not_configured")
             run_counts.extraction_not_configured += 1
             continue
-        source_file_path = cached_edition_directory(context.app_config.source_cache_dir, text_row["edition_id"]) \
+        source_file_path = (
+            cached_edition_directory(context.app_config.source_cache_dir, text_row["edition_id"])
             / text_row["source_file_name"]
+        )
         try:
-            extracted = extract_text_in_sandbox(context.app_config.source_cache_dir, source_file_path,
-                                                extractor_settings)
+            extracted = extract_text_in_sandbox(
+                context.app_config.source_cache_dir, source_file_path, extractor_settings
+            )
         except (ExtractionError, SourceAccessDenied) as extraction_problem:
-            _update_extraction(context, text_row["edition_id"], extraction_status="failed",
-                               last_error=str(extraction_problem)[:MAXIMUM_STORED_ERROR_CHARACTERS])
+            _update_extraction(
+                context,
+                text_row["edition_id"],
+                extraction_status="failed",
+                last_error=str(extraction_problem)[:MAXIMUM_STORED_ERROR_CHARACTERS],
+            )
             run_counts.extraction_failed += 1
             continue
-        text_path = store_extracted_text(context.app_config.source_cache_dir, text_row["edition_id"],
-                                         text_row["source_sha256"], extracted.text)
-        _update_extraction(context, text_row["edition_id"], extraction_status="extracted",
-                           extracted_text_file_name=text_path.name,
-                           extracted_text_sha256=hashlib.sha256(extracted.text.encode("utf-8")).hexdigest(),
-                           normalized_text_sha256=fingerprint_extracted_reading_text(extracted.text),
-                           extracted_text_characters=len(extracted.text.strip()),
-                           extractor_image=extracted.extractor_image, last_error=None)
+        text_path = store_extracted_text(
+            context.app_config.source_cache_dir, text_row["edition_id"], text_row["source_sha256"], extracted.text
+        )
+        _update_extraction(
+            context,
+            text_row["edition_id"],
+            extraction_status="extracted",
+            extracted_text_file_name=text_path.name,
+            extracted_text_sha256=hashlib.sha256(extracted.text.encode("utf-8")).hexdigest(),
+            normalized_text_sha256=fingerprint_extracted_reading_text(extracted.text),
+            extracted_text_characters=len(extracted.text.strip()),
+            extractor_image=extracted.extractor_image,
+            last_error=None,
+        )
         run_counts.extracted += 1
         if _switch_reading_to_full_text(context, text_row["paper_id"]):
             run_counts.readings_switched_to_full_text += 1
@@ -255,8 +296,11 @@ def _switch_reading_to_full_text(context: CollectionContext, paper_id: str) -> b
     available full text is a new input. Returns True if a job was added."""
     with write_transaction(context.connection):
         return queue_new_reading_for_promoted_paper_in_transaction(
-            context.connection, paper_id, active_seed_paper_ids=context.active_seed_paper_ids,
-            max_attempts=context.app_config.worker.max_attempts_per_job)
+            context.connection,
+            paper_id,
+            active_seed_paper_ids=context.active_seed_paper_ids,
+            max_attempts=context.app_config.worker.max_attempts_per_job,
+        )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -264,8 +308,14 @@ def _switch_reading_to_full_text(context: CollectionContext, paper_id: str) -> b
 # --------------------------------------------------------------------------------------------------------------------
 
 
-def _record_acquired(context: CollectionContext, edition_row: sqlite3.Row, cached_file: CachedSourceFile,
-                     text_route: str, *, downloaded_from_network: bool) -> None:
+def _record_acquired(
+    context: CollectionContext,
+    edition_row: sqlite3.Row,
+    cached_file: CachedSourceFile,
+    text_route: str,
+    *,
+    downloaded_from_network: bool,
+) -> None:
     now_timestamp = context.started_at_timestamp
     with write_transaction(context.connection):
         context.connection.execute(
@@ -279,13 +329,24 @@ def _record_acquired(context: CollectionContext, edition_row: sqlite3.Row, cache
                    extraction_status = 'pending', attempts = attempts + 1, last_error = NULL,
                    acquired_at = excluded.acquired_at, downloaded_from_network = excluded.downloaded_from_network,
                    updated_at = excluded.updated_at""",
-            (edition_row["edition_id"], edition_row["paper_id"], text_route, cached_file.file_path.name,
-             cached_file.content_sha256, cached_file.content_type, cached_file.byte_count, now_timestamp,
-             int(downloaded_from_network), now_timestamp))
+            (
+                edition_row["edition_id"],
+                edition_row["paper_id"],
+                text_route,
+                cached_file.file_path.name,
+                cached_file.content_sha256,
+                cached_file.content_type,
+                cached_file.byte_count,
+                now_timestamp,
+                int(downloaded_from_network),
+                now_timestamp,
+            ),
+        )
 
 
-def _record_not_acquired(context: CollectionContext, edition_row: sqlite3.Row, acquisition_status: str,
-                         reason: str) -> None:
+def _record_not_acquired(
+    context: CollectionContext, edition_row: sqlite3.Row, acquisition_status: str, reason: str
+) -> None:
     now_timestamp = context.started_at_timestamp
     with write_transaction(context.connection):
         context.connection.execute(
@@ -294,8 +355,14 @@ def _record_not_acquired(context: CollectionContext, edition_row: sqlite3.Row, a
                ON CONFLICT(edition_id) DO UPDATE SET acquisition_status = excluded.acquisition_status,
                    attempts = attempts + 1, last_error = excluded.last_error, updated_at = excluded.updated_at
                WHERE acquisition_status != 'acquired'""",
-            (edition_row["edition_id"], edition_row["paper_id"], acquisition_status,
-             reason[:MAXIMUM_STORED_ERROR_CHARACTERS], now_timestamp))
+            (
+                edition_row["edition_id"],
+                edition_row["paper_id"],
+                acquisition_status,
+                reason[:MAXIMUM_STORED_ERROR_CHARACTERS],
+                now_timestamp,
+            ),
+        )
 
 
 def _update_extraction(context: CollectionContext, edition_id: str, **column_values: object) -> None:
@@ -303,4 +370,5 @@ def _update_extraction(context: CollectionContext, edition_id: str, **column_val
     with write_transaction(context.connection):
         context.connection.execute(
             f"UPDATE edition_source_texts SET {assignments}, updated_at = ? WHERE edition_id = ?",
-            (*column_values.values(), context.started_at_timestamp, edition_id))
+            (*column_values.values(), context.started_at_timestamp, edition_id),
+        )

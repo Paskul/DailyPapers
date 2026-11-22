@@ -32,7 +32,8 @@ MAXIMUM_VERSION_LABEL_LENGTH = 32
 _NEW_STYLE_ARXIV_ID = r"\d{4}\.\d{4,5}"  # 2401.01234 (since 2007)
 _OLD_STYLE_ARXIV_ID = r"[a-z][a-z\-]*(?:\.[a-z]{2})?/\d{7}"  # hep-th/9901001, math.GT/0309136
 ARXIV_ID_WITH_OPTIONAL_VERSION_PATTERN = re.compile(
-    rf"^(?P<base_id>{_NEW_STYLE_ARXIV_ID}|{_OLD_STYLE_ARXIV_ID})(?:v(?P<version_number>[1-9]\d*))?$", re.IGNORECASE)
+    rf"^(?P<base_id>{_NEW_STYLE_ARXIV_ID}|{_OLD_STYLE_ARXIV_ID})(?:v(?P<version_number>[1-9]\d*))?$", re.IGNORECASE
+)
 ARXIV_PREFIX_PATTERN = re.compile(r"^(?:arxiv:|https?://(?:export\.)?arxiv\.org/(?:abs|pdf)/)", re.IGNORECASE)
 DOI_PREFIX_PATTERN = re.compile(r"^(?:doi:|https?://(?:dx\.)?doi\.org/)", re.IGNORECASE)
 CANONICAL_DOI_PATTERN = re.compile(r"^10\.\d{4,9}/\S+$")
@@ -94,8 +95,9 @@ def is_canonical_identifier(scheme: str, value: str) -> bool:
         return False
 
 
-def resolve_edition_version_label(primary_identifier: NormalizedIdentifier,
-                                  provider_version_label: str | None) -> str | None:
+def resolve_edition_version_label(
+    primary_identifier: NormalizedIdentifier, provider_version_label: str | None
+) -> str | None:
     """The edition's version: the arXiv version inside the id wins, else the provider's own label (or None)."""
     if primary_identifier.version_number is not None:
         return f"v{primary_identifier.version_number}"
@@ -121,8 +123,9 @@ def normalize_version_label(raw_version_label: str | None) -> str | None:
     if raw_version_label is None or not raw_version_label.strip():
         return None
     trimmed_label = raw_version_label.strip()
-    if len(trimmed_label) > MAXIMUM_VERSION_LABEL_LENGTH or any(not character.isprintable()
-                                                                  for character in trimmed_label):
+    if len(trimmed_label) > MAXIMUM_VERSION_LABEL_LENGTH or any(
+        not character.isprintable() for character in trimmed_label
+    ):
         raise SourceInputError(f"version label {raw_version_label!r} is too long or contains control characters")
     return trimmed_label.lower() if VERSION_LABEL_PATTERN.match(trimmed_label.lower()) else trimmed_label
 
@@ -135,7 +138,7 @@ def normalize_version_label(raw_version_label: str | None) -> str | None:
 def _normalize_arxiv_identifier(stripped_value: str) -> NormalizedIdentifier:
     candidate_id = ARXIV_PREFIX_PATTERN.sub("", stripped_value)
     if candidate_id.lower().endswith(".pdf"):
-        candidate_id = candidate_id[:-len(".pdf")]
+        candidate_id = candidate_id[: -len(".pdf")]
     arxiv_match = ARXIV_ID_WITH_OPTIONAL_VERSION_PATTERN.match(candidate_id)
     if arxiv_match is None:
         raise SourceInputError(f"'{stripped_value}' is not a valid arXiv identifier")
@@ -143,8 +146,9 @@ def _normalize_arxiv_identifier(stripped_value: str) -> NormalizedIdentifier:
     if "/" in base_id:  # old style: archive is lowercase, subject class uppercase (math.GT/0309136)
         archive_and_subject, number = base_id.split("/")
         archive, _, subject_class = archive_and_subject.partition(".")
-        base_id = f"{archive.lower()}.{subject_class.upper()}/{number}" if subject_class else \
-            f"{archive.lower()}/{number}"
+        base_id = (
+            f"{archive.lower()}.{subject_class.upper()}/{number}" if subject_class else f"{archive.lower()}/{number}"
+        )
     version_number = int(arxiv_match["version_number"]) if arxiv_match["version_number"] else None
     return NormalizedIdentifier(ARXIV_SCHEME, base_id, version_number)
 

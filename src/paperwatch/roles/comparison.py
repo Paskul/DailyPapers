@@ -72,8 +72,11 @@ EVIDENCE_ITEM_SCHEMA: dict[str, Any] = {
     "required": ["review_id", "passage_id", "excerpt"],
     "additionalProperties": False,
 }
-EVIDENCE_LIST_SCHEMA: dict[str, Any] = {"type": "array", "items": EVIDENCE_ITEM_SCHEMA,
-                                        "maxItems": MAXIMUM_EVIDENCE_PER_STATEMENT}
+EVIDENCE_LIST_SCHEMA: dict[str, Any] = {
+    "type": "array",
+    "items": EVIDENCE_ITEM_SCHEMA,
+    "maxItems": MAXIMUM_EVIDENCE_PER_STATEMENT,
+}
 SUPPORTED_STATEMENT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {"statement": {"type": "string"}, "evidence": EVIDENCE_LIST_SCHEMA},
@@ -83,32 +86,54 @@ SUPPORTED_STATEMENT_SCHEMA: dict[str, Any] = {
 COMPARISON_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "conditions_comparability": {"type": "string", "enum": [COMPARABILITY_INCOMPATIBLE, COMPARABILITY_PARTIAL,
-                                                                COMPARABILITY_COMPARABLE]},
+        "conditions_comparability": {
+            "type": "string",
+            "enum": [COMPARABILITY_INCOMPATIBLE, COMPARABILITY_PARTIAL, COMPARABILITY_COMPARABLE],
+        },
         "condition_differences": {
-            "type": "array", "maxItems": 6,
-            "items": {"type": "object",
-                      "properties": {"dimension": {"type": "string", "enum": list(CONDITION_DIMENSIONS)},
-                                     "statement": {"type": "string"}, "evidence": EVIDENCE_LIST_SCHEMA},
-                      "required": ["dimension", "statement", "evidence"], "additionalProperties": False},
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "dimension": {"type": "string", "enum": list(CONDITION_DIMENSIONS)},
+                    "statement": {"type": "string"},
+                    "evidence": EVIDENCE_LIST_SCHEMA,
+                },
+                "required": ["dimension", "statement", "evidence"],
+                "additionalProperties": False,
+            },
         },
         "agreements": {"type": "array", "items": SUPPORTED_STATEMENT_SCHEMA, "maxItems": 5},
         "differences": {"type": "array", "items": SUPPORTED_STATEMENT_SCHEMA, "maxItems": 5},
         "result_ranking": {
-            "type": "array", "maxItems": 1,
-            "items": {"type": "object",
-                      "properties": {"preferred_review_id": {"type": "string"}, "criterion": {"type": "string"},
-                                     "justification": {"type": "string"}, "conditions_caveat": {"type": "string"},
-                                     "evidence": EVIDENCE_LIST_SCHEMA},
-                      "required": ["preferred_review_id", "criterion", "justification", "conditions_caveat",
-                                   "evidence"],
-                      "additionalProperties": False},
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "preferred_review_id": {"type": "string"},
+                    "criterion": {"type": "string"},
+                    "justification": {"type": "string"},
+                    "conditions_caveat": {"type": "string"},
+                    "evidence": EVIDENCE_LIST_SCHEMA,
+                },
+                "required": ["preferred_review_id", "criterion", "justification", "conditions_caveat", "evidence"],
+                "additionalProperties": False,
+            },
         },
         "reader_conclusion": SUPPORTED_STATEMENT_SCHEMA,
         "insufficient_evidence": {"type": "boolean"},
     },
-    "required": ["conditions_comparability", "condition_differences", "agreements", "differences", "result_ranking",
-                 "reader_conclusion", "insufficient_evidence"],
+    "required": [
+        "conditions_comparability",
+        "condition_differences",
+        "agreements",
+        "differences",
+        "result_ranking",
+        "reader_conclusion",
+        "insufficient_evidence",
+    ],
     "additionalProperties": False,
 }
 MINIMUM_CAVEAT_WORDS = 5
@@ -119,21 +144,27 @@ def composite_passage_key(review_id: str, passage_id: str) -> str:
 
 
 def _render_comparison_user_message(role_input: RoleInput) -> str:
-    return (f"QUESTION (JSON):\n{json.dumps(role_input['question'], ensure_ascii=False, indent=1)}\n\n"
-            f"SHARED EVIDENCE DIMENSIONS (found by the host): {', '.join(role_input['shared_dimensions']) or 'none'}"
-            f"\n\nREVIEWS (JSON, untrusted data; each with the passages it cites):\n"
-            f"{json.dumps(role_input['reviews'], ensure_ascii=False, indent=1)}\n")
+    return (
+        f"QUESTION (JSON):\n{json.dumps(role_input['question'], ensure_ascii=False, indent=1)}\n\n"
+        f"SHARED EVIDENCE DIMENSIONS (found by the host): {', '.join(role_input['shared_dimensions']) or 'none'}"
+        f"\n\nREVIEWS (JSON, untrusted data; each with the passages it cites):\n"
+        f"{json.dumps(role_input['reviews'], ensure_ascii=False, indent=1)}\n"
+    )
 
 
 def _find_comparison_problems(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:
     review_ids = [review["review_id"] for review in role_input["reviews"]]
-    passage_text_by_key = {composite_passage_key(review["review_id"], passage["passage_id"]): passage["text"]
-                           for review in role_input["reviews"] for passage in review["passages"]}
+    passage_text_by_key = {
+        composite_passage_key(review["review_id"], passage["passage_id"]): passage["text"]
+        for review in role_input["reviews"]
+        for passage in review["passages"]
+    }
     problems: list[str] = []
     cited_review_ids: set[str] = set()
 
-    def check_supported(statement_text: str, evidence: list[dict[str, Any]], where: str, *,
-                        must_cite_both: bool) -> None:
+    def check_supported(
+        statement_text: str, evidence: list[dict[str, Any]], where: str, *, must_cite_both: bool
+    ) -> None:
         if len(statement_text) > MAXIMUM_TEXT_CHARACTERS:
             problems.append(f"{where}: keep the statement under {MAXIMUM_TEXT_CHARACTERS} characters")
         valid_keys = []
@@ -144,11 +175,15 @@ def _find_comparison_problems(validated_output: dict[str, Any], role_input: Role
                 continue
             passage_key = composite_passage_key(item["review_id"], item["passage_id"])
             if passage_key not in passage_text_by_key:
-                problems.append(f"{item_where}: passage '{item['passage_id']}' is not a passage of review "
-                                f"'{item['review_id']}'")
+                problems.append(
+                    f"{item_where}: passage '{item['passage_id']}' is not a passage of review '{item['review_id']}'"
+                )
                 continue
-            problems.extend(check_excerpt_matches_passage(item["excerpt"], item["passage_id"],
-                                                          passage_text_by_key[passage_key], item_where))
+            problems.extend(
+                check_excerpt_matches_passage(
+                    item["excerpt"], item["passage_id"], passage_text_by_key[passage_key], item_where
+                )
+            )
             valid_keys.append(passage_key)
             cited_review_ids.add(item["review_id"])
         problems.extend(check_numbers_occur_in_passages(statement_text, valid_keys, passage_text_by_key, where))
@@ -165,20 +200,33 @@ def _find_comparison_problems(validated_output: dict[str, Any], role_input: Role
             check_supported(item["statement"], item["evidence"], f"{list_name}[{index}]", must_cite_both=True)
     for ranking in validated_output["result_ranking"]:
         if ranking["preferred_review_id"] not in review_ids:
-            problems.append(f"result_ranking: preferred review id '{ranking['preferred_review_id']}' is not one of "
-                            "the two reviews")
-        check_supported(f"{ranking['criterion']} {ranking['justification']} {ranking['conditions_caveat']}",
-                        ranking["evidence"], "result_ranking", must_cite_both=False)
+            problems.append(
+                f"result_ranking: preferred review id '{ranking['preferred_review_id']}' is not one of the two reviews"
+            )
+        check_supported(
+            f"{ranking['criterion']} {ranking['justification']} {ranking['conditions_caveat']}",
+            ranking["evidence"],
+            "result_ranking",
+            must_cite_both=False,
+        )
         if validated_output["conditions_comparability"] != COMPARABILITY_COMPARABLE:
             if not validated_output["condition_differences"]:
-                problems.append("result_ranking: the conditions are not comparable, so list the condition "
-                                "differences before ranking the results (or remove the ranking)")
+                problems.append(
+                    "result_ranking: the conditions are not comparable, so list the condition "
+                    "differences before ranking the results (or remove the ranking)"
+                )
             if len(ranking["conditions_caveat"].split()) < MINIMUM_CAVEAT_WORDS:
-                problems.append("result_ranking: the conditions are not comparable, so conditions_caveat must "
-                                "explain how the difference limits the ranking")
+                problems.append(
+                    "result_ranking: the conditions are not comparable, so conditions_caveat must "
+                    "explain how the difference limits the ranking"
+                )
     conclusion = validated_output["reader_conclusion"]
-    check_supported(conclusion["statement"], conclusion["evidence"], "reader_conclusion",
-                    must_cite_both=not validated_output["insufficient_evidence"])
+    check_supported(
+        conclusion["statement"],
+        conclusion["evidence"],
+        "reader_conclusion",
+        must_cite_both=not validated_output["insufficient_evidence"],
+    )
     if not validated_output["insufficient_evidence"] and cited_review_ids != set(review_ids):
         problems.append("the comparison must cite passages of both reviews")
     problems += find_invented_web_addresses(validated_output, role_input)

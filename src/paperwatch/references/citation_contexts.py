@@ -47,8 +47,9 @@ class CitationContext:
         return {"passage_id": self.passage_id, "text": self.text}
 
 
-def find_citation_contexts(bibliography: list[Passage], body: list[Passage],
-                           cited_work: CitedWorkDescription) -> list[CitationContext]:
+def find_citation_contexts(
+    bibliography: list[Passage], body: list[Passage], cited_work: CitedWorkDescription
+) -> list[CitationContext]:
     entry_location = locate_bibliography_entry(bibliography, cited_work)
     if entry_location is None:
         return []
@@ -65,8 +66,9 @@ def find_citation_contexts(bibliography: list[Passage], body: list[Passage],
     return contexts
 
 
-def locate_bibliography_entry(bibliography: list[Passage],
-                              cited_work: CitedWorkDescription) -> tuple[Passage, int] | None:
+def locate_bibliography_entry(
+    bibliography: list[Passage], cited_work: CitedWorkDescription
+) -> tuple[Passage, int] | None:
     """(passage, character offset of the entry's identifier or title) or None."""
     for passage in bibliography:
         lowered_text = passage.text.lower()
@@ -105,14 +107,18 @@ def _numeric_label_before(text: str, entry_start: int) -> str | None:
 
 def _sentence_cites(sentence: str, numeric_label: str | None, cited_work: CitedWorkDescription) -> bool:
     if numeric_label is not None:
-        return any(int(numeric_label) in _numbers_in_bracket_group(group.group(1))
-                   for group in BRACKET_GROUP_PATTERN.finditer(sentence))
+        return any(
+            int(numeric_label) in _numbers_in_bracket_group(group.group(1))
+            for group in BRACKET_GROUP_PATTERN.finditer(sentence)
+        )
     family_name = cited_work.first_author_family_name
     if not family_name or not cited_work.publication_year:
         return False
     author_year_pattern = re.compile(
         rf"\b{re.escape(family_name)}\b.{{0,{MAXIMUM_CHARACTERS_BETWEEN_NAME_AND_YEAR}}}?\b"
-        rf"{re.escape(cited_work.publication_year)}\b", re.IGNORECASE)
+        rf"{re.escape(cited_work.publication_year)}\b",
+        re.IGNORECASE,
+    )
     return author_year_pattern.search(sentence) is not None
 
 
@@ -132,4 +138,4 @@ def _bounded(sentence: str) -> str:
     sentence = " ".join(sentence.split())
     if len(sentence) <= MAXIMUM_CONTEXT_CHARACTERS:
         return sentence
-    return sentence[:MAXIMUM_CONTEXT_CHARACTERS - 1] + "…"
+    return sentence[: MAXIMUM_CONTEXT_CHARACTERS - 1] + "…"

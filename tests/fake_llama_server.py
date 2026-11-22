@@ -42,10 +42,17 @@ class FakeLlamaServer:
                 elif self.path == "/v1/models":
                     self._send_json(200, {"data": [{"id": "qwen-local", "aliases": []}]})
                 elif self.path == "/props":
-                    self._send_json(200, {"build_info": FAKE_SERVER_BUILD, "model_path": "/models/fake.gguf",
-                                          "default_generation_settings": {"n_ctx": 262144}, "total_slots": 1,
-                                          "chat_template_caps": {"reasoning_effort_levels": ["low", "xhigh"]},
-                                          "cors_proxy_enabled": False})
+                    self._send_json(
+                        200,
+                        {
+                            "build_info": FAKE_SERVER_BUILD,
+                            "model_path": "/models/fake.gguf",
+                            "default_generation_settings": {"n_ctx": 262144},
+                            "total_slots": 1,
+                            "chat_template_caps": {"reasoning_effort_levels": ["low", "xhigh"]},
+                            "cors_proxy_enabled": False,
+                        },
+                    )
                 elif self.path == "/tools":
                     self._send_json(403, {"error": "tools are disabled"})
                 else:
@@ -55,11 +62,20 @@ class FakeLlamaServer:
                 request_payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake_server.received_chat_payloads.append(request_payload)
                 final_answer = fake_server._choose_final_answer(request_payload)
-                self._send_json(200, {
-                    "choices": [{"message": {"content": final_answer, "reasoning_content": "(fake reasoning)"},
-                                 "finish_reason": "stop"}],
-                    "model": "qwen-local", "system_fingerprint": FAKE_SERVER_BUILD,
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+                self._send_json(
+                    200,
+                    {
+                        "choices": [
+                            {
+                                "message": {"content": final_answer, "reasoning_content": "(fake reasoning)"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "model": "qwen-local",
+                        "system_fingerprint": FAKE_SERVER_BUILD,
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                    },
+                )
 
             def _send_json(self, status_code: int, payload: dict[str, Any]) -> None:
                 body = json.dumps(payload).encode("utf-8")

@@ -46,33 +46,50 @@ class PageIngestionResult:
         return self.skipped_over_admission_limit > 0
 
     def add(self, other: PageIngestionResult) -> None:
-        for counter_name in ("records_received", "new_papers_admitted", "already_known",
-                             "new_editions_of_known_papers", "review_jobs_queued", "possible_duplicates_flagged",
-                             "withdrawals_reported", "skipped_malformed_records", "skipped_over_admission_limit"):
+        for counter_name in (
+            "records_received",
+            "new_papers_admitted",
+            "already_known",
+            "new_editions_of_known_papers",
+            "review_jobs_queued",
+            "possible_duplicates_flagged",
+            "withdrawals_reported",
+            "skipped_malformed_records",
+            "skipped_over_admission_limit",
+        ):
             setattr(self, counter_name, getattr(self, counter_name) + getattr(other, counter_name))
         self.queued_paper_ids += other.queued_paper_ids
         self.catalogued_paper_ids += other.catalogued_paper_ids
 
     def describe(self, source_label: str) -> str:
-        description = (f"{source_label}: {self.records_received} record(s), {self.new_papers_admitted} new, "
-                       f"{self.already_known} already known, {self.review_jobs_queued} new reading(s) of promoted "
-                       f"papers queued, {self.new_editions_of_known_papers} new edition(s) of known papers, "
-                       f"{self.possible_duplicates_flagged} possible duplicate(s) flagged")
-        extras = [f"{self.withdrawals_reported} withdrawn/retracted" if self.withdrawals_reported else "",
-                  f"{self.skipped_malformed_records} malformed record(s) skipped"
-                  if self.skipped_malformed_records else "",
-                  f"{self.skipped_over_admission_limit} new record(s) left for later (candidate budget)"
-                  if self.skipped_over_admission_limit else ""]
+        description = (
+            f"{source_label}: {self.records_received} record(s), {self.new_papers_admitted} new, "
+            f"{self.already_known} already known, {self.review_jobs_queued} new reading(s) of promoted "
+            f"papers queued, {self.new_editions_of_known_papers} new edition(s) of known papers, "
+            f"{self.possible_duplicates_flagged} possible duplicate(s) flagged"
+        )
+        extras = [
+            f"{self.withdrawals_reported} withdrawn/retracted" if self.withdrawals_reported else "",
+            f"{self.skipped_malformed_records} malformed record(s) skipped" if self.skipped_malformed_records else "",
+            f"{self.skipped_over_admission_limit} new record(s) left for later (candidate budget)"
+            if self.skipped_over_admission_limit
+            else "",
+        ]
         return description + "".join(f", {extra}" for extra in extras if extra)
 
 
 CheckpointsAfterPage = Callable[[PageIngestionResult], list[SourceCheckpoint]]
 
 
-def ingest_records_with_checkpoints(connection: sqlite3.Connection, collected_records: list[CollectedPaperRecord], *,
-                                    admission_limit: int | None, active_seed_paper_ids: frozenset[str],
-                                    max_attempts_per_job: int,
-                                    checkpoints_after_page: CheckpointsAfterPage | None = None) -> PageIngestionResult:
+def ingest_records_with_checkpoints(
+    connection: sqlite3.Connection,
+    collected_records: list[CollectedPaperRecord],
+    *,
+    admission_limit: int | None,
+    active_seed_paper_ids: frozenset[str],
+    max_attempts_per_job: int,
+    checkpoints_after_page: CheckpointsAfterPage | None = None,
+) -> PageIngestionResult:
     """Catalog the records, queue promoted papers, and save the checkpoints the callback returns, atomically.
 
     `checkpoints_after_page` runs INSIDE the transaction after the records, so it may read rows (e.g. a topic's
@@ -88,8 +105,11 @@ def ingest_records_with_checkpoints(connection: sqlite3.Connection, collected_re
 
     with write_transaction(connection):
         for prepared_record in prepared_records:
-            if admission_limit is not None and result.new_papers_admitted >= admission_limit and \
-                    would_create_new_paper(connection, prepared_record):
+            if (
+                admission_limit is not None
+                and result.new_papers_admitted >= admission_limit
+                and would_create_new_paper(connection, prepared_record)
+            ):
                 result.skipped_over_admission_limit += 1
                 continue
             catalog_outcome = record_prepared_paper_in_transaction(connection, prepared_record)
@@ -101,11 +121,14 @@ def ingest_records_with_checkpoints(connection: sqlite3.Connection, collected_re
                 result.new_editions_of_known_papers += int(catalog_outcome.was_new_edition)
             result.possible_duplicates_flagged += len(catalog_outcome.possible_match_paper_ids)
             result.withdrawals_reported += int(prepared_record.collected_record.withdrawal_notice is not None)
-            if queue_new_reading_for_promoted_paper_in_transaction(connection, catalog_outcome.paper_id,
-                                                                   active_seed_paper_ids=active_seed_paper_ids,
-                                                                   max_attempts=max_attempts_per_job):
+            if queue_new_reading_for_promoted_paper_in_transaction(
+                connection,
+                catalog_outcome.paper_id,
+                active_seed_paper_ids=active_seed_paper_ids,
+                max_attempts=max_attempts_per_job,
+            ):
                 result.review_jobs_queued += 1
                 result.queued_paper_ids.append(catalog_outcome.paper_id)
-        for checkpoint in (checkpoints_after_page(result) if checkpoints_after_page else []):
+        for checkpoint in checkpoints_after_page(result) if checkpoints_after_page else []:
             save_source_checkpoint(connection, checkpoint)
     return result

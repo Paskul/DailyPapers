@@ -17,7 +17,8 @@ def test_example_settings_file_is_current_and_valid(tmp_path):
     example_path = SETTINGS_DIR / "paperwatch.example.toml"
     assert example_path.read_text() == build_example_settings_text(), (
         "regenerate it: uv run python -m paperwatch.deployment.settings_file write-example "
-        "settings/paperwatch.example.toml")
+        "settings/paperwatch.example.toml"
+    )
     stage_dir = tmp_path / "stage"
     stage_settings(example_path, stage_dir)
     app_config = load_app_config(stage_dir)

@@ -27,8 +27,13 @@ from datetime import datetime, timedelta, timezone
 from enum import IntEnum
 
 from paperwatch.clock import format_utc_timestamp
-from paperwatch.publication_dates import (NEW_RELEASE_FRESH_WINDOW_DAYS, ReleaseClass, classify_release,
-                                          earliest_calendar_day, normalize_partial_date)
+from paperwatch.publication_dates import (
+    NEW_RELEASE_FRESH_WINDOW_DAYS,
+    ReleaseClass,
+    classify_release,
+    earliest_calendar_day,
+    normalize_partial_date,
+)
 
 
 class JobPriorityClass(IntEnum):
@@ -61,8 +66,11 @@ class JobDispatchOrder:
 
     def is_higher_than(self, other: JobDispatchOrder) -> bool:
         """True if this order would be claimed before `other` (used to move a queued job up, never down)."""
-        return (int(self.priority_class), -self.within_class_order_primary, -self.within_class_order_secondary) < \
-            (int(other.priority_class), -other.within_class_order_primary, -other.within_class_order_secondary)
+        return (int(self.priority_class), -self.within_class_order_primary, -self.within_class_order_secondary) < (
+            int(other.priority_class),
+            -other.within_class_order_primary,
+            -other.within_class_order_secondary,
+        )
 
 
 def dispatch_order_for_operator_request() -> JobDispatchOrder:
@@ -73,21 +81,27 @@ def compute_new_release_fresh_until(first_published_date: str) -> datetime:
     """The end of the seven-day fresh window counted from the original release date (the earliest day a coarse date
     can mean, as in publication_dates.classify_release): through the whole seventh day after release."""
     release_day = earliest_calendar_day(first_published_date)
-    return datetime(release_day.year, release_day.month, release_day.day, tzinfo=timezone.utc) + \
-        timedelta(days=NEW_RELEASE_FRESH_WINDOW_DAYS + 1)
+    return datetime(release_day.year, release_day.month, release_day.day, tzinfo=timezone.utc) + timedelta(
+        days=NEW_RELEASE_FRESH_WINDOW_DAYS + 1
+    )
 
 
-def dispatch_order_for_promoted_paper(first_published_date: str | None, screening_score: float,
-                                      moment: datetime) -> JobDispatchOrder:
+def dispatch_order_for_promoted_paper(
+    first_published_date: str | None, screening_score: float, moment: datetime
+) -> JobDispatchOrder:
     """Class 1 if the paper is still inside its fresh window at `moment`, else class 2; ordered by screening score.
 
     The release class uses the ORIGINAL release date, never the discovery time: a 2018 paper found today is class 2.
     """
-    if classify_release(first_published_date, moment) == ReleaseClass.NEW_RELEASE and \
-            normalize_partial_date(first_published_date) is not None:
+    if (
+        classify_release(first_published_date, moment) == ReleaseClass.NEW_RELEASE
+        and normalize_partial_date(first_published_date) is not None
+    ):
         return JobDispatchOrder(
-            JobPriorityClass.NEW_RELEASE, within_class_order_primary=screening_score,
-            new_release_fresh_until=format_utc_timestamp(compute_new_release_fresh_until(first_published_date)))
+            JobPriorityClass.NEW_RELEASE,
+            within_class_order_primary=screening_score,
+            new_release_fresh_until=format_utc_timestamp(compute_new_release_fresh_until(first_published_date)),
+        )
     return dispatch_order_for_older_paper(screening_score)
 
 
@@ -95,13 +109,16 @@ def dispatch_order_for_older_paper(topic_score: float) -> JobDispatchOrder:
     return JobDispatchOrder(JobPriorityClass.HISTORICAL_SEARCH, within_class_order_primary=topic_score)
 
 
-def dispatch_order_for_important_reference(importance_to_parent_argument: float,
-                                           topic_score: float) -> JobDispatchOrder:
+def dispatch_order_for_important_reference(
+    importance_to_parent_argument: float, topic_score: float
+) -> JobDispatchOrder:
     """Part 8: a reference chosen from a completed review. `importance_to_parent_argument` is the research role's
     validated rating (higher = the parent's argument depends on it more)."""
-    return JobDispatchOrder(JobPriorityClass.IMPORTANT_REFERENCE,
-                            within_class_order_primary=importance_to_parent_argument,
-                            within_class_order_secondary=topic_score)
+    return JobDispatchOrder(
+        JobPriorityClass.IMPORTANT_REFERENCE,
+        within_class_order_primary=importance_to_parent_argument,
+        within_class_order_secondary=topic_score,
+    )
 
 
 # The research role's selection is ordered before every reference reading of class 3: importance ratings run 1-4.
@@ -111,12 +128,15 @@ REFERENCE_SELECTION_ORDER_ABOVE_ALL_IMPORTANCE_RATINGS = 5.0
 def dispatch_order_for_reference_selection(parent_topic_score: float) -> JobDispatchOrder:
     """Part 8: the research role chooses which references of a completed review to read. Parents with a higher
     reading priority (0-1) are decided first."""
-    return JobDispatchOrder(JobPriorityClass.IMPORTANT_REFERENCE,
-                            within_class_order_primary=REFERENCE_SELECTION_ORDER_ABOVE_ALL_IMPORTANCE_RATINGS,
-                            within_class_order_secondary=parent_topic_score)
+    return JobDispatchOrder(
+        JobPriorityClass.IMPORTANT_REFERENCE,
+        within_class_order_primary=REFERENCE_SELECTION_ORDER_ABOVE_ALL_IMPORTANCE_RATINGS,
+        within_class_order_secondary=parent_topic_score,
+    )
 
 
 def dispatch_order_for_comparison(shared_evidence_dimension_count: int) -> JobDispatchOrder:
     """Part 8: a comparison of two completed reviews; pairs sharing more evidence dimensions go first."""
-    return JobDispatchOrder(JobPriorityClass.COMPARISON,
-                            within_class_order_primary=float(shared_evidence_dimension_count))
+    return JobDispatchOrder(
+        JobPriorityClass.COMPARISON, within_class_order_primary=float(shared_evidence_dimension_count)
+    )

@@ -19,8 +19,14 @@ from paperwatch.errors import SourceInputError
 from paperwatch.sources.types import CollectedPaperRecord, RawIdentifier
 
 REQUIRED_FIXTURE_KEYS = ("provider", "provider_paper_id", "title")
-OPTIONAL_FIXTURE_KEYS = ("authors", "abstract", "first_published_date", "latest_revision_date", "source_version",
-                         "linked_identifiers")
+OPTIONAL_FIXTURE_KEYS = (
+    "authors",
+    "abstract",
+    "first_published_date",
+    "latest_revision_date",
+    "source_version",
+    "linked_identifiers",
+)
 
 
 class RecordedFixtureSource:
@@ -71,7 +77,7 @@ def _parse_linked_identifiers(entry_label: str, raw_linked_identifiers: Any) -> 
     parsed_identifiers = []
     for raw_identifier in raw_linked_identifiers:
         if not isinstance(raw_identifier, str) or ":" not in raw_identifier:
-            raise SourceInputError(f"{entry_label}: linked identifier {raw_identifier!r} is not \"scheme:value\"")
+            raise SourceInputError(f'{entry_label}: linked identifier {raw_identifier!r} is not "scheme:value"')
         scheme, _, value = raw_identifier.partition(":")
         parsed_identifiers.append(RawIdentifier(scheme=scheme, value=value))
     return tuple(parsed_identifiers)

@@ -39,8 +39,11 @@ class SignalWeights:
 
     @classmethod
     def from_settings(cls, screening_settings: ScreeningSettings) -> SignalWeights:
-        return cls(screening_settings.question_similarity_weight, screening_settings.seed_similarity_weight,
-                   screening_settings.phrase_match_weight)
+        return cls(
+            screening_settings.question_similarity_weight,
+            screening_settings.seed_similarity_weight,
+            screening_settings.phrase_match_weight,
+        )
 
 
 @dataclass(frozen=True)
@@ -56,9 +59,11 @@ class ScreeningSignals:
 
 def combine_screening_signals(signals: ScreeningSignals, weights: SignalWeights) -> float | None:
     """Weighted mean of the available signals, renormalized by their weights; None if no signal is available."""
-    weighted_signals = [(weights.question_similarity, signals.question_similarity),
-                        (weights.seed_similarity, signals.seed_similarity),
-                        (weights.phrase_match, signals.phrase_match_fraction)]
+    weighted_signals = [
+        (weights.question_similarity, signals.question_similarity),
+        (weights.seed_similarity, signals.seed_similarity),
+        (weights.phrase_match, signals.phrase_match_fraction),
+    ]
     active_pairs = [(weight, signal) for weight, signal in weighted_signals if signal is not None and weight > 0]
     active_weight_sum = sum(weight for weight, _signal in active_pairs)
     if active_weight_sum <= 0:
@@ -66,8 +71,9 @@ def combine_screening_signals(signals: ScreeningSignals, weights: SignalWeights)
     return sum(weight * signal for weight, signal in active_pairs) / active_weight_sum
 
 
-def closest_seed_similarity(cosines_to_seeds: np.ndarray, seed_ids: tuple[str, ...],
-                            closest_seed_count: int) -> tuple[float | None, tuple[str, ...]]:
+def closest_seed_similarity(
+    cosines_to_seeds: np.ndarray, seed_ids: tuple[str, ...], closest_seed_count: int
+) -> tuple[float | None, tuple[str, ...]]:
     """Mean normalized similarity of the closest seeds and their ids (most similar first); (None, ()) without seeds.
 
     Ties are broken by seed id, so the same inputs always name the same seeds.

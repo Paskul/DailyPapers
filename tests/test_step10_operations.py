@@ -31,11 +31,20 @@ KILOBYTE = 1024
 
 
 def add_paper(app, number: int, *, title_word: str = "monitor") -> str:
-    return record_collected_paper(app.connection, CollectedPaperRecord(
-        provider="fixture", provider_paper_id=f"ops-{number:04d}", title=f"Runtime {title_word} study {number:03d}",
-        authors=("A. Author",), abstract=f"We check joint robot plans with {title_word} variant {number}.",
-        first_published_date="2026-11-15", latest_revision_date=None, source_version="v1",
-        discovery_route="test:fixture")).paper_id
+    return record_collected_paper(
+        app.connection,
+        CollectedPaperRecord(
+            provider="fixture",
+            provider_paper_id=f"ops-{number:04d}",
+            title=f"Runtime {title_word} study {number:03d}",
+            authors=("A. Author",),
+            abstract=f"We check joint robot plans with {title_word} variant {number}.",
+            first_published_date="2026-11-15",
+            latest_revision_date=None,
+            source_version="v1",
+            discovery_route="test:fixture",
+        ),
+    ).paper_id
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -46,28 +55,35 @@ def add_paper(app, number: int, *, title_word: str = "monitor") -> str:
 def add_cached_download(app, paper_id: str, *, byte_count: int, acquired_at: str) -> tuple:
     """An extracted paper: its raw PDF of `byte_count` bytes plus its extracted text, as the collector leaves them."""
     edition_id = install_extracted_text(app, paper_id, "Extracted text of the paper. " * 20)
-    text_row = app.connection.execute("SELECT * FROM edition_source_texts WHERE edition_id = ?",
-                                      (edition_id,)).fetchone()
+    text_row = app.connection.execute(
+        "SELECT * FROM edition_source_texts WHERE edition_id = ?", (edition_id,)
+    ).fetchone()
     edition_dir = app.config.source_cache_dir / SOURCE_FILES_SUBDIRECTORY / edition_id
     pdf_path = edition_dir / text_row["source_file_name"]
     pdf_path.write_bytes(b"%PDF" + b"x" * (byte_count - 4))
     with write_transaction(app.connection):
-        app.connection.execute("UPDATE edition_source_texts SET acquired_at = ? WHERE edition_id = ?",
-                               (acquired_at, edition_id))
+        app.connection.execute(
+            "UPDATE edition_source_texts SET acquired_at = ? WHERE edition_id = ?", (acquired_at, edition_id)
+        )
     return pdf_path, edition_dir / text_row["extracted_text_file_name"]
 
 
 def test_the_cache_limit_removes_oldest_extracted_downloads_but_keeps_text_and_pending_readings(tmp_path):
-    app = build_in_process_app(tmp_path / "home", config_replacements={
-        "source_cache_limit_megabytes = 4096": "source_cache_limit_megabytes = 1"})
+    app = build_in_process_app(
+        tmp_path / "home",
+        config_replacements={"source_cache_limit_megabytes = 4096": "source_cache_limit_megabytes = 1"},
+    )
     pending_paper = add_paper(app, 1)
     assert promote_paper_directly_and_queue_review(app.connection, pending_paper, max_attempts=3)
-    pending_files = add_cached_download(app, pending_paper, byte_count=600 * KILOBYTE,
-                                        acquired_at="2026-11-01T00:00:00Z")  # the oldest, but still to be read
-    older_files = add_cached_download(app, add_paper(app, 2), byte_count=600 * KILOBYTE,
-                                      acquired_at="2026-11-02T00:00:00Z")
-    newer_files = add_cached_download(app, add_paper(app, 3), byte_count=300 * KILOBYTE,
-                                      acquired_at="2026-11-03T00:00:00Z")
+    pending_files = add_cached_download(
+        app, pending_paper, byte_count=600 * KILOBYTE, acquired_at="2026-11-01T00:00:00Z"
+    )  # the oldest, but still to be read
+    older_files = add_cached_download(
+        app, add_paper(app, 2), byte_count=600 * KILOBYTE, acquired_at="2026-11-02T00:00:00Z"
+    )
+    newer_files = add_cached_download(
+        app, add_paper(app, 3), byte_count=300 * KILOBYTE, acquired_at="2026-11-03T00:00:00Z"
+    )
     assert measure_source_cache(app.config).raw_source_bytes == 1500 * KILOBYTE
 
     summary = prune_replaceable_downloads(app.connection, app.config)
@@ -91,19 +107,21 @@ def test_capacity_measures_minutes_per_review_and_estimates_readings_per_day(tmp
         assert promote_paper_directly_and_queue_review(app.connection, add_paper(app, number), max_attempts=3)
     drain(app)
     with write_transaction(app.connection):  # the fake model takes no time: give each call a measured duration
-        app.connection.execute("UPDATE model_calls SET duration_seconds = CASE role_name "
-                               "WHEN 'reviewer' THEN 600 WHEN 'topic_assessor' THEN 300 ELSE 60 END, "
-                               "completion_tokens = 3000")
+        app.connection.execute(
+            "UPDATE model_calls SET duration_seconds = CASE role_name "
+            "WHEN 'reviewer' THEN 600 WHEN 'topic_assessor' THEN 300 ELSE 60 END, "
+            "completion_tokens = 3000"
+        )
     measurement = measure_capacity(app.connection, app.config, window_end=utc_now(), window_hours=24)
     assert measurement.reviews_completed == 3 and measurement.review_jobs_queued_now == 0
     abstract_summary = measurement.minutes_per_review_by_coverage["abstract_only"]
     assert abstract_summary.count == 3 and abstract_summary.median_minutes == pytest.approx(15.0)
-    research_and_comparison_minutes = sum(role.all_calls_total_minutes for role in measurement.roles
-                                          if role.role_name in ("research", "comparison"))
+    research_and_comparison_minutes = sum(
+        role.all_calls_total_minutes for role in measurement.roles if role.role_name in ("research", "comparison")
+    )
     expected_reserved_minutes = research_and_comparison_minutes + app.config.report.writer_deadline_minutes
     assert measurement.reserved_minutes_per_day == pytest.approx(expected_reserved_minutes)  # no writer call yet
-    assert measurement.estimated_reviews_per_day == pytest.approx(
-        (MINUTES_PER_DAY - expected_reserved_minutes) / 15.0)
+    assert measurement.estimated_reviews_per_day == pytest.approx((MINUTES_PER_DAY - expected_reserved_minutes) / 15.0)
     reviewer = next(role for role in measurement.roles if role.role_name == "reviewer")
     assert reviewer.completion_tokens_per_second == pytest.approx(5.0)
     report_lines = "\n".join(describe_capacity(measurement))
@@ -131,9 +149,11 @@ def test_capacity_flags_limits_above_the_measured_capacity(tmp_path):
 
 def publishable_today_replacements() -> dict[str, str]:
     timezone_name = "UTC" if datetime.now(timezone.utc).hour < 22 else "Etc/GMT+12"
-    return {'timezone = "America/New_York"': f'timezone = "{timezone_name}"',
-            'publish_time = "07:00"': 'publish_time = "23:59"',
-            "minimum_reading_priority = 65": "minimum_reading_priority = 0"}
+    return {
+        'timezone = "America/New_York"': f'timezone = "{timezone_name}"',
+        'publish_time = "07:00"': 'publish_time = "23:59"',
+        "minimum_reading_priority = 65": "minimum_reading_priority = 0",
+    }
 
 
 def test_a_backup_restores_to_a_fresh_directory_with_the_same_data_and_files(tmp_path, capsys):
@@ -155,6 +175,7 @@ def test_a_backup_restores_to_a_fresh_directory_with_the_same_data_and_files(tmp
     shutil.copytree(backup.backup_dir, fresh_home)
     assert check_restored_home(fresh_home).passed
     from paperwatch.app_context import AppContext
+
     restored_app = AppContext.load(fresh_home)
     capsys.readouterr()
     assert run_status_command(restored_app, argparse.Namespace()) == 0
@@ -184,18 +205,21 @@ def screened_pool(app, candidate_count: int = 120, promoted_count: int = 12) -> 
     paper_ids = [add_paper(app, number) for number in range(1, candidate_count + 1)]
     with write_transaction(app.connection):
         for rank, paper_id in enumerate(paper_ids):
-            edition_id = app.connection.execute("SELECT edition_id FROM paper_editions WHERE paper_id = ?",
-                                                (paper_id,)).fetchone()[0]
+            edition_id = app.connection.execute(
+                "SELECT edition_id FROM paper_editions WHERE paper_id = ?", (paper_id,)
+            ).fetchone()[0]
             app.connection.execute(
                 """INSERT INTO candidate_topic_scores (paper_id, topic_id, edition_id, unnormalized_score,
                        screening_input_sha256, scored_at) VALUES (?, 'team-safety', ?, ?, 'x', ?)""",
-                (paper_id, edition_id, 1.0 - rank / candidate_count, utc_now_timestamp()))
+                (paper_id, edition_id, 1.0 - rank / candidate_count, utc_now_timestamp()),
+            )
             if rank < promoted_count:
                 app.connection.execute(
                     """INSERT INTO paper_promotions (paper_id, promotion_reason, topic_id, best_topic_id,
                            screening_score, priority_class, promoted_at)
                        VALUES (?, 'topic_share', 'team-safety', 'team-safety', 0.9, 1, ?)""",
-                    (paper_id, utc_now_timestamp()))
+                    (paper_id, utc_now_timestamp()),
+                )
     return paper_ids
 
 
@@ -206,14 +230,15 @@ def test_the_label_sample_covers_chosen_near_misses_and_the_rest_without_reveali
     assert len(sample) == 40 and len({candidate.paper_id for candidate in sample}) == 40
     bands = {candidate.band for candidate in sample}
     assert bands == {"chosen", "near_miss", "rest"}
-    near_miss_ranks = [ranked_paper_ids.index(candidate.paper_id) for candidate in sample
-                       if candidate.band == "near_miss"]
+    near_miss_ranks = [
+        ranked_paper_ids.index(candidate.paper_id) for candidate in sample if candidate.band == "near_miss"
+    ]
     assert all(12 <= rank < 12 + 36 for rank in near_miss_ranks), "just below the promoted papers"
     sampled_ranks = [ranked_paper_ids.index(candidate.paper_id) for candidate in sample]
     assert sampled_ranks != sorted(sampled_ranks), "shuffled: the order reveals no rank"
-    assert [candidate.paper_id for candidate in draw_label_sample(app.connection, app.config, sample_size=40,
-                                                                  seed=7)] == \
-        [candidate.paper_id for candidate in sample], "reproducible for the same seed"
+    assert [
+        candidate.paper_id for candidate in draw_label_sample(app.connection, app.config, sample_size=40, seed=7)
+    ] == [candidate.paper_id for candidate in sample], "reproducible for the same seed"
 
     sheet_path = tmp_path / "labels.csv"
     write_label_sheet(app.connection, app.config, sample, sheet_path)
@@ -236,18 +261,20 @@ def test_the_label_sample_covers_chosen_near_misses_and_the_rest_without_reveali
 def test_status_shows_the_source_cache_and_the_last_successful_fetch_per_source(tmp_path, capsys):
     app = build_in_process_app(tmp_path / "home")
     with write_transaction(app.connection):
-        for provider_name, outcome, started_at in (("arxiv", "ok", "2026-11-20T10:00:00Z"),
-                                                    ("arxiv", "unavailable", "2026-11-20T12:00:00Z"),
-                                                    ("openalex", "ok", "2026-11-20T11:00:00Z")):
+        for provider_name, outcome, started_at in (
+            ("arxiv", "ok", "2026-11-20T10:00:00Z"),
+            ("arxiv", "unavailable", "2026-11-20T12:00:00Z"),
+            ("openalex", "ok", "2026-11-20T11:00:00Z"),
+        ):
             app.connection.execute(
                 """INSERT INTO outbound_requests (request_id, provider_name, operation, method, host, path, outcome,
                        started_at, duration_seconds) VALUES (?, ?, 'search', 'GET', 'h', '/p', ?, ?, 0.1)""",
-                (f"q_{provider_name}_{outcome}", provider_name, outcome, started_at))
+                (f"q_{provider_name}_{outcome}", provider_name, outcome, started_at),
+            )
     capsys.readouterr()
     assert run_status_command(app, argparse.Namespace()) == 0
     status_output = capsys.readouterr().out
-    assert "Last successful fetch from arxiv: 2026-11-20T10:00:00Z; last failure 2026-11-20T12:00:00Z" in \
-        status_output
+    assert "Last successful fetch from arxiv: 2026-11-20T10:00:00Z; last failure 2026-11-20T12:00:00Z" in status_output
     assert "Last successful fetch from openalex: 2026-11-20T11:00:00Z\n" in status_output
     assert "Source cache: 0.0 MB of downloads (limit 4096 MB" in status_output
     app.close()

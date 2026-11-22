@@ -51,19 +51,28 @@ def read_service_health_state(connection: sqlite3.Connection, service: str) -> S
         consecutive_failures=row["consecutive_failures"],
         last_error=row["last_error"],
         last_failure_at=row["last_failure_at"],
-        last_success_at=row["last_success_at"])
+        last_success_at=row["last_success_at"],
+    )
 
 
-def record_service_outage(connection: sqlite3.Connection, service: str, error_message: str,
-                          backoff_settings: OutageBackoffSettings, *, minimum_pause_seconds: float = 0.0) -> datetime:
+def record_service_outage(
+    connection: sqlite3.Connection,
+    service: str,
+    error_message: str,
+    backoff_settings: OutageBackoffSettings,
+    *,
+    minimum_pause_seconds: float = 0.0,
+) -> datetime:
     """Count one more consecutive failure and pause the service with exponential back-off. Returns paused_until.
 
     `minimum_pause_seconds` lets a provider's Retry-After lengthen (never shorten) the back-off.
     """
     previous_state = read_service_health_state(connection, service)
     consecutive_failures = previous_state.consecutive_failures + 1
-    backoff_seconds = min(backoff_settings.outage_backoff_max_seconds,
-                          backoff_settings.outage_backoff_initial_seconds * 2 ** (consecutive_failures - 1))
+    backoff_seconds = min(
+        backoff_settings.outage_backoff_max_seconds,
+        backoff_settings.outage_backoff_initial_seconds * 2 ** (consecutive_failures - 1),
+    )
     backoff_seconds = max(backoff_seconds, minimum_pause_seconds)
     paused_until = utc_now() + timedelta(seconds=backoff_seconds)
     connection.execute(
@@ -72,7 +81,8 @@ def record_service_outage(connection: sqlite3.Connection, service: str, error_me
            ON CONFLICT(service) DO UPDATE SET paused_until = excluded.paused_until,
                consecutive_failures = excluded.consecutive_failures, last_error = excluded.last_error,
                last_failure_at = excluded.last_failure_at""",
-        (service, format_utc_timestamp(paused_until), consecutive_failures, error_message, utc_now_timestamp()))
+        (service, format_utc_timestamp(paused_until), consecutive_failures, error_message, utc_now_timestamp()),
+    )
     return paused_until
 
 
@@ -82,11 +92,17 @@ def record_service_success(connection: sqlite3.Connection, service: str) -> None
            VALUES (?, NULL, 0, ?)
            ON CONFLICT(service) DO UPDATE SET paused_until = NULL, consecutive_failures = 0,
                last_success_at = excluded.last_success_at""",
-        (service, utc_now_timestamp()))
+        (service, utc_now_timestamp()),
+    )
 
 
-def ensure_model_service_available(connection: sqlite3.Connection, model_client: ModelClient,
-                                   model_settings: ModelSettings, *, probe_now_even_if_backing_off: bool) -> None:
+def ensure_model_service_available(
+    connection: sqlite3.Connection,
+    model_client: ModelClient,
+    model_settings: ModelSettings,
+    *,
+    probe_now_even_if_backing_off: bool,
+) -> None:
     """Return if model work may proceed; otherwise raise ModelServerUnavailable describing the pause.
 
     Not paused            -> return immediately (the real request will detect a new outage).
@@ -99,7 +115,8 @@ def ensure_model_service_available(connection: sqlite3.Connection, model_client:
     if health_state.is_paused_at(utc_now()) and not probe_now_even_if_backing_off:
         raise ModelServerUnavailable(
             f"model jobs are paused until {format_utc_timestamp(health_state.paused_until)} after "
-            f"{health_state.consecutive_failures} consecutive failure(s); last error: {health_state.last_error}")
+            f"{health_state.consecutive_failures} consecutive failure(s); last error: {health_state.last_error}"
+        )
     try:
         model_client.check_health()
     except ModelServerUnavailable as health_error:

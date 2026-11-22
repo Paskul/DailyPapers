@@ -14,8 +14,9 @@ THINK_OPEN_TAG = "<think>"
 THINK_CLOSE_TAG = "</think>"
 
 
-def separate_reasoning_from_final_answer(message_content: str | None,
-                                         message_reasoning_content: str | None) -> tuple[str, str]:
+def separate_reasoning_from_final_answer(
+    message_content: str | None, message_reasoning_content: str | None
+) -> tuple[str, str]:
     """Return (final_answer_text, reasoning_text)."""
     remaining_content = message_content or ""
     reasoning_parts = [message_reasoning_content] if message_reasoning_content else []

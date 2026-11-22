@@ -23,8 +23,13 @@ from enum import StrEnum
 from paperwatch.config import AppConfig, TopicDefinition
 from paperwatch.public_query_catalog import build_public_query_catalog
 from paperwatch.seeds.seed_items import MATCHING_TEXT_TITLE_ONLY
-from paperwatch.seeds.seed_store import (SeedSourceReference, StoredSeed, load_active_seeds,
-                                         seed_sources_of_all_topics, seed_sources_of_topic)
+from paperwatch.seeds.seed_store import (
+    SeedSourceReference,
+    StoredSeed,
+    load_active_seeds,
+    seed_sources_of_all_topics,
+    seed_sources_of_topic,
+)
 
 
 class TopicInputMode(StrEnum):
@@ -68,17 +73,22 @@ class TopicResearchProfile:
         explanations: list[str] = []
         if self.input_mode == TopicInputMode.EMPTY:
             if self.topic.has_configured_seed_sources:
-                explanations.append("no relevance input yet: its seed sources hold no seeds (see the seed source "
-                                     "lines). Add a private `question` or `public_queries`, or fix the seed source.")
+                explanations.append(
+                    "no relevance input yet: its seed sources hold no seeds (see the seed source "
+                    "lines). Add a private `question` or `public_queries`, or fix the seed source."
+                )
             else:
-                explanations.append("no relevance input: add a private `question`, `public_queries`, or seed "
-                                    "sources (`zotero_collections` and/or `csl_json_files`).")
+                explanations.append(
+                    "no relevance input: add a private `question`, `public_queries`, or seed "
+                    "sources (`zotero_collections` and/or `csl_json_files`)."
+                )
         if not self.can_search_providers:
-            explanations.append("nothing can be searched for it: add `arxiv_categories` (enough for a seeds-only "
-                                "topic) or `public_queries`.")
+            explanations.append(
+                "nothing can be searched for it: add `arxiv_categories` (enough for a seeds-only "
+                "topic) or `public_queries`."
+            )
         if self.title_only_seed_count:
-            explanations.append(f"{self.title_only_seed_count} seed(s) have no abstract and are matched by title "
-                                "only.")
+            explanations.append(f"{self.title_only_seed_count} seed(s) have no abstract and are matched by title only.")
         return explanations
 
 
@@ -88,31 +98,43 @@ def build_research_profiles(connection: sqlite3.Connection, app_config: AppConfi
     profiles = []
     for topic in app_config.topics:
         topic_seed_sources = seed_sources_of_topic(topic)
-        profiles.append(TopicResearchProfile(
-            topic=topic, seed_sources=topic_seed_sources,
-            active_seeds=tuple(load_active_seeds(connection, topic_seed_sources)),
-            approved_public_query_ids=tuple(query_id for query_id, public_query in query_catalog.items()
-                                            if public_query.topic_id == topic.topic_id)))
+        profiles.append(
+            TopicResearchProfile(
+                topic=topic,
+                seed_sources=topic_seed_sources,
+                active_seeds=tuple(load_active_seeds(connection, topic_seed_sources)),
+                approved_public_query_ids=tuple(
+                    query_id
+                    for query_id, public_query in query_catalog.items()
+                    if public_query.topic_id == topic.topic_id
+                ),
+            )
+        )
     return tuple(profiles)
 
 
 def compute_topic_profile_hashes(connection: sqlite3.Connection, app_config: AppConfig) -> dict[str, str]:
     """{topic id: profile hash} for storing with topic assessments."""
-    return {profile.topic_id: profile.compute_profile_sha256()
-            for profile in build_research_profiles(connection, app_config)}
+    return {
+        profile.topic_id: profile.compute_profile_sha256()
+        for profile in build_research_profiles(connection, app_config)
+    }
 
 
 def load_active_seed_library_paper_ids(connection: sqlite3.Connection, app_config: AppConfig) -> frozenset[str]:
     """Catalog papers in the user's active seed library across all topics (kept out of review and recommendations)."""
-    return frozenset(seed.paper_id for seed in load_active_seeds(connection,
-                                                                 seed_sources_of_all_topics(app_config.topics)))
+    return frozenset(
+        seed.paper_id for seed in load_active_seeds(connection, seed_sources_of_all_topics(app_config.topics))
+    )
 
 
 def explain_empty_research_profile(profiles: tuple[TopicResearchProfile, ...]) -> str | None:
     """The overall explanation when neither keywords nor seeds define any topic (plan part 4); else None."""
     if any(profile.input_mode != TopicInputMode.EMPTY for profile in profiles):
         return None
-    return ("Nothing defines relevance yet. In topics.toml add, for at least one [[topics]] entry, a private "
-            "`question` and `public_queries` (keyword mode), or seed papers via `zotero_collections` (with the read-"
-            "only key in the collector credentials file) or `csl_json_files` (a CSL JSON export), plus "
-            "`arxiv_categories` to search.")
+    return (
+        "Nothing defines relevance yet. In topics.toml add, for at least one [[topics]] entry, a private "
+        "`question` and `public_queries` (keyword mode), or seed papers via `zotero_collections` (with the read-"
+        "only key in the collector credentials file) or `csl_json_files` (a CSL JSON export), plus "
+        "`arxiv_categories` to search."
+    )

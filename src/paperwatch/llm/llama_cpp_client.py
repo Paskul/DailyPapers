@@ -13,8 +13,13 @@ from typing import Any
 import httpx
 
 from paperwatch.config import REASONING_EFFORT_SERVER_DEFAULT, ModelSettings
-from paperwatch.errors import (ModelCallTimedOut, ModelOutputInvalid, ModelOutputTruncated, ModelRequestRejected,
-                               ModelServerUnavailable)
+from paperwatch.errors import (
+    ModelCallTimedOut,
+    ModelOutputInvalid,
+    ModelOutputTruncated,
+    ModelRequestRejected,
+    ModelServerUnavailable,
+)
 from paperwatch.llm.reasoning import separate_reasoning_from_final_answer
 from paperwatch.llm.types import ModelServerDescription, StructuredChatRequest, StructuredChatResponse
 
@@ -37,12 +42,14 @@ class LlamaCppModelClient:
     # ---- ModelClient protocol ----------------------------------------------------------------------------------------
 
     def check_health(self) -> None:
-        health_response = self._send("GET", f"{self._server_root_url}/health",
-                                     read_timeout_seconds=METADATA_REQUEST_TIMEOUT_SECONDS)
+        health_response = self._send(
+            "GET", f"{self._server_root_url}/health", read_timeout_seconds=METADATA_REQUEST_TIMEOUT_SECONDS
+        )
         if health_response.status_code != 200:
             raise ModelServerUnavailable(
                 f"llama.cpp /health returned HTTP {health_response.status_code} "
-                f"(the model may still be loading): {_shorten(health_response.text)}")
+                f"(the model may still be loading): {_shorten(health_response.text)}"
+            )
 
     def describe_server(self) -> ModelServerDescription:
         models_payload = self._get_json(f"{self._openai_api_base_url}/models")
@@ -53,8 +60,9 @@ class LlamaCppModelClient:
 
         properties_payload = self._get_json(f"{self._server_root_url}/props")
         # /tools lists built-in server tools when llama-server runs with --tools or --agent; otherwise it refuses.
-        tools_response = self._send("GET", f"{self._server_root_url}/tools",
-                                    read_timeout_seconds=METADATA_REQUEST_TIMEOUT_SECONDS)
+        tools_response = self._send(
+            "GET", f"{self._server_root_url}/tools", read_timeout_seconds=METADATA_REQUEST_TIMEOUT_SECONDS
+        )
         generation_defaults = properties_payload.get("default_generation_settings", {}) or {}
         template_capabilities = properties_payload.get("chat_template_caps", {}) or {}
         model_file_name = PurePath(properties_payload.get("model_path", UNKNOWN_VALUE)).name
@@ -73,33 +81,44 @@ class LlamaCppModelClient:
     def request_structured_completion(self, request: StructuredChatRequest) -> StructuredChatResponse:
         request_payload = build_chat_completion_payload(request, self._model_settings.model_alias)
         request_started = time.monotonic()
-        completion_response = self._send("POST", f"{self._openai_api_base_url}/chat/completions",
-                                         read_timeout_seconds=request.timeout_seconds, json_body=request_payload,
-                                         role_name_for_timeout_message=request.role_name)
+        completion_response = self._send(
+            "POST",
+            f"{self._openai_api_base_url}/chat/completions",
+            read_timeout_seconds=request.timeout_seconds,
+            json_body=request_payload,
+            role_name_for_timeout_message=request.role_name,
+        )
         duration_seconds = time.monotonic() - request_started
 
         if 400 <= completion_response.status_code < 500:
-            raise ModelRequestRejected(f"llama.cpp rejected the {request.role_name} request with HTTP "
-                                       f"{completion_response.status_code}: {_shorten(completion_response.text)}")
+            raise ModelRequestRejected(
+                f"llama.cpp rejected the {request.role_name} request with HTTP "
+                f"{completion_response.status_code}: {_shorten(completion_response.text)}"
+            )
         if completion_response.status_code != 200:
-            raise ModelServerUnavailable(f"llama.cpp returned HTTP {completion_response.status_code} for the "
-                                         f"{request.role_name} request: {_shorten(completion_response.text)}")
+            raise ModelServerUnavailable(
+                f"llama.cpp returned HTTP {completion_response.status_code} for the "
+                f"{request.role_name} request: {_shorten(completion_response.text)}"
+            )
         try:
             completion_payload = completion_response.json()
             first_choice = completion_payload["choices"][0]
             message = first_choice["message"]
         except (ValueError, KeyError, IndexError, TypeError) as parse_error:
-            raise ModelOutputInvalid(f"llama.cpp response for {request.role_name} has an unexpected shape: "
-                                     f"{parse_error}") from parse_error
+            raise ModelOutputInvalid(
+                f"llama.cpp response for {request.role_name} has an unexpected shape: {parse_error}"
+            ) from parse_error
 
         final_answer_text, reasoning_text = separate_reasoning_from_final_answer(
-            message.get("content"), message.get("reasoning_content"))
+            message.get("content"), message.get("reasoning_content")
+        )
         finish_reason = first_choice.get("finish_reason") or UNKNOWN_VALUE
         if finish_reason == "length":
             raise ModelOutputTruncated(
                 f"role '{request.role_name}' hit its output limit of {request.max_output_tokens} tokens "
                 "(reasoning included) before finishing its answer",
-                operator_hint=f"raise roles.{request.role_name}.max_output_tokens or lower its reasoning_effort")
+                operator_hint=f"raise roles.{request.role_name}.max_output_tokens or lower its reasoning_effort",
+            )
 
         usage = completion_payload.get("usage", {}) or {}
         return StructuredChatResponse(
@@ -134,10 +153,21 @@ class LlamaCppModelClient:
         except ValueError as decode_error:
             raise ModelServerUnavailable(f"GET {url} did not return JSON") from decode_error
 
-    def _send(self, method: str, url: str, *, read_timeout_seconds: float, json_body: dict | None = None,
-              role_name_for_timeout_message: str | None = None) -> httpx.Response:
-        timeouts = httpx.Timeout(connect=self._model_settings.connect_timeout_seconds, read=read_timeout_seconds,
-                                 write=30.0, pool=self._model_settings.connect_timeout_seconds)
+    def _send(
+        self,
+        method: str,
+        url: str,
+        *,
+        read_timeout_seconds: float,
+        json_body: dict | None = None,
+        role_name_for_timeout_message: str | None = None,
+    ) -> httpx.Response:
+        timeouts = httpx.Timeout(
+            connect=self._model_settings.connect_timeout_seconds,
+            read=read_timeout_seconds,
+            write=30.0,
+            pool=self._model_settings.connect_timeout_seconds,
+        )
         # trust_env=False: never route local model traffic through proxy settings from the environment.
         with httpx.Client(timeout=timeouts, follow_redirects=False, trust_env=False) as http_client:
             try:
@@ -145,7 +175,7 @@ class LlamaCppModelClient:
             except httpx.ConnectError as connect_error:
                 raise ModelServerUnavailable(
                     f"cannot connect to the llama.cpp server at {self._server_root_url}: {connect_error}",
-                    operator_hint="start the llama.cpp server (or check model.base_url); queued papers are kept"
+                    operator_hint="start the llama.cpp server (or check model.base_url); queued papers are kept",
                 ) from connect_error
             except httpx.ConnectTimeout as connect_timeout:
                 raise ModelServerUnavailable(f"timed out connecting to {self._server_root_url}") from connect_timeout
@@ -154,7 +184,7 @@ class LlamaCppModelClient:
                     raise ModelServerUnavailable(f"{method} {url} timed out") from read_timeout
                 raise ModelCallTimedOut(
                     f"role '{role_name_for_timeout_message}' exceeded its {read_timeout_seconds:.0f} s time limit",
-                    operator_hint=f"raise roles.{role_name_for_timeout_message}.timeout_seconds if this repeats"
+                    operator_hint=f"raise roles.{role_name_for_timeout_message}.timeout_seconds if this repeats",
                 ) from read_timeout
             except httpx.HTTPError as other_http_error:
                 raise ModelServerUnavailable(f"{method} {url} failed: {other_http_error!r}") from other_http_error
@@ -192,8 +222,9 @@ def _server_tools_are_listed(tools_response: httpx.Response) -> bool | None:
         tools_payload = tools_response.json()
     except ValueError:
         return None
-    listed_tools = tools_payload.get("data", tools_payload.get("tools", [])) if isinstance(tools_payload, dict) \
-        else tools_payload
+    listed_tools = (
+        tools_payload.get("data", tools_payload.get("tools", [])) if isinstance(tools_payload, dict) else tools_payload
+    )
     return bool(listed_tools)
 
 

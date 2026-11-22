@@ -42,8 +42,9 @@ def scheduled_cutoff_for_report_date(report_date: date, report_settings: ReportS
 
     A publish time inside a spring-forward gap (e.g. 02:30 on the DST day) resolves the way zoneinfo does (fold=0:
     the offset before the change), which is a valid, unique instant."""
-    local_cutoff = datetime.combine(report_date, parse_clock_time(report_settings.publish_time),
-                                    tzinfo=ZoneInfo(report_settings.timezone))
+    local_cutoff = datetime.combine(
+        report_date, parse_clock_time(report_settings.publish_time), tzinfo=ZoneInfo(report_settings.timezone)
+    )
     return local_cutoff.astimezone(timezone.utc)
 
 
@@ -59,11 +60,13 @@ def latest_due_report_date(moment: datetime, report_settings: ReportSettings) ->
     return today - timedelta(days=1)
 
 
-def resolve_report_timing(report_settings: ReportSettings, moment: datetime, requested_report_date: str | None,
-                          *, publish_early: bool) -> ReportTiming:
+def resolve_report_timing(
+    report_settings: ReportSettings, moment: datetime, requested_report_date: str | None, *, publish_early: bool
+) -> ReportTiming:
     if requested_report_date is None:
-        report_date = local_date_at(moment, report_settings) if publish_early \
-            else latest_due_report_date(moment, report_settings)
+        report_date = (
+            local_date_at(moment, report_settings) if publish_early else latest_due_report_date(moment, report_settings)
+        )
     else:
         try:
             report_date = date.fromisoformat(requested_report_date)
@@ -78,9 +81,16 @@ def resolve_report_timing(report_settings: ReportSettings, moment: datetime, req
         raise ReportNotDueYet(
             f"the report for {report_date.isoformat()} is not due until {local_publish_time}",
             operator_hint="omit --date to publish the latest due report, or add --early to publish today's report "
-                          "now (its cutoff becomes the current time)")
+            "now (its cutoff becomes the current time)",
+        )
     if report_date != local_date_at(moment, report_settings):
-        raise ReportNotDueYet(f"--early publishes only today's report ({local_date_at(moment, report_settings)}); "
-                              f"{report_date.isoformat()} is not today")
-    return ReportTiming(report_date.isoformat(), scheduled_cutoff_at, moment.astimezone(timezone.utc).replace(
-        microsecond=0), published_early=True)
+        raise ReportNotDueYet(
+            f"--early publishes only today's report ({local_date_at(moment, report_settings)}); "
+            f"{report_date.isoformat()} is not today"
+        )
+    return ReportTiming(
+        report_date.isoformat(),
+        scheduled_cutoff_at,
+        moment.astimezone(timezone.utc).replace(microsecond=0),
+        published_early=True,
+    )

@@ -24,8 +24,12 @@ from paperwatch.errors import SourceInputError
 from paperwatch.reading.parser_recovery import ParserRecoveryAssessment, assess_parser_recovery
 from paperwatch.reading.passages import Passage, build_abstract_passages, segment_extracted_text
 from paperwatch.reading.reading_plan import ReadingPlan, plan_abstract_reading, plan_full_text_reading
-from paperwatch.review_inputs import (TEXT_KIND_ABSTRACT, ReadingInputIdentity, fingerprint_abstract_reading_text,
-                                      fingerprint_extracted_reading_text)
+from paperwatch.review_inputs import (
+    TEXT_KIND_ABSTRACT,
+    ReadingInputIdentity,
+    fingerprint_abstract_reading_text,
+    fingerprint_extracted_reading_text,
+)
 from paperwatch.sandboxed_extractor import BYTES_PER_MEGABYTE
 from paperwatch.source_cache import cached_edition_directory
 
@@ -64,12 +68,12 @@ class ReviewPacket:
     def citable_passage_texts(self) -> dict[str, str]:
         """{passage id: text} of every passage the plan reads: what any answer may cite."""
         read_passage_ids = self.reading_plan.read_passage_ids
-        return {passage.passage_id: passage.text for passage in self.passages
-                if passage.passage_id in read_passage_ids}
+        return {passage.passage_id: passage.text for passage in self.passages if passage.passage_id in read_passage_ids}
 
 
-def build_review_packet(connection: sqlite3.Connection, app_config: AppConfig, paper_id: str,
-                        reading_input: ReadingInputIdentity) -> ReviewPacket:
+def build_review_packet(
+    connection: sqlite3.Connection, app_config: AppConfig, paper_id: str, reading_input: ReadingInputIdentity
+) -> ReviewPacket:
     edition_row = load_edition_row(connection, reading_input.edition_id)
     orientation = {
         "title": edition_row["title"],
@@ -79,20 +83,29 @@ def build_review_packet(connection: sqlite3.Connection, app_config: AppConfig, p
         "version": edition_row["version_label"],
     }
     if reading_input.text_kind == TEXT_KIND_ABSTRACT:
-        if fingerprint_abstract_reading_text(edition_row["title"], edition_row["abstract"]) != \
-                reading_input.source_text_sha256:
+        if (
+            fingerprint_abstract_reading_text(edition_row["title"], edition_row["abstract"])
+            != reading_input.source_text_sha256
+        ):
             raise SourceInputError(f"edition {reading_input.edition_id} no longer has the text this job was queued for")
         passages = build_abstract_passages(edition_row["title"], edition_row["abstract"])
         return ReviewPacket(paper_id, reading_input, orientation, passages, plan_abstract_reading(passages), None)
 
     extracted_text = load_verified_extracted_text(app_config, reading_input)
     reading_settings = app_config.reading
-    passages = segment_extracted_text(extracted_text, passage_max_characters=reading_settings.passage_max_characters,
-                                      passage_min_characters=reading_settings.passage_min_characters)
-    reading_plan = plan_full_text_reading(passages, section_max_characters=reading_settings.section_max_characters,
-                                          max_sections_per_paper=reading_settings.max_sections_per_paper)
-    return ReviewPacket(paper_id, reading_input, orientation, passages, reading_plan,
-                        assess_parser_recovery(extracted_text))
+    passages = segment_extracted_text(
+        extracted_text,
+        passage_max_characters=reading_settings.passage_max_characters,
+        passage_min_characters=reading_settings.passage_min_characters,
+    )
+    reading_plan = plan_full_text_reading(
+        passages,
+        section_max_characters=reading_settings.section_max_characters,
+        max_sections_per_paper=reading_settings.max_sections_per_paper,
+    )
+    return ReviewPacket(
+        paper_id, reading_input, orientation, passages, reading_plan, assess_parser_recovery(extracted_text)
+    )
 
 
 def load_verified_extracted_text(app_config: AppConfig, reading_input: ReadingInputIdentity) -> str:
@@ -101,18 +114,22 @@ def load_verified_extracted_text(app_config: AppConfig, reading_input: ReadingIn
         raise ExtractedTextUnavailable(f"edition {reading_input.edition_id}: '{file_name}' is not a cached text name")
     text_path: Path = cached_edition_directory(app_config.source_cache_dir, reading_input.edition_id) / file_name
     if text_path.is_symlink() or not text_path.is_file():
-        raise ExtractedTextUnavailable(f"extracted text of edition {reading_input.edition_id} is missing from the "
-                                       "source cache")
+        raise ExtractedTextUnavailable(
+            f"extracted text of edition {reading_input.edition_id} is missing from the source cache"
+        )
     maximum_bytes = app_config.extractor.max_output_megabytes * BYTES_PER_MEGABYTE
     if text_path.stat().st_size > maximum_bytes:
-        raise ExtractedTextUnavailable(f"extracted text of edition {reading_input.edition_id} exceeds "
-                                       "extractor.max_output_megabytes")
+        raise ExtractedTextUnavailable(
+            f"extracted text of edition {reading_input.edition_id} exceeds extractor.max_output_megabytes"
+        )
     try:
         extracted_text = text_path.read_text(encoding="utf-8", errors="replace")
     except OSError as read_error:
-        raise ExtractedTextUnavailable(f"cannot read the extracted text of edition {reading_input.edition_id}: "
-                                       f"{read_error}") from None
+        raise ExtractedTextUnavailable(
+            f"cannot read the extracted text of edition {reading_input.edition_id}: {read_error}"
+        ) from None
     if fingerprint_extracted_reading_text(extracted_text) != reading_input.source_text_sha256:
-        raise ExtractedTextUnavailable(f"extracted text of edition {reading_input.edition_id} no longer matches its "
-                                       "stored fingerprint")
+        raise ExtractedTextUnavailable(
+            f"extracted text of edition {reading_input.edition_id} no longer matches its stored fingerprint"
+        )
     return extracted_text

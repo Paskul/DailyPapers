@@ -38,15 +38,25 @@ class ReferenceCandidate:
     citation_contexts: tuple[CitationContext, ...] = field(default_factory=tuple)
 
     def as_model_input(self) -> dict[str, Any]:
-        return {"candidate_id": self.paper_id, "title": self.title, "authors": list(self.authors),
-                "year": self.publication_year,
-                "abstract": (self.abstract or "(no abstract available)")[:MAXIMUM_CANDIDATE_ABSTRACT_CHARACTERS],
-                "citation_contexts": [context.as_model_input() for context in self.citation_contexts]}
+        return {
+            "candidate_id": self.paper_id,
+            "title": self.title,
+            "authors": list(self.authors),
+            "year": self.publication_year,
+            "abstract": (self.abstract or "(no abstract available)")[:MAXIMUM_CANDIDATE_ABSTRACT_CHARACTERS],
+            "citation_contexts": [context.as_model_input() for context in self.citation_contexts],
+        }
 
 
-def list_reference_candidates(connection: sqlite3.Connection, app_config: AppConfig, parent_paper_id: str, *,
-                              active_seed_paper_ids: frozenset[str], limit: int,
-                              with_citation_contexts: bool = True) -> list[ReferenceCandidate]:
+def list_reference_candidates(
+    connection: sqlite3.Connection,
+    app_config: AppConfig,
+    parent_paper_id: str,
+    *,
+    active_seed_paper_ids: frozenset[str],
+    limit: int,
+    with_citation_contexts: bool = True,
+) -> list[ReferenceCandidate]:
     candidate_rows = connection.execute(
         f"""SELECT edge.cited_paper_id AS paper_id,
                    (SELECT MAX(score.unnormalized_score) FROM candidate_topic_scores AS score
@@ -61,12 +71,14 @@ def list_reference_candidates(connection: sqlite3.Connection, app_config: AppCon
                                               WHERE kind = '{REVIEW_PAPER_JOB_KIND}' AND paper_id IS NOT NULL)
             GROUP BY edge.cited_paper_id
             ORDER BY best_screening_score IS NULL, best_screening_score DESC, edge.cited_paper_id""",
-        {"parent": parent_paper_id}).fetchall()
+        {"parent": parent_paper_id},
+    ).fetchall()
     candidate_rows = [row for row in candidate_rows if row["paper_id"] not in active_seed_paper_ids][:limit]
     if not candidate_rows:
         return []
-    parent_passages = load_extracted_text_passages(connection, app_config, parent_paper_id) \
-        if with_citation_contexts else None
+    parent_passages = (
+        load_extracted_text_passages(connection, app_config, parent_paper_id) if with_citation_contexts else None
+    )
     candidates = []
     for candidate_row in candidate_rows:
         edition_row = select_edition_to_read(connection, candidate_row["paper_id"])
@@ -77,15 +89,27 @@ def list_reference_candidates(connection: sqlite3.Connection, app_config: AppCon
         contexts: tuple[CitationContext, ...] = ()
         if parent_passages:
             cited_work = CitedWorkDescription(
-                title=edition_row["title"], publication_year=publication_year,
+                title=edition_row["title"],
+                publication_year=publication_year,
                 first_author_family_name=_first_author_family_name(authors),
-                identifier_values=_citable_identifier_values(connection, candidate_row["paper_id"]))
-            contexts = tuple(find_citation_contexts(bibliography_passages(parent_passages),
-                                                    body_passages(parent_passages), cited_work))
-        candidates.append(ReferenceCandidate(
-            paper_id=candidate_row["paper_id"], title=edition_row["title"], authors=authors[:MAXIMUM_AUTHORS_SHOWN],
-            publication_year=publication_year, abstract=edition_row["abstract"],
-            best_screening_score=candidate_row["best_screening_score"], citation_contexts=contexts))
+                identifier_values=_citable_identifier_values(connection, candidate_row["paper_id"]),
+            )
+            contexts = tuple(
+                find_citation_contexts(
+                    bibliography_passages(parent_passages), body_passages(parent_passages), cited_work
+                )
+            )
+        candidates.append(
+            ReferenceCandidate(
+                paper_id=candidate_row["paper_id"],
+                title=edition_row["title"],
+                authors=authors[:MAXIMUM_AUTHORS_SHOWN],
+                publication_year=publication_year,
+                abstract=edition_row["abstract"],
+                best_screening_score=candidate_row["best_screening_score"],
+                citation_contexts=contexts,
+            )
+        )
     return candidates
 
 
@@ -98,6 +122,10 @@ def _first_author_family_name(authors: tuple[str, ...]) -> str | None:
 
 def _citable_identifier_values(connection: sqlite3.Connection, paper_id: str) -> tuple[str, ...]:
     """DOIs and arXiv ids as they could be printed in a bibliography."""
-    return tuple(alias_row["provider_paper_id"] for alias_row in connection.execute(
-        "SELECT provider_paper_id FROM paper_aliases WHERE paper_id = ? AND provider IN (?, ?)",
-        (paper_id, DOI_SCHEME, ARXIV_SCHEME)))
+    return tuple(
+        alias_row["provider_paper_id"]
+        for alias_row in connection.execute(
+            "SELECT provider_paper_id FROM paper_aliases WHERE paper_id = ? AND provider IN (?, ?)",
+            (paper_id, DOI_SCHEME, ARXIV_SCHEME),
+        )
+    )

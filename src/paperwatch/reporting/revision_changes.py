@@ -66,28 +66,48 @@ def describe_material_revision_changes(reported: ReviewedVersion, newer: Reviewe
     if reported_numbers != newer_numbers:
         added = sorted(newer_numbers - reported_numbers)[:MAXIMUM_LISTED_NUMBERS]
         removed = sorted(reported_numbers - newer_numbers)[:MAXIMUM_LISTED_NUMBERS]
-        changes.append(RevisionChange("numeric_results", "numbers in the reported results changed"
-                                      + (f"; now also {', '.join(added)}" if added else "")
-                                      + (f"; no longer {', '.join(removed)}" if removed else "")))
+        changes.append(
+            RevisionChange(
+                "numeric_results",
+                "numbers in the reported results changed"
+                + (f"; now also {', '.join(added)}" if added else "")
+                + (f"; no longer {', '.join(removed)}" if removed else ""),
+            )
+        )
 
     reported_assumptions = _supported_assumption_word_sets(reported.review_content)
     newer_assumptions = _supported_assumption_word_sets(newer.review_content)
     appeared = sum(1 for words in newer_assumptions if not _has_matching_statement(words, reported_assumptions))
     disappeared = sum(1 for words in reported_assumptions if not _has_matching_statement(words, newer_assumptions))
     if appeared or disappeared:
-        changes.append(RevisionChange("assumptions", f"supported assumptions changed: {appeared} new, "
-                                                     f"{disappeared} no longer stated"))
+        changes.append(
+            RevisionChange(
+                "assumptions", f"supported assumptions changed: {appeared} new, {disappeared} no longer stated"
+            )
+        )
 
     reported_insufficient = bool(reported.review_content.get("insufficient_evidence"))
     newer_insufficient = bool(newer.review_content.get("insufficient_evidence"))
     if reported_insufficient != newer_insufficient:
-        changes.append(RevisionChange("evidence_verdict", "the reviewer now finds the evidence "
-                                      + ("insufficient" if newer_insufficient else "sufficient for a review")))
+        changes.append(
+            RevisionChange(
+                "evidence_verdict",
+                "the reviewer now finds the evidence "
+                + ("insufficient" if newer_insufficient else "sufficient for a review"),
+            )
+        )
 
-    if reported.best_reading_priority is not None and newer.best_reading_priority is not None and \
-            abs(newer.best_reading_priority - reported.best_reading_priority) >= READING_PRIORITY_CHANGE_FOR_UPDATE:
-        changes.append(RevisionChange("reading_priority", f"reading priority moved from "
-                                      f"{reported.best_reading_priority} to {newer.best_reading_priority}/100"))
+    if (
+        reported.best_reading_priority is not None
+        and newer.best_reading_priority is not None
+        and abs(newer.best_reading_priority - reported.best_reading_priority) >= READING_PRIORITY_CHANGE_FOR_UPDATE
+    ):
+        changes.append(
+            RevisionChange(
+                "reading_priority",
+                f"reading priority moved from {reported.best_reading_priority} to {newer.best_reading_priority}/100",
+            )
+        )
     return changes
 
 
@@ -102,9 +122,11 @@ def _result_numbers(review_content: dict[str, Any]) -> set[str]:
 
 
 def _supported_assumption_word_sets(review_content: dict[str, Any]) -> list[set[str]]:
-    return [content_words(str(statement.get("statement", "")))
-            for statement in review_content.get("assumptions", [])
-            if isinstance(statement, dict) and statement.get("evidence_status") == "supported"]
+    return [
+        content_words(str(statement.get("statement", "")))
+        for statement in review_content.get("assumptions", [])
+        if isinstance(statement, dict) and statement.get("evidence_status") == "supported"
+    ]
 
 
 def _has_matching_statement(words: set[str], candidates: list[set[str]]) -> bool:
@@ -113,7 +135,10 @@ def _has_matching_statement(words: set[str], candidates: list[set[str]]) -> bool
             return True
         common_words = words & candidate_words
         smaller_size = min(len(words), len(candidate_words))
-        if smaller_size and len(common_words) >= min(ASSUMPTION_MATCH_MINIMUM_SHARED_WORDS, smaller_size) and \
-                len(common_words) / smaller_size >= ASSUMPTION_MATCH_OVERLAP:
+        if (
+            smaller_size
+            and len(common_words) >= min(ASSUMPTION_MATCH_MINIMUM_SHARED_WORDS, smaller_size)
+            and len(common_words) / smaller_size >= ASSUMPTION_MATCH_OVERLAP
+        ):
             return True
     return False

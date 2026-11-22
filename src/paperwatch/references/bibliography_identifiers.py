@@ -20,7 +20,8 @@ from paperwatch.text_normalization import build_title_match_key
 
 DOI_IN_TEXT_PATTERN = re.compile(r"(?i)\b10\.\d{4,9}/[^\s\"'<>\]\[(){}]+")
 ARXIV_ID_IN_TEXT_PATTERN = re.compile(
-    r"(?i)\barxiv(?:\.org/(?:abs|pdf)/|\s*:\s*|\s+)(?P<arxiv_id>\d{4}\.\d{4,5}(?:v\d+)?|[a-z][a-z.-]*/\d{7}(?:v\d+)?)")
+    r"(?i)\barxiv(?:\.org/(?:abs|pdf)/|\s*:\s*|\s+)(?P<arxiv_id>\d{4}\.\d{4,5}(?:v\d+)?|[a-z][a-z.-]*/\d{7}(?:v\d+)?)"
+)
 TRAILING_PUNCTUATION = ".,;:"
 CHARACTERS_OF_ENTRY_BEFORE_IDENTIFIER = 500  # bibliography entries usually end with their DOI
 CHARACTERS_OF_ENTRY_AFTER_IDENTIFIER = 120
@@ -50,8 +51,10 @@ def find_bibliography_identifiers(bibliography_passages: list[Passage]) -> list[
                 identifier = normalize_identifier(scheme, raw_value.rstrip(TRAILING_PUNCTUATION)).without_version()
             except SourceInputError:
                 continue
-            entry_text = passage.text[max(0, match_start - CHARACTERS_OF_ENTRY_BEFORE_IDENTIFIER):
-                                      match_end + CHARACTERS_OF_ENTRY_AFTER_IDENTIFIER]
+            entry_text = passage.text[
+                max(0, match_start - CHARACTERS_OF_ENTRY_BEFORE_IDENTIFIER) : match_end
+                + CHARACTERS_OF_ENTRY_AFTER_IDENTIFIER
+            ]
             found.setdefault(identifier, BibliographyIdentifier(identifier, passage.passage_id, entry_text))
             if len(found) >= MAXIMUM_IDENTIFIERS_PER_PAPER:
                 return list(found.values())
@@ -60,8 +63,10 @@ def find_bibliography_identifiers(bibliography_passages: list[Passage]) -> list[
 
 def _identifier_matches(text: str) -> list[tuple[str, int, int, str]]:
     matches = [(DOI_SCHEME, match.start(), match.end(), match.group()) for match in DOI_IN_TEXT_PATTERN.finditer(text)]
-    matches += [(ARXIV_SCHEME, match.start(), match.end(), match["arxiv_id"])
-                for match in ARXIV_ID_IN_TEXT_PATTERN.finditer(text)]
+    matches += [
+        (ARXIV_SCHEME, match.start(), match.end(), match["arxiv_id"])
+        for match in ARXIV_ID_IN_TEXT_PATTERN.finditer(text)
+    ]
     return sorted(matches, key=lambda found_match: found_match[1])
 
 

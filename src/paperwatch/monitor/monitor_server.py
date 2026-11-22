@@ -51,7 +51,7 @@ STATIC_FILES = {  # route -> (file in paperwatch/monitor/static, content type)
 }
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
-                               "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
@@ -65,29 +65,46 @@ def validate_listen_address(listen_address: str) -> ipaddress.IPv4Address | ipad
     try:
         address = ipaddress.ip_address(listen_address)
     except ValueError:
-        raise ConfigurationError(f"monitor listen address '{listen_address}' is not an IP address",
-                                 operator_hint="use 127.0.0.1 (default) or this machine's Tailscale address "
-                                               "(`tailscale ip -4`)") from None
+        raise ConfigurationError(
+            f"monitor listen address '{listen_address}' is not an IP address",
+            operator_hint="use 127.0.0.1 (default) or this machine's Tailscale address (`tailscale ip -4`)",
+        ) from None
     if address.is_loopback or any(address in network for network in TAILSCALE_NETWORKS):
         return address
-    raise ConfigurationError(f"the monitor serves only on loopback or a Tailscale address, not {listen_address}",
-                             operator_hint="to view it from another machine, use an SSH tunnel "
-                                           "(ssh -L 8765:127.0.0.1:8765 <this host>) or this machine's Tailscale "
-                                           "address")
+    raise ConfigurationError(
+        f"the monitor serves only on loopback or a Tailscale address, not {listen_address}",
+        operator_hint="to view it from another machine, use an SSH tunnel "
+        "(ssh -L 8765:127.0.0.1:8765 <this host>) or this machine's Tailscale "
+        "address",
+    )
 
 
 def build_allowed_host_names(listen_address: str, extra_host_names: tuple[str, ...] = ()) -> frozenset[str]:
     host_name = socket.gethostname().lower()
-    return frozenset({"localhost", "127.0.0.1", "::1", listen_address.lower(), host_name,
-                      host_name.split(".")[0], *(name.lower().rstrip(".") for name in extra_host_names)})
+    return frozenset(
+        {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            listen_address.lower(),
+            host_name,
+            host_name.split(".")[0],
+            *(name.lower().rstrip(".") for name in extra_host_names),
+        }
+    )
 
 
 class SnapshotProvider:
     """Builds snapshots on demand, at most one every SNAPSHOT_CACHE_SECONDS per history window."""
 
-    def __init__(self, app_config: AppConfig, *, default_history_hours: float,
-                 clock: Callable[[], datetime] = utc_now,
-                 read_schedule: Callable[..., ScheduleState] = read_schedule_state) -> None:
+    def __init__(
+        self,
+        app_config: AppConfig,
+        *,
+        default_history_hours: float,
+        clock: Callable[[], datetime] = utc_now,
+        read_schedule: Callable[..., ScheduleState] = read_schedule_state,
+    ) -> None:
         self.app_config = app_config
         self.default_history_hours = default_history_hours
         self.clock = clock
@@ -108,12 +125,14 @@ class SnapshotProvider:
 
     def build(self, history_hours: float) -> dict[str, Any]:
         now = self.clock()
-        schedule = self.read_schedule(window_start=now - timedelta(hours=history_hours),
-                                      window_end=now + timedelta(hours=30))
+        schedule = self.read_schedule(
+            window_start=now - timedelta(hours=history_hours), window_end=now + timedelta(hours=30)
+        )
         connection = open_read_only_database(self.app_config.database_path)
         try:
-            return build_monitor_snapshot(connection, self.app_config, now=now, history_hours=history_hours,
-                                          schedule=schedule)
+            return build_monitor_snapshot(
+                connection, self.app_config, now=now, history_hours=history_hours, schedule=schedule
+            )
         finally:
             connection.close()
 
@@ -131,8 +150,7 @@ def build_request_handler(snapshot_provider: SnapshotProvider, allowed_host_name
 
         def _respond(self, *, include_body: bool) -> None:
             if not self._host_is_allowed():
-                self._send(HTTPStatus.MISDIRECTED_REQUEST, b"unknown host\n", "text/plain; charset=utf-8",
-                           include_body)
+                self._send(HTTPStatus.MISDIRECTED_REQUEST, b"unknown host\n", "text/plain; charset=utf-8", include_body)
                 return
             parsed_url = urllib.parse.urlsplit(self.path)
             if parsed_url.path in STATIC_FILES:
@@ -160,15 +178,16 @@ def build_request_handler(snapshot_provider: SnapshotProvider, allowed_host_name
                 status = HTTPStatus.SERVICE_UNAVAILABLE
             except Exception as unexpected_error:  # keep serving; the page shows the error banner
                 LOGGER.exception("monitor snapshot failed")
-                body = json.dumps({"error": f"snapshot failed: {type(unexpected_error).__name__}: "
-                                            f"{unexpected_error}"}).encode("utf-8")
+                body = json.dumps(
+                    {"error": f"snapshot failed: {type(unexpected_error).__name__}: {unexpected_error}"}
+                ).encode("utf-8")
                 status = HTTPStatus.INTERNAL_SERVER_ERROR
             self._send(status, body, "application/json; charset=utf-8", include_body)
 
         def _host_is_allowed(self) -> bool:
             host_header = (self.headers.get("Host") or "").strip().lower()
             if host_header.startswith("["):  # [::1]:8765
-                host_name = host_header[1:host_header.find("]")] if "]" in host_header else host_header
+                host_name = host_header[1 : host_header.find("]")] if "]" in host_header else host_header
             else:
                 host_name = host_header.rsplit(":", 1)[0] if host_header.count(":") == 1 else host_header
             return host_name.rstrip(".") in allowed_host_names
@@ -194,10 +213,15 @@ def build_request_handler(snapshot_provider: SnapshotProvider, allowed_host_name
     return MonitorRequestHandler
 
 
-def create_monitor_server(app_config: AppConfig, *, listen_address: str = DEFAULT_LISTEN_ADDRESS,
-                          port: int = DEFAULT_PORT, history_hours: float = 36.0,
-                          extra_host_names: tuple[str, ...] = (),
-                          snapshot_provider: SnapshotProvider | None = None) -> ThreadingHTTPServer:
+def create_monitor_server(
+    app_config: AppConfig,
+    *,
+    listen_address: str = DEFAULT_LISTEN_ADDRESS,
+    port: int = DEFAULT_PORT,
+    history_hours: float = 36.0,
+    extra_host_names: tuple[str, ...] = (),
+    snapshot_provider: SnapshotProvider | None = None,
+) -> ThreadingHTTPServer:
     address = validate_listen_address(listen_address)
     provider = snapshot_provider or SnapshotProvider(app_config, default_history_hours=history_hours)
     handler_class = build_request_handler(provider, build_allowed_host_names(str(address), extra_host_names))

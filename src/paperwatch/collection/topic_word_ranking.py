@@ -22,7 +22,8 @@ COMMON_ENGLISH_WORDS = frozenset(
     "are was were been being has have had not but nor yet any all each every some such than then them they their "
     "there these those into onto over under about above after before between through during without within "
     "give gives given make makes made use uses used using our your its also more most less least very much many "
-    "one two new via per based towards toward stop".split())
+    "one two new via per based towards toward stop".split()
+)
 
 
 def comparable_words(text: str) -> set[str]:
@@ -44,11 +45,14 @@ def topic_words_for_category(topics: Iterable[TopicDefinition], arxiv_category: 
     return topic_words
 
 
-def rank_records_by_topic_words(collected_records: list[CollectedPaperRecord],
-                                topic_words: set[str]) -> list[CollectedPaperRecord]:
+def rank_records_by_topic_words(
+    collected_records: list[CollectedPaperRecord], topic_words: set[str]
+) -> list[CollectedPaperRecord]:
     """Most shared topic words (title and abstract) first; ties keep the provider's order. Known papers cost no
     budget, so their position does not matter."""
     if not topic_words:
         return list(collected_records)
-    return sorted(collected_records, key=lambda record: -len(
-        topic_words & comparable_words(f"{record.title} {record.abstract or ''}")))
+    return sorted(
+        collected_records,
+        key=lambda record: -len(topic_words & comparable_words(f"{record.title} {record.abstract or ''}")),
+    )

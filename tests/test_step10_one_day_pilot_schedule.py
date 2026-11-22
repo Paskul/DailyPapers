@@ -17,15 +17,32 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from paperwatch.config import load_app_config
-from paperwatch.deployment.one_day_pilot import (ALL_PILOT_UNIT_NAMES, COLLECT_SERVICE, COLLECT_TIMER,
-                                                 FINISH_SERVICE, FINISH_TIMER, PILOT_TIMER_NAMES, REPORT_SERVICE,
-                                                 REPORT_TIMER, WORKER_SERVICE, describe_pilot_plan,
-                                                 plan_one_day_pilot, render_pilot_units)
+from paperwatch.deployment.one_day_pilot import (
+    ALL_PILOT_UNIT_NAMES,
+    COLLECT_SERVICE,
+    COLLECT_TIMER,
+    FINISH_SERVICE,
+    FINISH_TIMER,
+    PILOT_TIMER_NAMES,
+    REPORT_SERVICE,
+    REPORT_TIMER,
+    WORKER_SERVICE,
+    describe_pilot_plan,
+    plan_one_day_pilot,
+    render_pilot_units,
+)
 
 NEW_YORK = ZoneInfo("America/New_York")
 INSTALLED_AT = datetime(2026, 11, 20, 14, 20, tzinfo=NEW_YORK)
-RELATIVE_OR_BOOT_TRIGGERS = ("OnBootSec", "OnStartupSec", "OnActiveSec", "OnUnitActiveSec", "OnUnitInactiveSec",
-                             "OnClockChange", "OnTimezoneChange")
+RELATIVE_OR_BOOT_TRIGGERS = (
+    "OnBootSec",
+    "OnStartupSec",
+    "OnActiveSec",
+    "OnUnitActiveSec",
+    "OnUnitInactiveSec",
+    "OnClockChange",
+    "OnTimezoneChange",
+)
 ABSOLUTE_CALENDAR_TIME = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} America/New_York$")
 
 
@@ -59,8 +76,11 @@ def pilot(initialized_home):
 
 def test_the_schedule_covers_one_day_and_ends_with_the_next_morning_report(pilot):
     plan, _units, _texts = pilot
-    assert [moment.strftime("%Y-%m-%d %H:%M") for moment in plan.collect_moments] == \
-        ["2026-11-20 18:30", "2026-11-21 00:30", "2026-11-21 06:30"]  # 12:30 had passed; 12:30 tomorrow is after
+    assert [moment.strftime("%Y-%m-%d %H:%M") for moment in plan.collect_moments] == [
+        "2026-11-20 18:30",
+        "2026-11-21 00:30",
+        "2026-11-21 06:30",
+    ]  # 12:30 had passed; 12:30 tomorrow is after
     assert plan.report_date.isoformat() == "2026-11-21"
     assert plan.report_cutoff == datetime(2026, 11, 21, 7, 0, tzinfo=NEW_YORK)
     assert plan.finish_moment - plan.report_cutoff == timedelta(minutes=100)
@@ -76,8 +96,9 @@ def test_every_timer_fires_at_fixed_instants_only_inside_the_pilot(pilot):
         assert calendar_times, timer_name
         for calendar_time in calendar_times:
             assert ABSOLUTE_CALENDAR_TIME.match(calendar_time), calendar_time  # no '*', '..', '/', or weekday
-            instant = datetime.strptime(calendar_time.removesuffix(" America/New_York"),
-                                        "%Y-%m-%d %H:%M:%S").replace(tzinfo=NEW_YORK)
+            instant = datetime.strptime(calendar_time.removesuffix(" America/New_York"), "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=NEW_YORK
+            )
             assert INSTALLED_AT < instant <= plan.finish_moment
         assert values(timer, "Install", "WantedBy") == ["timers.target"]
     assert len(values(units[REPORT_TIMER], "Timer", "OnCalendar")) == 1
@@ -90,16 +111,23 @@ def test_systemd_itself_computes_no_second_elapse_for_any_timer(pilot):
     _plan, units, _texts = pilot
     for timer_name in PILOT_TIMER_NAMES:
         for calendar_time in values(units[timer_name], "Timer", "OnCalendar"):
-            analysis = subprocess.run(["systemd-analyze", "calendar", "--iterations=5", calendar_time],
-                                      capture_output=True, text=True, timeout=30)
+            analysis = subprocess.run(
+                ["systemd-analyze", "calendar", "--iterations=5", calendar_time],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
             assert f"Normalized form: {calendar_time}" in analysis.stdout, analysis.stdout + analysis.stderr
             assert "Iteration #2" not in analysis.stdout, f"{calendar_time} would elapse more than once"
 
 
 def test_no_service_starts_at_boot_and_every_service_expires(pilot):
     plan, units, _texts = pilot
-    expected_deadline_by_service = {COLLECT_SERVICE: plan.report_cutoff, WORKER_SERVICE: plan.report_cutoff,
-                                    REPORT_SERVICE: plan.report_window_end}
+    expected_deadline_by_service = {
+        COLLECT_SERVICE: plan.report_cutoff,
+        WORKER_SERVICE: plan.report_cutoff,
+        REPORT_SERVICE: plan.report_window_end,
+    }
     for unit_name in ALL_PILOT_UNIT_NAMES:
         if unit_name.endswith(".service"):
             assert "Install" not in units[unit_name], f"{unit_name} must not be enabled for boot"
@@ -147,9 +175,13 @@ def test_paperwatch_runs_only_as_the_service_accounts_and_the_model_side_is_sand
         assert values(service, "Service", "IPAddressDeny") == ["any"]
         assert values(service, "Service", "IPAddressAllow") == ["localhost"]
         assert values(service, "Service", "ReadWritePaths") == [f"{plan.state_dir} {plan.output_dir}"]
-        for hardening_setting, expected_value in (("NoNewPrivileges", "yes"), ("ProtectSystem", "strict"),
-                                                  ("ProtectHome", "yes"), ("PrivateTmp", "yes"),
-                                                  ("CapabilityBoundingSet", "")):
+        for hardening_setting, expected_value in (
+            ("NoNewPrivileges", "yes"),
+            ("ProtectSystem", "strict"),
+            ("ProtectHome", "yes"),
+            ("PrivateTmp", "yes"),
+            ("CapabilityBoundingSet", ""),
+        ):
             assert values(service, "Service", hardening_setting) == [expected_value], hardening_setting
     report_command = values(units[REPORT_SERVICE], "Service", "ExecStart")[0]
     assert report_command.endswith("report --date 2026-11-21") and "--early" not in report_command

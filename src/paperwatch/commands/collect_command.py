@@ -51,29 +51,33 @@ from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
 from paperwatch.collection.source_text import acquire_source_texts
 from paperwatch.comparisons.comparison_queue import queue_comparisons_for_recent_reviews
 from paperwatch.references.reference_fetch import fetch_references_of_reviewed_papers
-from paperwatch.references.reference_selection import (admit_waiting_reference_selections,
-                                                       queue_reference_selection_jobs)
+from paperwatch.references.reference_selection import admit_waiting_reference_selections, queue_reference_selection_jobs
 from paperwatch.references.research_branches import run_requested_research_branches
 from paperwatch.errors import describe_failure_for_operator
 from paperwatch.network.provider_gateway import ProviderGateway
-from paperwatch.research_profile import (build_research_profiles, explain_empty_research_profile,
-                                         load_active_seed_library_paper_ids)
+from paperwatch.research_profile import (
+    build_research_profiles,
+    explain_empty_research_profile,
+    load_active_seed_library_paper_ids,
+)
 from paperwatch.screening.screening_stage import run_screening_and_promotion
 from paperwatch.seeds.seed_store import seed_sources_of_all_topics
 from paperwatch.seeds.seed_sync import synchronize_all_seed_sources
 from paperwatch.sources.fixture_source import RecordedFixtureSource
 
 
-def run_collect_command(app: AppContext, arguments: argparse.Namespace, *,
-                        build_gateway: Callable[[], ProviderGateway] | None = None) -> int:
+def run_collect_command(
+    app: AppContext, arguments: argparse.Namespace, *, build_gateway: Callable[[], ProviderGateway] | None = None
+) -> int:
     """`build_gateway` lets tests inject a gateway with a recorded transport; production uses the collector's.
     One gateway serves the whole run; it (and the credentials file) is created only if a stage needs a provider."""
     shared_gateway: list[ProviderGateway] = []
 
     def build_gateway_once() -> ProviderGateway:
         if not shared_gateway:
-            shared_gateway.append(build_gateway() if build_gateway else
-                                  ProviderGateway.for_collector(app.connection, app.config))
+            shared_gateway.append(
+                build_gateway() if build_gateway else ProviderGateway.for_collector(app.connection, app.config)
+            )
         return shared_gateway[0]
 
     fixture_paths = getattr(arguments, "fixture_paths", None) or []
@@ -88,24 +92,28 @@ def run_collect_command(app: AppContext, arguments: argparse.Namespace, *,
     return exit_code
 
 
-def _run_collect_stages(app: AppContext, build_gateway_once: Callable[[], ProviderGateway], fixture_paths: list,
-                        run_live_searches: bool) -> int:
+def _run_collect_stages(
+    app: AppContext, build_gateway_once: Callable[[], ProviderGateway], fixture_paths: list, run_live_searches: bool
+) -> int:
     """The stages of one run, each recorded in the activity log (the monitor shows which one is running)."""
+
     def stage(step_name: str):
         return recorded_activity(app.connection, step_name)
 
     with stage("seeds"):
         _synchronize_seed_sources(app, build_gateway_once)
     collection_context = CollectionContext.start(
-        app.connection, app.config, build_gateway_once,
-        active_seed_paper_ids=load_active_seed_library_paper_ids(app.connection, app.config))
+        app.connection,
+        app.config,
+        build_gateway_once,
+        active_seed_paper_ids=load_active_seed_library_paper_ids(app.connection, app.config),
+    )
     if fixture_paths:
         with stage("fixtures"):
             _import_recorded_fixtures(collection_context, fixture_paths)
     elif run_live_searches:
         # Keep the day's historical reserve away from the current releases while some plan still has work.
-        collection_context.candidate_budget.historical_reserve_applies = \
-            historical_search_has_work(collection_context)
+        collection_context.candidate_budget.historical_reserve_applies = historical_search_has_work(collection_context)
         with stage("current_releases"):
             _print_lines(collect_current_releases(collection_context))
         with stage("historical_search"):
@@ -119,10 +127,14 @@ def _run_collect_stages(app: AppContext, build_gateway_once: Callable[[], Provid
         print("Papers: live arXiv / OpenAlex searches skipped (--skip-searches)")
     with stage("screening") as screening_activity:
         screening_result = run_screening_and_promotion(
-            app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids,
+            app.connection,
+            app.config,
+            active_seed_paper_ids=collection_context.active_seed_paper_ids,
             moment=collection_context.started_at,
-            hold_new_readings_until=compute_source_text_hold_until(utc_now(),
-                                                                   app.config.collection.source_text_hold_minutes))
+            hold_new_readings_until=compute_source_text_hold_until(
+                utc_now(), app.config.collection.source_text_hold_minutes
+            ),
+        )
         if screening_result.embedder_failure is not None:
             screening_activity.end_as("failed", note=str(screening_result.embedder_failure))
     _print_lines(screening_result.report_lines)
@@ -147,14 +159,17 @@ def _queue_follow_up_work(app: AppContext, collection_context: CollectionContext
     """Plan part 8 queueing that needs no network: reference choices, waiting admissions, comparisons."""
     with write_transaction(app.connection):
         selection_jobs = queue_reference_selection_jobs(
-            app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids)
+            app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids
+        )
         admitted, waiting, _skipped = admit_waiting_reference_selections(
-            app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids,
-            moment=utc_now())
+            app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids, moment=utc_now()
+        )
         comparison_jobs = queue_comparisons_for_recent_reviews(app.connection, app.config, utc_now())
-    return [f"Follow-up: {selection_jobs} reference choice(s) queued for the research role, {admitted} waiting "
-            f"reference reading(s) admitted ({waiting} still waiting for the daily limit), {comparison_jobs} "
-            "comparison(s) queued"]
+    return [
+        f"Follow-up: {selection_jobs} reference choice(s) queued for the research role, {admitted} waiting "
+        f"reference reading(s) admitted ({waiting} still waiting for the daily limit), {comparison_jobs} "
+        "comparison(s) queued"
+    ]
 
 
 def _synchronize_seed_sources(app: AppContext, build_gateway: Callable[[], ProviderGateway]) -> None:
@@ -170,17 +185,22 @@ def _import_recorded_fixtures(collection_context: CollectionContext, fixture_pat
     for fixture_path in fixture_paths:
         paper_source = RecordedFixtureSource(fixture_path)
         page_result = ingest_records_with_checkpoints(
-            collection_context.connection, paper_source.fetch_records(), admission_limit=None,
+            collection_context.connection,
+            paper_source.fetch_records(),
+            admission_limit=None,
             active_seed_paper_ids=collection_context.active_seed_paper_ids,
-            max_attempts_per_job=collection_context.app_config.worker.max_attempts_per_job)
+            max_attempts_per_job=collection_context.app_config.worker.max_attempts_per_job,
+        )
         print(page_result.describe(paper_source.source_name))
 
 
 def _print_research_profile_summary(app: AppContext) -> None:
     profiles = build_research_profiles(app.connection, app.config)
     for profile in profiles:
-        print(f"Topic {profile.topic_id}: {profile.input_mode}; {len(profile.active_seeds)} active seed(s); "
-              f"{len(profile.approved_public_query_ids)} approved public quer(y/ies)")
+        print(
+            f"Topic {profile.topic_id}: {profile.input_mode}; {len(profile.active_seeds)} active seed(s); "
+            f"{len(profile.approved_public_query_ids)} approved public quer(y/ies)"
+        )
         for explanation in profile.explain_missing_inputs():
             print(f"  note: {explanation}")
     empty_profile_explanation = explain_empty_research_profile(profiles)

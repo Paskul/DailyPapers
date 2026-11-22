@@ -22,16 +22,22 @@ from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.page_ingestion import PageIngestionResult, ingest_records_with_checkpoints
 from paperwatch.collection.topic_word_ranking import rank_records_by_topic_words, topic_words_for_category
 from paperwatch.db import write_transaction
-from paperwatch.errors import (PaperwatchError, ProviderUnavailable, SourceAccessDenied, SourceCredentialRequired,
-                               SourceInputError)
+from paperwatch.errors import (
+    PaperwatchError,
+    ProviderUnavailable,
+    SourceAccessDenied,
+    SourceCredentialRequired,
+    SourceInputError,
+)
 from paperwatch.network.provider_requests import PublicationWindow, SearchResultOrder
 from paperwatch.source_checkpoints import SearchCoverageStatus, SourceCheckpoint, save_source_checkpoint
 from paperwatch.sources.discovery_routes import RouteKind, arxiv_category_of_route
 from paperwatch.sources.search_pages import fetch_search_page
 
 STOP_REASON_DAILY_BUDGET = "daily candidate budget reached; resumes when capacity returns (next UTC day)"
-STOP_REASON_FIRST_PAGE_ONLY = ("first page only: later pages need a provider API key (it resumes from this cursor "
-                               "once a key is configured)")
+STOP_REASON_FIRST_PAGE_ONLY = (
+    "first page only: later pages need a provider API key (it resumes from this cursor once a key is configured)"
+)
 MAXIMUM_STORED_STOP_REASON_CHARACTERS = 300
 
 # Query-parameter keys every paged search stores in its checkpoint (approved public values and dates only).
@@ -64,11 +70,17 @@ class SearchRunSummary:
 
     def describe(self) -> str:
         checkpoint = self.final_checkpoint
-        state = f"{checkpoint.coverage_status}" + (f" ({checkpoint.stop_reason})" if checkpoint and
-                                                    checkpoint.stop_reason else "") if checkpoint else "not run"
-        return (f"{self.search_key}: {self.pages_fetched} page(s), {self.ingestion.records_received} record(s), "
-                f"{self.ingestion.new_papers_admitted} new, {self.ingestion.review_jobs_queued} new reading(s) "
-                f"of promoted papers queued; {state}")
+        state = (
+            f"{checkpoint.coverage_status}"
+            + (f" ({checkpoint.stop_reason})" if checkpoint and checkpoint.stop_reason else "")
+            if checkpoint
+            else "not run"
+        )
+        return (
+            f"{self.search_key}: {self.pages_fetched} page(s), {self.ingestion.records_received} record(s), "
+            f"{self.ingestion.new_papers_admitted} new, {self.ingestion.review_jobs_queued} new reading(s) "
+            f"of promoted papers queued; {state}"
+        )
 
 
 def is_search_resumable(checkpoint: SourceCheckpoint) -> bool:
@@ -84,8 +96,11 @@ def stopped_for_a_missing_credential(checkpoint: SourceCheckpoint) -> bool:
 
 def search_parameters(target: SearchTarget, public_value: str) -> dict[str, str]:
     """What a checkpoint records about its search: only approved public values and the window dates."""
-    parameters = {PARAMETER_QUERY_ID: target.query_id, PARAMETER_PROVIDER: target.provider_name,
-                  PARAMETER_PUBLIC_VALUE: public_value}
+    parameters = {
+        PARAMETER_QUERY_ID: target.query_id,
+        PARAMETER_PROVIDER: target.provider_name,
+        PARAMETER_PUBLIC_VALUE: public_value,
+    }
     if target.publication_window is not None:
         parameters[PARAMETER_WINDOW_FIRST_DATE] = target.publication_window.first_date.isoformat()
         parameters[PARAMETER_WINDOW_LAST_DATE] = target.publication_window.last_date.isoformat()
@@ -97,15 +112,22 @@ def search_parameters(target: SearchTarget, public_value: str) -> dict[str, str]
 def window_from_parameters(query_parameters: dict) -> PublicationWindow | None:
     if PARAMETER_WINDOW_FIRST_DATE not in query_parameters:
         return None
-    return PublicationWindow(date.fromisoformat(query_parameters[PARAMETER_WINDOW_FIRST_DATE]),
-                             date.fromisoformat(query_parameters[PARAMETER_WINDOW_LAST_DATE]))
+    return PublicationWindow(
+        date.fromisoformat(query_parameters[PARAMETER_WINDOW_FIRST_DATE]),
+        date.fromisoformat(query_parameters[PARAMETER_WINDOW_LAST_DATE]),
+    )
 
 
-def run_search_pages(context: CollectionContext, checkpoint: SourceCheckpoint, target: SearchTarget, *,
-                     maximum_pages: int, extra_admission_limit: Callable[[], int | None] = lambda: None,
-                     related_checkpoints_after_page: Callable[[PageIngestionResult], list[SourceCheckpoint]]
-                     | None = None, extra_limit_stop_reason: str = "candidate budget of this search reached",
-                     ) -> SearchRunSummary:
+def run_search_pages(
+    context: CollectionContext,
+    checkpoint: SourceCheckpoint,
+    target: SearchTarget,
+    *,
+    maximum_pages: int,
+    extra_admission_limit: Callable[[], int | None] = lambda: None,
+    related_checkpoints_after_page: Callable[[PageIngestionResult], list[SourceCheckpoint]] | None = None,
+    extra_limit_stop_reason: str = "candidate budget of this search reached",
+) -> SearchRunSummary:
     """Fetch up to `maximum_pages` pages. `extra_admission_limit` adds a cap shared with other searches (a topic's
     historical plan and this search's fair share of it), and `extra_limit_stop_reason` explains a stop it causes;
     `related_checkpoints_after_page` returns rows to update in the same transaction (that plan)."""
@@ -113,23 +135,39 @@ def run_search_pages(context: CollectionContext, checkpoint: SourceCheckpoint, t
     while summary.pages_fetched < maximum_pages and is_search_resumable(checkpoint):
         admission_limit = _current_admission_limit(context, checkpoint, target, extra_admission_limit())
         if admission_limit == 0:
-            checkpoint = _save_checkpoint_alone(context, replace(
-                checkpoint, coverage_status=SearchCoverageStatus.CAPPED,
-                stop_reason=STOP_REASON_DAILY_BUDGET if context.candidate_budget.remaining_for_route(
-                    target.discovery_route) == 0 else extra_limit_stop_reason))
+            checkpoint = _save_checkpoint_alone(
+                context,
+                replace(
+                    checkpoint,
+                    coverage_status=SearchCoverageStatus.CAPPED,
+                    stop_reason=STOP_REASON_DAILY_BUDGET
+                    if context.candidate_budget.remaining_for_route(target.discovery_route) == 0
+                    else extra_limit_stop_reason,
+                ),
+            )
             break
         try:
-            parsed_page = fetch_search_page(context.gateway, provider_name=target.provider_name,
-                                            query_id=target.query_id, cursor=checkpoint.cursor,
-                                            publication_window=target.publication_window,
-                                            discovery_route=target.discovery_route,
-                                            result_order=target.result_order)
+            parsed_page = fetch_search_page(
+                context.gateway,
+                provider_name=target.provider_name,
+                query_id=target.query_id,
+                cursor=checkpoint.cursor,
+                publication_window=target.publication_window,
+                discovery_route=target.discovery_route,
+                result_order=target.result_order,
+            )
         except SourceCredentialRequired:
             # Not an outage: this search covered what the provider serves without a key. Recent windows count as
             # complete (last_completed_interval_end), so the next sweep starts a new window.
-            checkpoint = _save_checkpoint_alone(context, replace(
-                checkpoint, coverage_status=SearchCoverageStatus.CAPPED, stop_reason=STOP_REASON_FIRST_PAGE_ONLY,
-                last_completed_interval_end=context.started_at_timestamp))
+            checkpoint = _save_checkpoint_alone(
+                context,
+                replace(
+                    checkpoint,
+                    coverage_status=SearchCoverageStatus.CAPPED,
+                    stop_reason=STOP_REASON_FIRST_PAGE_ONLY,
+                    last_completed_interval_end=context.started_at_timestamp,
+                ),
+            )
             break
         except (ProviderUnavailable, SourceAccessDenied, SourceInputError) as problem:
             checkpoint = mark_search_blocked(context, checkpoint, problem)
@@ -140,25 +178,39 @@ def run_search_pages(context: CollectionContext, checkpoint: SourceCheckpoint, t
 
         def checkpoints_after_this_page(page_result: PageIngestionResult) -> list[SourceCheckpoint]:
             """Runs inside the page's transaction (called synchronously by the ingestion below)."""
-            stop_reason_if_cut_short = STOP_REASON_DAILY_BUDGET if context.candidate_budget.remaining_for_route(
-                target.discovery_route) <= page_result.new_papers_admitted else extra_limit_stop_reason
-            advanced_checkpoint = _advance_checkpoint_after_page(context, checkpoint, parsed_page.next_cursor,
-                                                                 parsed_page.total_results, page_result,
-                                                                 stop_reason_if_cut_short)
+            stop_reason_if_cut_short = (
+                STOP_REASON_DAILY_BUDGET
+                if context.candidate_budget.remaining_for_route(target.discovery_route)
+                <= page_result.new_papers_admitted
+                else extra_limit_stop_reason
+            )
+            advanced_checkpoint = _advance_checkpoint_after_page(
+                context,
+                checkpoint,
+                parsed_page.next_cursor,
+                parsed_page.total_results,
+                page_result,
+                stop_reason_if_cut_short,
+            )
             checkpoints_saved_with_page.append(advanced_checkpoint)
-            return [advanced_checkpoint] + (related_checkpoints_after_page(page_result)
-                                            if related_checkpoints_after_page else [])
+            return [advanced_checkpoint] + (
+                related_checkpoints_after_page(page_result) if related_checkpoints_after_page else []
+            )
 
         page_records = parsed_page.records
         arxiv_category = arxiv_category_of_route(target.discovery_route)
         if arxiv_category is not None:  # a category route admits its best topic matches first (fair-share cap)
-            page_records = rank_records_by_topic_words(page_records, topic_words_for_category(
-                context.app_config.topics, arxiv_category))
+            page_records = rank_records_by_topic_words(
+                page_records, topic_words_for_category(context.app_config.topics, arxiv_category)
+            )
         page_result = ingest_records_with_checkpoints(
-            context.connection, page_records, admission_limit=admission_limit,
+            context.connection,
+            page_records,
+            admission_limit=admission_limit,
             active_seed_paper_ids=context.active_seed_paper_ids,
             max_attempts_per_job=context.app_config.worker.max_attempts_per_job,
-            checkpoints_after_page=checkpoints_after_this_page)
+            checkpoints_after_page=checkpoints_after_this_page,
+        )
         page_result.skipped_malformed_records += sum(parsed_page.skipped_entry_counts.values())
         context.candidate_budget.record_route_admissions(target.discovery_route, page_result.new_papers_admitted)
         summary.ingestion.add(page_result)
@@ -167,34 +219,51 @@ def run_search_pages(context: CollectionContext, checkpoint: SourceCheckpoint, t
     return summary
 
 
-def mark_search_blocked(context: CollectionContext, checkpoint: SourceCheckpoint,
-                        problem: PaperwatchError) -> SourceCheckpoint:
+def mark_search_blocked(
+    context: CollectionContext, checkpoint: SourceCheckpoint, problem: PaperwatchError
+) -> SourceCheckpoint:
     """Temporarily blocked: the cursor is kept, so the same page is retried on a later run."""
-    return _save_checkpoint_alone(context, replace(
-        checkpoint, coverage_status=SearchCoverageStatus.BLOCKED,
-        stop_reason=f"[{problem.failed_component}] {problem}"[:MAXIMUM_STORED_STOP_REASON_CHARACTERS]))
+    return _save_checkpoint_alone(
+        context,
+        replace(
+            checkpoint,
+            coverage_status=SearchCoverageStatus.BLOCKED,
+            stop_reason=f"[{problem.failed_component}] {problem}"[:MAXIMUM_STORED_STOP_REASON_CHARACTERS],
+        ),
+    )
 
 
-def _advance_checkpoint_after_page(context: CollectionContext, page_checkpoint: SourceCheckpoint,
-                                   next_cursor: str | None, total_results: int | None,
-                                   page_result: PageIngestionResult, stop_reason_if_cut_short: str,
-                                   ) -> SourceCheckpoint:
+def _advance_checkpoint_after_page(
+    context: CollectionContext,
+    page_checkpoint: SourceCheckpoint,
+    next_cursor: str | None,
+    total_results: int | None,
+    page_result: PageIngestionResult,
+    stop_reason_if_cut_short: str,
+) -> SourceCheckpoint:
     if page_result.was_stopped_by_admission_limit:
         # Keep THIS page's cursor: the page is fetched again later and its remaining new papers admitted then.
-        return replace(page_checkpoint, candidates_admitted=page_checkpoint.candidates_admitted
-                       + page_result.new_papers_admitted, coverage_status=SearchCoverageStatus.CAPPED,
-                       stop_reason=stop_reason_if_cut_short)
-    advanced_checkpoint = page_checkpoint.after_page(next_cursor=next_cursor,
-                                                     newly_admitted_candidates=page_result.new_papers_admitted)
+        return replace(
+            page_checkpoint,
+            candidates_admitted=page_checkpoint.candidates_admitted + page_result.new_papers_admitted,
+            coverage_status=SearchCoverageStatus.CAPPED,
+            stop_reason=stop_reason_if_cut_short,
+        )
+    advanced_checkpoint = page_checkpoint.after_page(
+        next_cursor=next_cursor, newly_admitted_candidates=page_result.new_papers_admitted
+    )
     if advanced_checkpoint.coverage_status == SearchCoverageStatus.EXHAUSTED:
-        advanced_checkpoint = replace(advanced_checkpoint, last_completed_interval_end=context.started_at_timestamp,
-                                      stop_reason=f"provider returned no further page ({total_results} result(s) "
-                                                  "in total)")
+        advanced_checkpoint = replace(
+            advanced_checkpoint,
+            last_completed_interval_end=context.started_at_timestamp,
+            stop_reason=f"provider returned no further page ({total_results} result(s) in total)",
+        )
     return advanced_checkpoint
 
 
-def _current_admission_limit(context: CollectionContext, checkpoint: SourceCheckpoint, target: SearchTarget,
-                             extra_limit: int | None) -> int:
+def _current_admission_limit(
+    context: CollectionContext, checkpoint: SourceCheckpoint, target: SearchTarget, extra_limit: int | None
+) -> int:
     limits = [context.candidate_budget.remaining_for_route(target.discovery_route)]
     if checkpoint.remaining_candidate_budget is not None:
         limits.append(checkpoint.remaining_candidate_budget)

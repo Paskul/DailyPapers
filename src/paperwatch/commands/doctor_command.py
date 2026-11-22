@@ -31,25 +31,44 @@ from paperwatch.screening.text_embedders import EMBEDDING_BACKEND_HASHING, load_
 
 
 def run_doctor_command(app: AppContext, arguments: argparse.Namespace) -> int:
-    check_results = [*_check_configuration_and_paths(app), *_check_database(app), *_check_screening_embedder(app),
-                     *_check_model_server(app)]
+    check_results = [
+        *_check_configuration_and_paths(app),
+        *_check_database(app),
+        *_check_screening_embedder(app),
+        *_check_model_server(app),
+    ]
     return print_check_results(check_results, "doctor")
 
 
 def _check_configuration_and_paths(app: AppContext) -> list[CheckResult]:
     app_config = app.config
     results = [CheckResult("config", "load", PASS, f"{app_config.home_dir / 'config.toml'} is valid")]
-    results.append(CheckResult("config", "topics", PASS if app_config.topics else WARN,
-                               f"{len(app_config.topics)} topic(s) configured" if app_config.topics else
-                               "no topics configured; add [[topics]] to topics.toml"))
+    results.append(
+        CheckResult(
+            "config",
+            "topics",
+            PASS if app_config.topics else WARN,
+            f"{len(app_config.topics)} topic(s) configured"
+            if app_config.topics
+            else "no topics configured; add [[topics]] to topics.toml",
+        )
+    )
     if app_config.output_dir.resolve() in app_config.state_dir.resolve().parents:
-        results.append(CheckResult("paths", "state location", WARN,
-                                   "state_dir is inside output_dir; keep the database out of synced notes"))
-    for directory_label, directory_path in (("state_dir", app_config.state_dir),
-                                            ("output_dir", app_config.output_dir)):
+        results.append(
+            CheckResult(
+                "paths", "state location", WARN, "state_dir is inside output_dir; keep the database out of synced notes"
+            )
+        )
+    for directory_label, directory_path in (("state_dir", app_config.state_dir), ("output_dir", app_config.output_dir)):
         is_writable = directory_path.is_dir() and os.access(directory_path, os.W_OK)
-        results.append(CheckResult("paths", directory_label, PASS if is_writable else FAIL,
-                                   f"{directory_path} {'is writable' if is_writable else 'is missing or not writable'}"))
+        results.append(
+            CheckResult(
+                "paths",
+                directory_label,
+                PASS if is_writable else FAIL,
+                f"{directory_path} {'is writable' if is_writable else 'is missing or not writable'}",
+            )
+        )
     return results
 
 
@@ -57,8 +76,12 @@ def _check_database(app: AppContext) -> list[CheckResult]:
     journal_mode = app.connection.execute("PRAGMA journal_mode").fetchone()[0]
     schema_version = read_schema_version(app.connection)
     return [
-        CheckResult("database", "schema", PASS if schema_version == CURRENT_SCHEMA_VERSION else FAIL,
-                    f"version {schema_version} (expected {CURRENT_SCHEMA_VERSION})"),
+        CheckResult(
+            "database",
+            "schema",
+            PASS if schema_version == CURRENT_SCHEMA_VERSION else FAIL,
+            f"version {schema_version} (expected {CURRENT_SCHEMA_VERSION})",
+        ),
         CheckResult("database", "journal mode", PASS if journal_mode == "wal" else WARN, journal_mode),
     ]
 
@@ -71,23 +94,41 @@ SCREENING_PROBE_UNRELATED_TEXT = "A survey of medieval grain prices in northern 
 def _check_screening_embedder(app: AppContext) -> list[CheckResult]:
     component = "screening"
     if app.config.screening.embedding_backend == EMBEDDING_BACKEND_HASHING:
-        return [CheckResult(component, "embedding model", WARN, "the offline word-hashing test embedder is "
-                            "configured; set screening.embedding_backend = \"onnx\" for real screening")]
+        return [
+            CheckResult(
+                component,
+                "embedding model",
+                WARN,
+                "the offline word-hashing test embedder is "
+                'configured; set screening.embedding_backend = "onnx" for real screening',
+            )
+        ]
     try:
         loading_started = time.monotonic()
         embedder = load_text_embedder(app.config)
-        probe_vectors = embedder.embed_texts([embedder.prepare_query_text(SCREENING_PROBE_QUESTION),
-                                              SCREENING_PROBE_RELATED_TEXT, SCREENING_PROBE_UNRELATED_TEXT])
+        probe_vectors = embedder.embed_texts(
+            [
+                embedder.prepare_query_text(SCREENING_PROBE_QUESTION),
+                SCREENING_PROBE_RELATED_TEXT,
+                SCREENING_PROBE_UNRELATED_TEXT,
+            ]
+        )
         seconds_taken = time.monotonic() - loading_started
     except PaperwatchError as embedder_failure:
         return [CheckResult(component, "embedding model", FAIL, str(embedder_failure), embedder_failure)]
     related_similarity = float(probe_vectors[0] @ probe_vectors[1])
     unrelated_similarity = float(probe_vectors[0] @ probe_vectors[2])
     ranks_sensibly = related_similarity > unrelated_similarity
-    return [CheckResult(component, "embedding model", PASS if ranks_sensibly else FAIL,
-                        f"{embedder.identity} ({embedder.dimensions} dimensions) verified and loaded in "
-                        f"{seconds_taken:.1f} s; probe cosine related {related_similarity:.2f} vs unrelated "
-                        f"{unrelated_similarity:.2f}")]
+    return [
+        CheckResult(
+            component,
+            "embedding model",
+            PASS if ranks_sensibly else FAIL,
+            f"{embedder.identity} ({embedder.dimensions} dimensions) verified and loaded in "
+            f"{seconds_taken:.1f} s; probe cosine related {related_similarity:.2f} vs unrelated "
+            f"{unrelated_similarity:.2f}",
+        )
+    ]
 
 
 def _check_model_server(app: AppContext) -> list[CheckResult]:
@@ -103,8 +144,9 @@ def _check_model_server(app: AppContext) -> list[CheckResult]:
         for skipped_check_name in ("model alias", "tools and MCP", "context budget", "structured request"):
             results.append(CheckResult(component, skipped_check_name, SKIP, skipped_detail))
         return results
-    results.append(CheckResult(component, "health", PASS,
-                               f"{model_settings.backend} backend at {model_settings.base_url}"))
+    results.append(
+        CheckResult(component, "health", PASS, f"{model_settings.backend} backend at {model_settings.base_url}")
+    )
 
     try:
         server_description = app.model_client.describe_server()
@@ -112,11 +154,16 @@ def _check_model_server(app: AppContext) -> list[CheckResult]:
         results.append(CheckResult(component, "model alias", FAIL, str(describe_failure), describe_failure))
         return results
     alias_is_served = model_settings.model_alias in server_description.served_model_names
-    results.append(CheckResult(
-        component, "model alias", PASS if alias_is_served else FAIL,
-        f"'{model_settings.model_alias}' {'served' if alias_is_served else 'NOT served'} "
-        f"(served: {', '.join(server_description.served_model_names) or 'none'}); model file "
-        f"{server_description.model_file_name}; build {server_description.server_build}"))
+    results.append(
+        CheckResult(
+            component,
+            "model alias",
+            PASS if alias_is_served else FAIL,
+            f"'{model_settings.model_alias}' {'served' if alias_is_served else 'NOT served'} "
+            f"(served: {', '.join(server_description.served_model_names) or 'none'}); model file "
+            f"{server_description.model_file_name}; build {server_description.server_build}",
+        )
+    )
 
     results.append(_check_model_server_exposes_no_tools(server_description))
 
@@ -125,54 +172,103 @@ def _check_model_server(app: AppContext) -> list[CheckResult]:
         results.append(CheckResult(component, "context budget", WARN, "server did not report n_ctx"))
     else:
         context_is_sufficient = context_tokens >= model_settings.required_context_tokens
-        results.append(CheckResult(
-            component, "context budget", PASS if context_is_sufficient else FAIL,
-            f"{context_tokens} tokens per slot across {server_description.parallel_slots} slot(s); "
-            f"required {model_settings.required_context_tokens}"))
+        results.append(
+            CheckResult(
+                component,
+                "context budget",
+                PASS if context_is_sufficient else FAIL,
+                f"{context_tokens} tokens per slot across {server_description.parallel_slots} slot(s); "
+                f"required {model_settings.required_context_tokens}",
+            )
+        )
 
     supported_levels = server_description.supported_reasoning_effort_levels
-    unsupported_role_levels = [f"{role_name}={limits.reasoning_effort}"
-                               for role_name, limits in app.config.role_limits.items()
-                               if limits.reasoning_effort != REASONING_EFFORT_SERVER_DEFAULT
-                               and supported_levels and limits.reasoning_effort not in supported_levels]
-    results.append(CheckResult(
-        component, "reasoning levels", WARN if unsupported_role_levels else PASS,
-        f"unsupported by the chat template ({', '.join(supported_levels)}): {', '.join(unsupported_role_levels)}"
-        if unsupported_role_levels else f"server supports {', '.join(supported_levels) or 'unspecified levels'}"))
+    unsupported_role_levels = [
+        f"{role_name}={limits.reasoning_effort}"
+        for role_name, limits in app.config.role_limits.items()
+        if limits.reasoning_effort != REASONING_EFFORT_SERVER_DEFAULT
+        and supported_levels
+        and limits.reasoning_effort not in supported_levels
+    ]
+    results.append(
+        CheckResult(
+            component,
+            "reasoning levels",
+            WARN if unsupported_role_levels else PASS,
+            f"unsupported by the chat template ({', '.join(supported_levels)}): {', '.join(unsupported_role_levels)}"
+            if unsupported_role_levels
+            else f"server supports {', '.join(supported_levels) or 'unspecified levels'}",
+        )
+    )
 
     try:
-        role_result = run_role_once(role_definition=HEALTHCHECK_ROLE, role_input={}, app_config=app.config,
-                                    model_client=app.model_client, connection=app.connection)
+        role_result = run_role_once(
+            role_definition=HEALTHCHECK_ROLE,
+            role_input={},
+            app_config=app.config,
+            model_client=app.model_client,
+            connection=app.connection,
+        )
     except PaperwatchError as request_failure:
-        results.append(CheckResult(request_failure.failed_component, "structured request", FAIL,
-                                   str(request_failure), request_failure))
+        results.append(
+            CheckResult(
+                request_failure.failed_component, "structured request", FAIL, str(request_failure), request_failure
+            )
+        )
         return results
     model_response = role_result.model_response
-    results.append(CheckResult(
-        component, "structured request", PASS,
-        f"schema-constrained answer validated in {model_response.duration_seconds:.1f} s "
-        f"({model_response.completion_tokens} completion tokens) from {model_response.model_identity}"))
-    results.append(CheckResult(
-        component, "reasoning output", PASS if model_response.reasoning_text else WARN,
-        f"reasoning returned separately ({len(model_response.reasoning_text)} characters) and excluded from "
-        "the parsed answer" if model_response.reasoning_text else
-        "no reasoning text returned; is the server running with --reasoning on?"))
+    results.append(
+        CheckResult(
+            component,
+            "structured request",
+            PASS,
+            f"schema-constrained answer validated in {model_response.duration_seconds:.1f} s "
+            f"({model_response.completion_tokens} completion tokens) from {model_response.model_identity}",
+        )
+    )
+    results.append(
+        CheckResult(
+            component,
+            "reasoning output",
+            PASS if model_response.reasoning_text else WARN,
+            f"reasoning returned separately ({len(model_response.reasoning_text)} characters) and excluded from "
+            "the parsed answer"
+            if model_response.reasoning_text
+            else "no reasoning text returned; is the server running with --reasoning on?",
+        )
+    )
     return results
 
 
 def _check_model_server_exposes_no_tools(server_description: ModelServerDescription) -> CheckResult:
     """The model must have zero tools: no llama-server built-in tools (--tools/--agent) and no MCP proxy."""
-    enabled_features = [label for label, is_enabled in (("built-in tools", server_description.server_tools_enabled),
-                                                         ("MCP proxy", server_description.mcp_proxy_enabled))
-                        if is_enabled]
+    enabled_features = [
+        label
+        for label, is_enabled in (
+            ("built-in tools", server_description.server_tools_enabled),
+            ("MCP proxy", server_description.mcp_proxy_enabled),
+        )
+        if is_enabled
+    ]
     if enabled_features:
-        return CheckResult("model-server", "tools and MCP", FAIL, f"server exposes {', '.join(enabled_features)}",
-                           hint="restart llama-server without --tools, --agent, --mcp-servers-*, or "
-                                "--ui-mcp-proxy; paperwatch requires a model with zero tools")
-    unknown_features = [label for label, is_enabled in (("built-in tools", server_description.server_tools_enabled),
-                                                        ("MCP proxy", server_description.mcp_proxy_enabled))
-                        if is_enabled is None]
+        return CheckResult(
+            "model-server",
+            "tools and MCP",
+            FAIL,
+            f"server exposes {', '.join(enabled_features)}",
+            hint="restart llama-server without --tools, --agent, --mcp-servers-*, or "
+            "--ui-mcp-proxy; paperwatch requires a model with zero tools",
+        )
+    unknown_features = [
+        label
+        for label, is_enabled in (
+            ("built-in tools", server_description.server_tools_enabled),
+            ("MCP proxy", server_description.mcp_proxy_enabled),
+        )
+        if is_enabled is None
+    ]
     if unknown_features:
-        return CheckResult("model-server", "tools and MCP", WARN,
-                           f"server did not report: {', '.join(unknown_features)}")
+        return CheckResult(
+            "model-server", "tools and MCP", WARN, f"server did not report: {', '.join(unknown_features)}"
+        )
     return CheckResult("model-server", "tools and MCP", PASS, "no built-in tools, agent mode, or MCP proxy")

@@ -77,32 +77,56 @@ EVIDENCE_ITEM_SCHEMA: dict[str, Any] = {
     "required": ["review_id", "passage_id", "excerpt"],
     "additionalProperties": False,
 }
-EVIDENCE_LIST_SCHEMA: dict[str, Any] = {"type": "array", "items": EVIDENCE_ITEM_SCHEMA,
-                                        "maxItems": MAXIMUM_EVIDENCE_PER_STATEMENT}
+EVIDENCE_LIST_SCHEMA: dict[str, Any] = {
+    "type": "array",
+    "items": EVIDENCE_ITEM_SCHEMA,
+    "maxItems": MAXIMUM_EVIDENCE_PER_STATEMENT,
+}
 WRITER_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "overview": {"type": "object",
-                     "properties": {"statement": {"type": "string"}, "evidence": EVIDENCE_LIST_SCHEMA},
-                     "required": ["statement", "evidence"], "additionalProperties": False},
-        "connected_findings": {
-            "type": "array", "maxItems": MAXIMUM_CONNECTED_FINDINGS,
-            "items": {"type": "object",
-                      "properties": {"statement": {"type": "string"}, "evidence": EVIDENCE_LIST_SCHEMA,
-                                     "comparison_ids": {"type": "array", "items": {"type": "string"},
-                                                        "maxItems": 2}},
-                      "required": ["statement", "evidence", "comparison_ids"], "additionalProperties": False},
+        "overview": {
+            "type": "object",
+            "properties": {"statement": {"type": "string"}, "evidence": EVIDENCE_LIST_SCHEMA},
+            "required": ["statement", "evidence"],
+            "additionalProperties": False,
         },
-        "read_first": {"type": "object",
-                       "properties": {"review_id": {"type": "string"}, "explanation": {"type": "string"},
-                                      "evidence": EVIDENCE_LIST_SCHEMA},
-                       "required": ["review_id", "explanation", "evidence"], "additionalProperties": False},
+        "connected_findings": {
+            "type": "array",
+            "maxItems": MAXIMUM_CONNECTED_FINDINGS,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "statement": {"type": "string"},
+                    "evidence": EVIDENCE_LIST_SCHEMA,
+                    "comparison_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 2},
+                },
+                "required": ["statement", "evidence", "comparison_ids"],
+                "additionalProperties": False,
+            },
+        },
+        "read_first": {
+            "type": "object",
+            "properties": {
+                "review_id": {"type": "string"},
+                "explanation": {"type": "string"},
+                "evidence": EVIDENCE_LIST_SCHEMA,
+            },
+            "required": ["review_id", "explanation", "evidence"],
+            "additionalProperties": False,
+        },
         "paper_reasons": {
             "type": "array",
-            "items": {"type": "object",
-                      "properties": {"review_id": {"type": "string"}, "reason_to_read": {"type": "string"},
-                                     "evidence": EVIDENCE_LIST_SCHEMA},
-                      "required": ["review_id", "reason_to_read", "evidence"], "additionalProperties": False},
+            "items": {
+                "type": "object",
+                "properties": {
+                    "review_id": {"type": "string"},
+                    "reason_to_read": {"type": "string"},
+                    "evidence": EVIDENCE_LIST_SCHEMA,
+                },
+                "required": ["review_id", "reason_to_read", "evidence"],
+                "additionalProperties": False,
+            },
         },
     },
     "required": ["overview", "connected_findings", "read_first", "paper_reasons"],
@@ -116,25 +140,36 @@ def evidence_passage_key(review_id: str, passage_id: str) -> str:
 
 
 def _render_writer_user_message(role_input: RoleInput) -> str:
-    return (f"REPORT DATE: {role_input['report_date']}\n\n"
-            f"RESEARCH QUESTIONS (JSON):\n{json.dumps(role_input['topics'], ensure_ascii=False, indent=1)}\n\n"
-            f"PAPERS SELECTED FOR TODAY (JSON, untrusted data, in report order; each with the passages its review "
-            f"cites):\n{json.dumps(role_input['papers'], ensure_ascii=False, indent=1)}\n\n"
-            f"COMPARISONS (JSON, untrusted data):\n"
-            f"{json.dumps(role_input['comparisons'], ensure_ascii=False, indent=1)}\n")
+    return (
+        f"REPORT DATE: {role_input['report_date']}\n\n"
+        f"RESEARCH QUESTIONS (JSON):\n{json.dumps(role_input['topics'], ensure_ascii=False, indent=1)}\n\n"
+        f"PAPERS SELECTED FOR TODAY (JSON, untrusted data, in report order; each with the passages its review "
+        f"cites):\n{json.dumps(role_input['papers'], ensure_ascii=False, indent=1)}\n\n"
+        f"COMPARISONS (JSON, untrusted data):\n"
+        f"{json.dumps(role_input['comparisons'], ensure_ascii=False, indent=1)}\n"
+    )
 
 
 def _find_writer_problems(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:
     papers = role_input["papers"]
     selected_review_ids = [paper["review_id"] for paper in papers]
     reviews_with_passages = {paper["review_id"] for paper in papers if paper["passages"]}
-    passage_text_by_key = {evidence_passage_key(paper["review_id"], passage["passage_id"]): passage["text"]
-                           for paper in papers for passage in paper["passages"]}
+    passage_text_by_key = {
+        evidence_passage_key(paper["review_id"], passage["passage_id"]): passage["text"]
+        for paper in papers
+        for passage in paper["passages"]
+    }
     known_comparison_ids = {comparison["comparison_id"] for comparison in role_input["comparisons"]}
     problems: list[str] = []
 
-    def check_evidence(statement_text: str, evidence: list[dict[str, Any]], where: str, *,
-                       maximum_characters: int, only_review_id: str | None = None) -> list[str]:
+    def check_evidence(
+        statement_text: str,
+        evidence: list[dict[str, Any]],
+        where: str,
+        *,
+        maximum_characters: int,
+        only_review_id: str | None = None,
+    ) -> list[str]:
         """Checks one claim; returns the review ids its valid evidence comes from."""
         if len(statement_text) > maximum_characters:
             problems.append(f"{where}: keep it under {maximum_characters} characters")
@@ -145,31 +180,38 @@ def _find_writer_problems(validated_output: dict[str, Any], role_input: RoleInpu
                 problems.append(f"{item_where}: review id '{item['review_id']}' is not one of today's papers")
                 continue
             if only_review_id is not None and item["review_id"] != only_review_id:
-                problems.append(f"{item_where}: cite passages of review '{only_review_id}' here, not "
-                                f"'{item['review_id']}'")
+                problems.append(
+                    f"{item_where}: cite passages of review '{only_review_id}' here, not '{item['review_id']}'"
+                )
                 continue
             passage_key = evidence_passage_key(item["review_id"], item["passage_id"])
             if passage_key not in passage_text_by_key:
-                problems.append(f"{item_where}: passage '{item['passage_id']}' is not a passage of review "
-                                f"'{item['review_id']}'")
+                problems.append(
+                    f"{item_where}: passage '{item['passage_id']}' is not a passage of review '{item['review_id']}'"
+                )
                 continue
-            problems.extend(check_excerpt_matches_passage(item["excerpt"], item["passage_id"],
-                                                          passage_text_by_key[passage_key], item_where))
+            problems.extend(
+                check_excerpt_matches_passage(
+                    item["excerpt"], item["passage_id"], passage_text_by_key[passage_key], item_where
+                )
+            )
             valid_keys.append(passage_key)
             cited_review_ids.append(item["review_id"])
         problems.extend(check_numbers_occur_in_passages(statement_text, valid_keys, passage_text_by_key, where))
         return cited_review_ids
 
     overview = validated_output["overview"]
-    check_evidence(overview["statement"], overview["evidence"], "overview",
-                   maximum_characters=MAXIMUM_OVERVIEW_CHARACTERS)
+    check_evidence(
+        overview["statement"], overview["evidence"], "overview", maximum_characters=MAXIMUM_OVERVIEW_CHARACTERS
+    )
     if reviews_with_passages and not overview["evidence"]:
         problems.append("overview: cite at least one passage of today's papers")
 
     for index, finding in enumerate(validated_output["connected_findings"], start=1):
         where = f"connected_findings[{index}]"
-        check_evidence(finding["statement"], finding["evidence"], where,
-                       maximum_characters=MAXIMUM_STATEMENT_CHARACTERS)
+        check_evidence(
+            finding["statement"], finding["evidence"], where, maximum_characters=MAXIMUM_STATEMENT_CHARACTERS
+        )
         if not finding["evidence"]:
             problems.append(f"{where}: a finding must cite at least one passage of today's papers")
         for comparison_id in finding["comparison_ids"]:
@@ -180,8 +222,13 @@ def _find_writer_problems(validated_output: dict[str, Any], role_input: RoleInpu
     if read_first["review_id"] not in selected_review_ids:
         problems.append(f"read_first: review id '{read_first['review_id']}' is not one of today's papers")
     else:
-        check_evidence(read_first["explanation"], read_first["evidence"], "read_first",
-                       maximum_characters=MAXIMUM_STATEMENT_CHARACTERS, only_review_id=read_first["review_id"])
+        check_evidence(
+            read_first["explanation"],
+            read_first["evidence"],
+            "read_first",
+            maximum_characters=MAXIMUM_STATEMENT_CHARACTERS,
+            only_review_id=read_first["review_id"],
+        )
         if read_first["review_id"] in reviews_with_passages and not read_first["evidence"]:
             problems.append("read_first: cite at least one passage of the paper to read first")
 
@@ -196,8 +243,13 @@ def _find_writer_problems(validated_output: dict[str, Any], role_input: RoleInpu
             problems.append(f"{where}: review '{review_id}' already has a reason; give exactly one per paper")
             continue
         reasons_seen.append(review_id)
-        check_evidence(paper_reason["reason_to_read"], paper_reason["evidence"], where,
-                       maximum_characters=MAXIMUM_STATEMENT_CHARACTERS, only_review_id=review_id)
+        check_evidence(
+            paper_reason["reason_to_read"],
+            paper_reason["evidence"],
+            where,
+            maximum_characters=MAXIMUM_STATEMENT_CHARACTERS,
+            only_review_id=review_id,
+        )
         if review_id in reviews_with_passages and not paper_reason["evidence"]:
             problems.append(f"{where}: cite at least one passage of review '{review_id}'")
     missing_reasons = [review_id for review_id in selected_review_ids if review_id not in reasons_seen]

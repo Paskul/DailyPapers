@@ -32,12 +32,15 @@ def phrase_occurs_in_words(phrase_words: tuple[str, ...], text_words: tuple[str,
     if not phrase_words or len(phrase_words) > len(text_words):
         return False
     phrase_length = len(phrase_words)
-    return any(text_words[start:start + phrase_length] == phrase_words
-               for start in range(len(text_words) - phrase_length + 1)
-               if text_words[start] == phrase_words[0])
+    return any(
+        text_words[start : start + phrase_length] == phrase_words
+        for start in range(len(text_words) - phrase_length + 1)
+        if text_words[start] == phrase_words[0]
+    )
 
 
 def find_matched_phrases(approved_phrases: tuple[str, ...], text_words: tuple[str, ...]) -> tuple[str, ...]:
     """The approved phrases (as written in topics.toml) that occur in the text, in configuration order."""
-    return tuple(phrase for phrase in approved_phrases
-                 if phrase_occurs_in_words(split_into_match_words(phrase), text_words))
+    return tuple(
+        phrase for phrase in approved_phrases if phrase_occurs_in_words(split_into_match_words(phrase), text_words)
+    )

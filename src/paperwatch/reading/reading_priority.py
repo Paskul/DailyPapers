@@ -34,16 +34,31 @@ class RubricDimension:
     meaning_of_0_2_4: str
 
 
-QUESTION_FIT = RubricDimension("question_fit", 40, "Fit to the research question",
-                               "0 unrelated / 2 addresses part of it / 4 studies the question directly")
-METHOD_FIT = RubricDimension("method_fit", 25, "Fit of method or assumptions",
-                             "0 incompatible / 2 useful with changes / 4 directly applicable under stated assumptions")
-EVIDENCE_STRENGTH = RubricDimension("evidence_strength", 20, "Strength of evidence available to this review",
-                                    "0 unsupported / 2 partial support / 4 direct proof or evaluation under stated "
-                                    "conditions")
-RELATIVE_VALUE = RubricDimension("relative_value", 15, "Value relative to nearby saved papers",
-                                 "0 repeats a known point / 2 adds a useful difference / 4 changes a concrete design "
-                                 "choice or supplies a missing comparison")
+QUESTION_FIT = RubricDimension(
+    "question_fit",
+    40,
+    "Fit to the research question",
+    "0 unrelated / 2 addresses part of it / 4 studies the question directly",
+)
+METHOD_FIT = RubricDimension(
+    "method_fit",
+    25,
+    "Fit of method or assumptions",
+    "0 incompatible / 2 useful with changes / 4 directly applicable under stated assumptions",
+)
+EVIDENCE_STRENGTH = RubricDimension(
+    "evidence_strength",
+    20,
+    "Strength of evidence available to this review",
+    "0 unsupported / 2 partial support / 4 direct proof or evaluation under stated conditions",
+)
+RELATIVE_VALUE = RubricDimension(
+    "relative_value",
+    15,
+    "Value relative to nearby saved papers",
+    "0 repeats a known point / 2 adds a useful difference / 4 changes a concrete design "
+    "choice or supplies a missing comparison",
+)
 RUBRIC_DIMENSIONS: tuple[RubricDimension, ...] = (QUESTION_FIT, METHOD_FIT, EVIDENCE_STRENGTH, RELATIVE_VALUE)
 RUBRIC_DIMENSION_BY_NAME = {dimension.dimension_name: dimension for dimension in RUBRIC_DIMENSIONS}
 
@@ -58,27 +73,39 @@ class ScoredTopicAssessment:
     evidence_strength_capped: bool
 
     def to_record(self) -> dict[str, Any]:
-        return {"rubric_version": RUBRIC_VERSION, "reading_priority_score": self.reading_priority_score,
-                "applied_ratings": self.applied_ratings, "proposed_ratings": self.proposed_ratings,
-                "comparison_available": self.comparison_available,
-                "evidence_strength_capped_for_abstract_only": self.evidence_strength_capped}
+        return {
+            "rubric_version": RUBRIC_VERSION,
+            "reading_priority_score": self.reading_priority_score,
+            "applied_ratings": self.applied_ratings,
+            "proposed_ratings": self.proposed_ratings,
+            "comparison_available": self.comparison_available,
+            "evidence_strength_capped_for_abstract_only": self.evidence_strength_capped,
+        }
 
 
-def score_topic_assessment(topic_id: str, proposed_ratings: dict[str, int], *, comparison_available: bool,
-                           is_abstract_only: bool) -> ScoredTopicAssessment:
+def score_topic_assessment(
+    topic_id: str, proposed_ratings: dict[str, int], *, comparison_available: bool, is_abstract_only: bool
+) -> ScoredTopicAssessment:
     """Apply the caps and compute the 0-100 score from the model's proposed ratings."""
     applied_ratings: dict[str, int] = {}
     for dimension in RUBRIC_DIMENSIONS:
         if dimension is RELATIVE_VALUE and not comparison_available:
             continue
-        applied_ratings[dimension.dimension_name] = min(max(proposed_ratings[dimension.dimension_name], 0),
-                                                        MAXIMUM_RATING)
+        applied_ratings[dimension.dimension_name] = min(
+            max(proposed_ratings[dimension.dimension_name], 0), MAXIMUM_RATING
+        )
     evidence_strength_capped = False
     if is_abstract_only and applied_ratings[EVIDENCE_STRENGTH.dimension_name] > ABSTRACT_ONLY_EVIDENCE_STRENGTH_CAP:
         applied_ratings[EVIDENCE_STRENGTH.dimension_name] = ABSTRACT_ONLY_EVIDENCE_STRENGTH_CAP
         evidence_strength_capped = True
-    return ScoredTopicAssessment(topic_id, compute_reading_priority_score(applied_ratings), applied_ratings,
-                                 dict(proposed_ratings), comparison_available, evidence_strength_capped)
+    return ScoredTopicAssessment(
+        topic_id,
+        compute_reading_priority_score(applied_ratings),
+        applied_ratings,
+        dict(proposed_ratings),
+        comparison_available,
+        evidence_strength_capped,
+    )
 
 
 def compute_reading_priority_score(applied_ratings: dict[str, int]) -> int:
@@ -92,8 +119,7 @@ def compute_reading_priority_score(applied_ratings: dict[str, int]) -> int:
 LEGACY_RELEVANCE_SCALE = "rating_0_to_4"  # the provisional step-1 reviewer stored one 0-4 relevance rating
 
 
-def question_fit_from_stored_assessment(score_scale: str, topic_score: float,
-                                        assessment_record: dict[str, Any]) -> int:
+def question_fit_from_stored_assessment(score_scale: str, topic_score: float, assessment_record: dict[str, Any]) -> int:
     """The applied question_fit rating (0-4) of a saved topic assessment. A legacy 0-4 relevance rating counts as
     question fit. Used to decide which reviews address a question (comparison anchors, references, comparisons)."""
     if score_scale == LEGACY_RELEVANCE_SCALE:

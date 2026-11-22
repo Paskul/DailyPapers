@@ -23,13 +23,17 @@ def hash_model_input_text(model_input_text: str) -> str:
     return hashlib.sha256(model_input_text.encode("utf-8")).hexdigest()
 
 
-def embed_texts_with_cache(connection: sqlite3.Connection, embedder: TextEmbedder,
-                           model_input_texts: list[str]) -> np.ndarray:
+def embed_texts_with_cache(
+    connection: sqlite3.Connection, embedder: TextEmbedder, model_input_texts: list[str]
+) -> np.ndarray:
     """One L2-normalized row per text, in input order; only texts missing from the cache reach the model."""
     text_hashes = [hash_model_input_text(model_input_text) for model_input_text in model_input_texts]
     cached_vectors = load_cached_vectors(connection, embedder.identity, set(text_hashes))
-    missing_text_by_hash = {text_hash: model_input_text for text_hash, model_input_text
-                            in zip(text_hashes, model_input_texts) if text_hash not in cached_vectors}
+    missing_text_by_hash = {
+        text_hash: model_input_text
+        for text_hash, model_input_text in zip(text_hashes, model_input_texts)
+        if text_hash not in cached_vectors
+    }
     if missing_text_by_hash:
         missing_hashes = list(missing_text_by_hash)
         new_vectors = embedder.embed_texts([missing_text_by_hash[text_hash] for text_hash in missing_hashes])
@@ -41,17 +45,19 @@ def embed_texts_with_cache(connection: sqlite3.Connection, embedder: TextEmbedde
     return embeddings
 
 
-def load_cached_vectors(connection: sqlite3.Connection, model_identity: str,
-                        text_hashes: set[str]) -> dict[str, np.ndarray]:
+def load_cached_vectors(
+    connection: sqlite3.Connection, model_identity: str, text_hashes: set[str]
+) -> dict[str, np.ndarray]:
     cached_vectors: dict[str, np.ndarray] = {}
     hash_list = sorted(text_hashes)
     for chunk_start in range(0, len(hash_list), SQLITE_MAXIMUM_PARAMETERS_PER_QUERY):
-        hash_chunk = hash_list[chunk_start:chunk_start + SQLITE_MAXIMUM_PARAMETERS_PER_QUERY]
+        hash_chunk = hash_list[chunk_start : chunk_start + SQLITE_MAXIMUM_PARAMETERS_PER_QUERY]
         placeholders = ", ".join("?" * len(hash_chunk))
         for vector_row in connection.execute(
-                f"""SELECT text_sha256, vector_float32 FROM text_embeddings
+            f"""SELECT text_sha256, vector_float32 FROM text_embeddings
                     WHERE embedding_model_identity = ? AND text_sha256 IN ({placeholders})""",
-                (model_identity, *hash_chunk)):
+            (model_identity, *hash_chunk),
+        ):
             cached_vectors[vector_row["text_sha256"]] = np.frombuffer(vector_row["vector_float32"], dtype="<f4")
     return cached_vectors
 
@@ -62,5 +68,8 @@ def store_vectors(connection: sqlite3.Connection, model_identity: str, vectors_b
         connection.executemany(
             """INSERT OR IGNORE INTO text_embeddings (embedding_model_identity, text_sha256, dimensions, vector_float32,
                    created_at) VALUES (?, ?, ?, ?, ?)""",
-            [(model_identity, text_hash, int(vector.shape[0]), vector.astype("<f4").tobytes(), created_at)
-             for text_hash, vector in vectors_by_hash.items()])
+            [
+                (model_identity, text_hash, int(vector.shape[0]), vector.astype("<f4").tobytes(), created_at)
+                for text_hash, vector in vectors_by_hash.items()
+            ],
+        )

@@ -56,39 +56,56 @@ class SlotsAvailable:
     remaining_near_cutoff_slots: int
 
 
-def compute_slots_available(*, active_topic_ids: tuple[str, ...], daily_promotion_limit: int,
-                            near_cutoff_promotions: int, regular_promotions_today: int,
-                            near_cutoff_promotions_today: int,
-                            topic_share_promotions_today_by_topic_id: dict[str, int]) -> SlotsAvailable:
+def compute_slots_available(
+    *,
+    active_topic_ids: tuple[str, ...],
+    daily_promotion_limit: int,
+    near_cutoff_promotions: int,
+    regular_promotions_today: int,
+    near_cutoff_promotions_today: int,
+    topic_share_promotions_today_by_topic_id: dict[str, int],
+) -> SlotsAvailable:
     daily_regular_slots = daily_promotion_limit - near_cutoff_promotions
     remaining_regular_slots = max(0, daily_regular_slots - regular_promotions_today)
     daily_share_per_topic = daily_regular_slots // len(active_topic_ids) if active_topic_ids else 0
     remaining_share_by_topic_id = {
         topic_id: max(0, daily_share_per_topic - topic_share_promotions_today_by_topic_id.get(topic_id, 0))
-        for topic_id in active_topic_ids}
-    return SlotsAvailable(remaining_share_by_topic_id=remaining_share_by_topic_id,
-                          remaining_regular_slots=remaining_regular_slots,
-                          remaining_near_cutoff_slots=max(0, near_cutoff_promotions - near_cutoff_promotions_today))
+        for topic_id in active_topic_ids
+    }
+    return SlotsAvailable(
+        remaining_share_by_topic_id=remaining_share_by_topic_id,
+        remaining_regular_slots=remaining_regular_slots,
+        remaining_near_cutoff_slots=max(0, near_cutoff_promotions - near_cutoff_promotions_today),
+    )
 
 
-def select_papers_for_promotion(candidates: list[PromotionCandidate], slots: SlotsAvailable,
-                                minimum_screening_score: float) -> list[PromotionDecision]:
+def select_papers_for_promotion(
+    candidates: list[PromotionCandidate], slots: SlotsAvailable, minimum_screening_score: float
+) -> list[PromotionDecision]:
     scored_candidates = [candidate for candidate in candidates if candidate.score_by_topic_id]
     decisions: list[PromotionDecision] = []
     selected_paper_ids: set[str] = set()
 
     def select(candidate: PromotionCandidate, reason: PromotionReason, selecting_topic_id: str) -> None:
-        decisions.append(PromotionDecision(candidate.paper_id, reason, selecting_topic_id, candidate.best_topic_id,
-                                           candidate.best_score))
+        decisions.append(
+            PromotionDecision(
+                candidate.paper_id, reason, selecting_topic_id, candidate.best_topic_id, candidate.best_score
+            )
+        )
         selected_paper_ids.add(candidate.paper_id)
 
     # 1. Topic shares, in turns.
     ranked_by_topic = {
-        topic_id: sorted((candidate for candidate in scored_candidates
-                          if candidate.score_by_topic_id.get(topic_id, -1.0) >= minimum_screening_score),
-                         key=lambda candidate, topic_id=topic_id: (-candidate.score_by_topic_id[topic_id],
-                                                                   candidate.paper_id))
-        for topic_id in slots.remaining_share_by_topic_id}
+        topic_id: sorted(
+            (
+                candidate
+                for candidate in scored_candidates
+                if candidate.score_by_topic_id.get(topic_id, -1.0) >= minimum_screening_score
+            ),
+            key=lambda candidate, topic_id=topic_id: (-candidate.score_by_topic_id[topic_id], candidate.paper_id),
+        )
+        for topic_id in slots.remaining_share_by_topic_id
+    }
     share_left = dict(slots.remaining_share_by_topic_id)
     regular_slots_left = slots.remaining_regular_slots
     next_position = {topic_id: 0 for topic_id in ranked_by_topic}
@@ -97,8 +114,10 @@ def select_papers_for_promotion(candidates: list[PromotionCandidate], slots: Slo
         for topic_id, topic_ranking in ranked_by_topic.items():
             if share_left[topic_id] == 0 or regular_slots_left == 0:
                 continue
-            while next_position[topic_id] < len(topic_ranking) and \
-                    topic_ranking[next_position[topic_id]].paper_id in selected_paper_ids:
+            while (
+                next_position[topic_id] < len(topic_ranking)
+                and topic_ranking[next_position[topic_id]].paper_id in selected_paper_ids
+            ):
                 next_position[topic_id] += 1
             if next_position[topic_id] == len(topic_ranking):
                 share_left[topic_id] = 0  # this topic has no qualifying candidate left: its share becomes spare

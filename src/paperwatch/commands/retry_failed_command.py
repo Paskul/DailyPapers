@@ -29,50 +29,70 @@ MAXIMUM_STORED_ERROR_CHARACTERS = 2000
 
 
 def add_retry_failed_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--component", dest="components", action="append", metavar="COMPONENT",
-                        help=f"requeue failed jobs whose last failure came from this component (repeatable; "
-                             f"default: {DEFAULT_COMPONENT})")
-    parser.add_argument("--job", dest="job_ids", action="append", metavar="JOB_ID",
-                        help="requeue this failed job, whatever its component (repeatable)")
+    parser.add_argument(
+        "--component",
+        dest="components",
+        action="append",
+        metavar="COMPONENT",
+        help=f"requeue failed jobs whose last failure came from this component (repeatable; "
+        f"default: {DEFAULT_COMPONENT})",
+    )
+    parser.add_argument(
+        "--job",
+        dest="job_ids",
+        action="append",
+        metavar="JOB_ID",
+        help="requeue this failed job, whatever its component (repeatable)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="list the jobs, change nothing")
 
 
 def run_retry_failed_command(app: AppContext, arguments: argparse.Namespace) -> int:
-    failed_job_rows = select_failed_jobs(app.connection, components=tuple(arguments.components or ()),
-                                         job_ids=tuple(arguments.job_ids or ()))
+    failed_job_rows = select_failed_jobs(
+        app.connection, components=tuple(arguments.components or ()), job_ids=tuple(arguments.job_ids or ())
+    )
     if not failed_job_rows:
         print("no failed job matches; nothing to requeue")
         return 0
     for job_row in failed_job_rows:
-        print(f"{'would requeue' if arguments.dry_run else 'requeue'} {job_row['job_id']} ({job_row['kind']}"
-              f"{', paper ' + job_row['paper_id'] if job_row['paper_id'] else ''}; failed in "
-              f"[{job_row['last_error_component']}] after {job_row['attempts']} attempt(s))")
+        print(
+            f"{'would requeue' if arguments.dry_run else 'requeue'} {job_row['job_id']} ({job_row['kind']}"
+            f"{', paper ' + job_row['paper_id'] if job_row['paper_id'] else ''}; failed in "
+            f"[{job_row['last_error_component']}] after {job_row['attempts']} attempt(s))"
+        )
     if arguments.dry_run:
         print(f"{len(failed_job_rows)} job(s) would be requeued (dry run: nothing changed)")
         return 0
     with write_transaction(app.connection):
         requeued_count = sum(requeue_failed_job(app.connection, job_row) for job_row in failed_job_rows)
-    print(f"{requeued_count} job(s) back in the queue with a fresh set of attempts; saved reading stages are reused. "
-          "The worker picks them up in priority order.")
+    print(
+        f"{requeued_count} job(s) back in the queue with a fresh set of attempts; saved reading stages are reused. "
+        "The worker picks them up in priority order."
+    )
     return 0
 
 
-def select_failed_jobs(connection: sqlite3.Connection, *, components: tuple[str, ...],
-                       job_ids: tuple[str, ...]) -> list[sqlite3.Row]:
+def select_failed_jobs(
+    connection: sqlite3.Connection, *, components: tuple[str, ...], job_ids: tuple[str, ...]
+) -> list[sqlite3.Row]:
     if job_ids:
         placeholders = ", ".join("?" for _job_id in job_ids)
-        job_rows = connection.execute(f"SELECT * FROM jobs WHERE job_id IN ({placeholders}) ORDER BY created_at",
-                                      job_ids).fetchall()
+        job_rows = connection.execute(
+            f"SELECT * FROM jobs WHERE job_id IN ({placeholders}) ORDER BY created_at", job_ids
+        ).fetchall()
         not_failed = sorted(set(job_ids) - {row["job_id"] for row in job_rows if row["status"] == "failed"})
         if not_failed:
-            raise ConfigurationError(f"not a failed job: {', '.join(not_failed)}",
-                                     operator_hint="`paperwatch status` lists failed jobs")
+            raise ConfigurationError(
+                f"not a failed job: {', '.join(not_failed)}", operator_hint="`paperwatch status` lists failed jobs"
+            )
         return job_rows
     selected_components = components or (DEFAULT_COMPONENT,)
     placeholders = ", ".join("?" for _component in selected_components)
     return connection.execute(
         f"""SELECT * FROM jobs WHERE status = 'failed' AND last_error_component IN ({placeholders})
-            ORDER BY created_at, job_id""", selected_components).fetchall()
+            ORDER BY created_at, job_id""",
+        selected_components,
+    ).fetchall()
 
 
 def requeue_failed_job(connection: sqlite3.Connection, job_row: sqlite3.Row) -> bool:
@@ -81,8 +101,13 @@ def requeue_failed_job(connection: sqlite3.Connection, job_row: sqlite3.Row) -> 
     requeue_cursor = connection.execute(
         """UPDATE jobs SET status = 'queued', attempts = 0, due_at = ?, lease_token = NULL, lease_expires_at = NULL,
                last_error = ?, updated_at = ? WHERE job_id = ? AND status = 'failed'""",
-        (utc_now_timestamp(), (REQUEUE_NOTE_PREFIX + previous_error)[:MAXIMUM_STORED_ERROR_CHARACTERS],
-         utc_now_timestamp(), job_row["job_id"]))
+        (
+            utc_now_timestamp(),
+            (REQUEUE_NOTE_PREFIX + previous_error)[:MAXIMUM_STORED_ERROR_CHARACTERS],
+            utc_now_timestamp(),
+            job_row["job_id"],
+        ),
+    )
     if requeue_cursor.rowcount != 1:
         return False
     if job_row["paper_id"] and job_row["kind"] == REVIEW_PAPER_JOB_KIND:

@@ -14,9 +14,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from paperwatch.errors import SourceInputError
-from paperwatch.seeds.seed_items import (MAXIMUM_SEED_ABSTRACT_CHARACTERS, MAXIMUM_SEED_TITLE_CHARACTERS,
-                                         SEED_SOURCE_CSL_JSON, SeedItem, bound_author_names, clean_seed_text,
-                                         find_arxiv_id, find_doi, find_publication_year)
+from paperwatch.seeds.seed_items import (
+    MAXIMUM_SEED_ABSTRACT_CHARACTERS,
+    MAXIMUM_SEED_TITLE_CHARACTERS,
+    SEED_SOURCE_CSL_JSON,
+    SeedItem,
+    bound_author_names,
+    clean_seed_text,
+    find_arxiv_id,
+    find_doi,
+    find_publication_year,
+)
 
 MAXIMUM_CSL_ITEM_ID_CHARACTERS = 180  # keeps "<file key>#<id>" within the catalog's opaque-identifier limit
 MAXIMUM_CSL_ITEMS_PER_FILE = 50_000
@@ -65,8 +73,11 @@ def _convert_csl_item(raw_item: Any, csl_file_key: str) -> tuple[SeedItem | None
     if isinstance(raw_item_id, bool) or not isinstance(raw_item_id, (str, int)):
         return None, SKIP_REASON_NO_ID
     item_id = str(raw_item_id).strip()
-    if not item_id or len(item_id) > MAXIMUM_CSL_ITEM_ID_CHARACTERS or \
-            any(not character.isprintable() for character in item_id):
+    if (
+        not item_id
+        or len(item_id) > MAXIMUM_CSL_ITEM_ID_CHARACTERS
+        or any(not character.isprintable() for character in item_id)
+    ):
         return None, SKIP_REASON_NO_ID
     title = clean_seed_text(raw_item.get("title"), MAXIMUM_SEED_TITLE_CHARACTERS)
     if title is None:
@@ -83,8 +94,13 @@ def _convert_csl_item(raw_item: Any, csl_file_key: str) -> tuple[SeedItem | None
         item_type=str(raw_item.get("type") or "unknown")[:64],
         item_version=None,
         doi=find_doi(raw_item.get("DOI"), raw_item.get("URL"), note_field_text),
-        arxiv_id=find_arxiv_id(raw_item.get("number"), raw_item.get("archive_location"), raw_item.get("URL"),
-                               note_field_text, raw_item.get("DOI")),
+        arxiv_id=find_arxiv_id(
+            raw_item.get("number"),
+            raw_item.get("archive_location"),
+            raw_item.get("URL"),
+            note_field_text,
+            raw_item.get("DOI"),
+        ),
     ), ""
 
 
@@ -95,8 +111,7 @@ def _csl_author_names(raw_names: Any) -> tuple[str, ...]:
     for raw_name in raw_names:
         if not isinstance(raw_name, dict):
             continue
-        name_parts = [clean_seed_text(raw_name.get(part), 200) for part in ("given", "non-dropping-particle",
-                                                                             "family")]
+        name_parts = [clean_seed_text(raw_name.get(part), 200) for part in ("given", "non-dropping-particle", "family")]
         full_name = " ".join(part for part in name_parts if part) or clean_seed_text(raw_name.get("literal"), 200)
         if full_name:
             author_names.append(full_name)

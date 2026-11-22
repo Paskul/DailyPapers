@@ -38,29 +38,38 @@ def midrank_percentiles(raw_values: list[float]) -> list[float]:
     """The mid-rank percentile of each value among all of them, in input order (see the module docstring)."""
     sorted_values = sorted(raw_values)
     pool_size = len(sorted_values)
-    return [(bisect_left(sorted_values, value) + 0.5 * (bisect_right(sorted_values, value)
-                                                        - bisect_left(sorted_values, value))) / pool_size
-            for value in raw_values]
+    return [
+        (
+            bisect_left(sorted_values, value)
+            + 0.5 * (bisect_right(sorted_values, value) - bisect_left(sorted_values, value))
+        )
+        / pool_size
+        for value in raw_values
+    ]
 
 
-def normalize_topic_signals_within_pool(signals_by_paper_id: dict[str, ScreeningSignals]
-                                        ) -> dict[str, ScreeningSignals]:
+def normalize_topic_signals_within_pool(
+    signals_by_paper_id: dict[str, ScreeningSignals],
+) -> dict[str, ScreeningSignals]:
     """One topic: replace each available raw signal by its percentile among the papers that have that signal."""
     normalized = dict(signals_by_paper_id)
     for field_name in SIGNAL_FIELD_NAMES:
-        papers_with_signal = [paper_id for paper_id, signals in signals_by_paper_id.items()
-                              if getattr(signals, field_name) is not None]
+        papers_with_signal = [
+            paper_id for paper_id, signals in signals_by_paper_id.items() if getattr(signals, field_name) is not None
+        ]
         if not papers_with_signal:
             continue
-        percentiles = midrank_percentiles([getattr(signals_by_paper_id[paper_id], field_name)
-                                           for paper_id in papers_with_signal])
+        percentiles = midrank_percentiles(
+            [getattr(signals_by_paper_id[paper_id], field_name) for paper_id in papers_with_signal]
+        )
         for paper_id, percentile in zip(papers_with_signal, percentiles):
             normalized[paper_id] = replace(normalized[paper_id], **{field_name: percentile})
     return normalized
 
 
-def compute_pool_normalized_scores(signals_by_paper_and_topic: dict[str, dict[str, ScreeningSignals]],
-                                   weights: SignalWeights) -> dict[str, dict[str, float]]:
+def compute_pool_normalized_scores(
+    signals_by_paper_and_topic: dict[str, dict[str, ScreeningSignals]], weights: SignalWeights
+) -> dict[str, dict[str, float]]:
     """{paper id: {topic id: normalized screening score}} for every (paper, topic) pair the pool holds."""
     signals_by_topic: dict[str, dict[str, ScreeningSignals]] = {}
     for paper_id, signals_by_topic_id in signals_by_paper_and_topic.items():

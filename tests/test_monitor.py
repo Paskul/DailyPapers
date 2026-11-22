@@ -26,8 +26,12 @@ from paperwatch.errors import ConfigurationError
 from paperwatch.monitor.activity_rows import load_activity_tree
 from paperwatch.monitor.database_access import open_read_only_database
 from paperwatch.monitor.monitor_server import SnapshotProvider, create_monitor_server, validate_listen_address
-from paperwatch.monitor.schedule_state import (ScheduleState, expand_calendar_value, parse_systemctl_show_output,
-                                               read_schedule_state)
+from paperwatch.monitor.schedule_state import (
+    ScheduleState,
+    expand_calendar_value,
+    parse_systemctl_show_output,
+    read_schedule_state,
+)
 from paperwatch.monitor.snapshot import build_monitor_snapshot
 from paperwatch.network.egress_guard import EgressBlocked, build_monitor_policy, temporarily_armed_egress_policy
 
@@ -36,6 +40,7 @@ NO_SCHEDULE = ScheduleState(schedule_source="none", moments=())
 
 class Arguments:
     """The parsed CLI arguments the command functions read."""
+
     def __init__(self, **values):
         self.__dict__.update(values)
 
@@ -81,17 +86,27 @@ def test_collect_work_and_report_record_nested_finished_steps(tmp_path):
 
 
 def test_report_run_records_its_stages(tmp_path):
-    app = build_in_process_app(tmp_path / "home", config_replacements={
-        'timezone = "America/New_York"': 'timezone = "UTC"', 'publish_time = "07:00"': 'publish_time = "23:59"'})
+    app = build_in_process_app(
+        tmp_path / "home",
+        config_replacements={
+            'timezone = "America/New_York"': 'timezone = "UTC"',
+            'publish_time = "07:00"': 'publish_time = "23:59"',
+        },
+    )
     run_one_full_day(app)
     if utc_now().hour == 23 and utc_now().minute >= 58:
         pytest.skip("too close to the test's report cutoff")
     run_report_command(app, Arguments(report_date=None, publish_early=True))
     report_run = app.connection.execute(
-        "SELECT * FROM activity_log WHERE component = 'report' AND step = 'run'").fetchone()
-    stages = [row["step"] for row in app.connection.execute(
-        "SELECT step FROM activity_log WHERE parent_activity_id = ? ORDER BY started_at, rowid",
-        (report_run["activity_id"],))]
+        "SELECT * FROM activity_log WHERE component = 'report' AND step = 'run'"
+    ).fetchone()
+    stages = [
+        row["step"]
+        for row in app.connection.execute(
+            "SELECT step FROM activity_log WHERE parent_activity_id = ? ORDER BY started_at, rowid",
+            (report_run["activity_id"],),
+        )
+    ]
     assert stages == ["freeze", "synthesize", "publish"]
     assert report_run["outcome"] == "ok"
 
@@ -121,7 +136,8 @@ def test_unfinished_steps_of_dead_processes_are_interrupted_and_live_ones_runnin
     app.connection.execute(
         """INSERT INTO activity_log (activity_id, component, step, detail_json, process_id, boot_id, started_at)
            VALUES ('a_dead', 'collect', 'run', '{}', ?, 'an-older-boot', ?)""",
-        (os.getpid(), format_utc_timestamp(utc_now() - timedelta(minutes=5))))
+        (os.getpid(), format_utc_timestamp(utc_now() - timedelta(minutes=5))),
+    )
     tree = load_activity_tree(app.connection, utc_now() - timedelta(hours=1), current_boot_id="this-boot")
     assert tree.steps_by_id["a_dead"].is_interrupted  # same pid, but recorded in another boot
     del live_run
@@ -139,8 +155,13 @@ def _claim_review_job(app):
     job_id = app.connection.execute("SELECT job_id FROM jobs WHERE kind = 'review_paper'").fetchone()[0]
     app.connection.execute(
         "UPDATE jobs SET status = 'running', attempts = 1, lease_token = 't', lease_expires_at = ?, due_at = ? "
-        "WHERE job_id = ?", (format_utc_timestamp(utc_now() + timedelta(minutes=5)),
-                             format_utc_timestamp(utc_now() - timedelta(minutes=1)), job_id))
+        "WHERE job_id = ?",
+        (
+            format_utc_timestamp(utc_now() + timedelta(minutes=5)),
+            format_utc_timestamp(utc_now() - timedelta(minutes=1)),
+            job_id,
+        ),
+    )
     return job_id
 
 
@@ -148,18 +169,27 @@ def test_snapshot_shows_the_exact_current_step_from_the_activity_log(tmp_path):
     app = build_in_process_app(tmp_path / "home")
     job_id = _claim_review_job(app)
     with recorded_activity(app.connection, "run", {"mode": "loop"}, component="work"):
-        with recorded_activity(app.connection, "job", {"job_id": job_id, "kind": "review_paper", "attempt": 1,
-                                                       "max_attempts": 3}):
-            with recorded_activity(app.connection, "reading_stage", {"stage": "section", "position": 2,
-                                                                     "sections_to_read": 5, "section_count": 5}):
-                call_id = start_activity(app.connection, "model_call", {"role": "section_reader", "repair": True,
-                                                                        "job_id": job_id, "timeout_seconds": 1800})
+        with recorded_activity(
+            app.connection, "job", {"job_id": job_id, "kind": "review_paper", "attempt": 1, "max_attempts": 3}
+        ):
+            with recorded_activity(
+                app.connection,
+                "reading_stage",
+                {"stage": "section", "position": 2, "sections_to_read": 5, "section_count": 5},
+            ):
+                call_id = start_activity(
+                    app.connection,
+                    "model_call",
+                    {"role": "section_reader", "repair": True, "job_id": job_id, "timeout_seconds": 1800},
+                )
                 snapshot = snapshot_of(app)
                 finish_activity(app.connection, call_id, "ok")
     worker = snapshot["now"]["worker"]
     assert worker["state"] == "working" and worker["source"] == "activity"
     [job] = worker["jobs"]
-    paper_title = app.connection.execute("SELECT title FROM papers WHERE paper_id = ?", (job["paper_id"],)).fetchone()[0]
+    paper_title = app.connection.execute("SELECT title FROM papers WHERE paper_id = ?", (job["paper_id"],)).fetchone()[
+        0
+    ]
     assert job["title"] == paper_title
     labels = [step["label"] for step in job["steps"]]
     assert labels == ["Reading — attempt 1/3", "Section 2 of 5", "Model call: section_reader (repair)"]
@@ -177,7 +207,8 @@ def test_snapshot_infers_the_current_step_on_a_database_without_the_activity_log
     app.connection.execute(
         """INSERT INTO model_calls (call_id, role_name, prompt_version, job_id, started_at, duration_seconds, outcome)
            VALUES ('c_1', 'section_reader', 'section-reader-v1', ?, ?, 600, 'invalid_output')""",
-        (job_id, format_utc_timestamp(earlier)))
+        (job_id, format_utc_timestamp(earlier)),
+    )
     app.connection.executescript("DROP TABLE activity_log; PRAGMA user_version = 9;")  # as the deployed pilot
     snapshot = snapshot_of(app)
     assert snapshot["meta"]["activity_log"] is False and snapshot["meta"]["schema_version"] == 9
@@ -230,19 +261,30 @@ def test_schedule_reads_the_pilot_and_the_daily_timers(tmp_path):
     pilot_dir.mkdir()
     for name, text in render_pilot_units(plan_one_day_pilot(app.config, now=installed_at, collector_uid=999)).items():
         (pilot_dir / name).write_text(text)
-    pilot = read_schedule_state(window_start=installed_at, window_end=installed_at + timedelta(days=2),
-                                unit_dirs=(pilot_dir,), stamp_dirs=(), query_systemd=False)
+    pilot = read_schedule_state(
+        window_start=installed_at,
+        window_end=installed_at + timedelta(days=2),
+        unit_dirs=(pilot_dir,),
+        stamp_dirs=(),
+        query_systemd=False,
+    )
     assert pilot.schedule_source == "pilot"
     assert [moment.kind for moment in pilot.moments][-2:] == ["report", "pilot_finish"]
     assert {moment.kind for moment in pilot.moments} == {"collect", "report", "pilot_finish"}
 
     daily_dir = tmp_path / "daily-units"
     daily_dir.mkdir()
-    for name, text in render_daily_units(app.config, scope=SCOPE_SYSTEM, paperwatch_executable=Path("/x/paperwatch"),
-                                         collector_uid=999).items():
+    for name, text in render_daily_units(
+        app.config, scope=SCOPE_SYSTEM, paperwatch_executable=Path("/x/paperwatch"), collector_uid=999
+    ).items():
         (daily_dir / name).write_text(text)
-    daily = read_schedule_state(window_start=installed_at, window_end=installed_at + timedelta(days=2),
-                                unit_dirs=(daily_dir,), stamp_dirs=(), query_systemd=False)
+    daily = read_schedule_state(
+        window_start=installed_at,
+        window_end=installed_at + timedelta(days=2),
+        unit_dirs=(daily_dir,),
+        stamp_dirs=(),
+        query_systemd=False,
+    )
     assert daily.schedule_source == "daily"
     collects = [moment for moment in daily.moments if moment.kind == "collect"]
     reports = [moment for moment in daily.moments if moment.kind == "report"]
@@ -252,13 +294,18 @@ def test_schedule_reads_the_pilot_and_the_daily_timers(tmp_path):
 def test_calendar_expressions_and_systemctl_output_are_parsed():
     start = datetime(2026, 11, 20, 12, tzinfo=timezone.utc)
     assert expand_calendar_value("*-*-* 06:30:00 America/New_York", start, start + timedelta(days=1)) == [
-        datetime(2026, 11, 21, 6, 30, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))]
+        datetime(2026, 11, 21, 6, 30, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+    ]
     assert expand_calendar_value("Mon *-*-* 06:30:00", start, start + timedelta(days=7)) == []  # not ours: ignored
     states = parse_systemctl_show_output(
         "Id=paperwatch-worker.service\nLoadState=loaded\nActiveState=active\nSubState=running\nResult=success\n"
         "ExecMainPID=4242\nUnitFileState=enabled\n\nId=paperwatch-collect.service\nLoadState=not-found\n"
-        "ActiveState=inactive\nExecMainPID=0\n", "system")
-    assert states["paperwatch-worker.service"].is_running and states["paperwatch-worker.service"].main_process_id == 4242
+        "ActiveState=inactive\nExecMainPID=0\n",
+        "system",
+    )
+    assert (
+        states["paperwatch-worker.service"].is_running and states["paperwatch-worker.service"].main_process_id == 4242
+    )
     assert not states["paperwatch-collect.service"].is_installed
 
 
@@ -271,8 +318,9 @@ def test_calendar_expressions_and_systemctl_output_are_parsed():
 def running_monitor(tmp_path):
     app = build_in_process_app(tmp_path / "home")
     run_one_full_day(app)
-    provider = SnapshotProvider(load_app_config(app.config.home_dir), default_history_hours=24,
-                                read_schedule=lambda **_window: NO_SCHEDULE)
+    provider = SnapshotProvider(
+        load_app_config(app.config.home_dir), default_history_hours=24, read_schedule=lambda **_window: NO_SCHEDULE
+    )
     server = create_monitor_server(app.config, port=0, snapshot_provider=provider)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -321,6 +369,7 @@ def test_loopback_and_tailscale_addresses_are_accepted(address):
 def test_monitor_policy_connects_nowhere_and_runs_only_systemctl():
     import socket
     import subprocess
+
     with temporarily_armed_egress_policy(build_monitor_policy()):
         with pytest.raises(EgressBlocked):
             socket.create_connection(("127.0.0.1", 8080), timeout=1)

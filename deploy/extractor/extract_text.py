@@ -17,8 +17,23 @@ PDFTOTEXT_PATH = "/usr/bin/pdftotext"
 SNIFF_BYTES = 4096
 UNSUPPORTED_INPUT_EXIT_STATUS = 2
 HEADING_TAGS = frozenset({"head", "title", "article-title"})
-CONTENT_TAGS = HEADING_TAGS | frozenset({"p", "caption", "label", "formula", "disp-formula", "td", "th", "item",
-                                         "list-item", "note", "ref", "mixed-citation", "bibl"})
+CONTENT_TAGS = HEADING_TAGS | frozenset(
+    {
+        "p",
+        "caption",
+        "label",
+        "formula",
+        "disp-formula",
+        "td",
+        "th",
+        "item",
+        "list-item",
+        "note",
+        "ref",
+        "mixed-citation",
+        "bibl",
+    }
+)
 
 
 def main() -> int:

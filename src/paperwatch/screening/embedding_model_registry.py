@@ -54,9 +54,11 @@ PINNED_EMBEDDING_MODELS: dict[str, PinnedEmbeddingModel] = {
         source_repository="https://huggingface.co/BAAI/bge-base-en-v1.5",
         pinned_revision="a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
         onnx_model_file=PinnedModelFile(
-            "model.onnx", "onnx/model.onnx", "9bc579acdba21c253c62a9bf866891355a63ffa3442b52c8a37d75b2ccb91848"),
+            "model.onnx", "onnx/model.onnx", "9bc579acdba21c253c62a9bf866891355a63ffa3442b52c8a37d75b2ccb91848"
+        ),
         tokenizer_file=PinnedModelFile(
-            "tokenizer.json", "tokenizer.json", "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"),
+            "tokenizer.json", "tokenizer.json", "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"
+        ),
         dimensions=768,
         maximum_tokens=512,
         pooling=POOLING_CLS_TOKEN,
@@ -69,8 +71,10 @@ def look_up_pinned_embedding_model(model_name: str) -> PinnedEmbeddingModel:
     try:
         return PINNED_EMBEDDING_MODELS[model_name]
     except KeyError:
-        raise ConfigurationError(f"screening.embedding_model '{model_name}' is not a pinned model",
-                                 operator_hint=f"use one of {sorted(PINNED_EMBEDDING_MODELS)}") from None
+        raise ConfigurationError(
+            f"screening.embedding_model '{model_name}' is not a pinned model",
+            operator_hint=f"use one of {sorted(PINNED_EMBEDDING_MODELS)}",
+        ) from None
 
 
 def print_install_manifest(model_name: str) -> None:
@@ -78,8 +82,9 @@ def print_install_manifest(model_name: str) -> None:
     pinned values live only in this module."""
     pinned_model = look_up_pinned_embedding_model(model_name)
     for pinned_file in pinned_model.pinned_files:
-        download_url = f"{pinned_model.source_repository}/resolve/{pinned_model.pinned_revision}/" \
-                       f"{pinned_file.source_path}"
+        download_url = (
+            f"{pinned_model.source_repository}/resolve/{pinned_model.pinned_revision}/{pinned_file.source_path}"
+        )
         print(f"{pinned_file.file_name} {download_url} {pinned_file.sha256}")
 
 

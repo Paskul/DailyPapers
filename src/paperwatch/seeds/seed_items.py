@@ -44,9 +44,11 @@ CSL_FILE_KEY_HASH_CHARACTERS = 10
 DOI_MENTION_PATTERN = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>]+)")
 ARXIV_MENTION_PATTERN = re.compile(
     r"(?:\barxiv\s*:\s*|arxiv\.org/(?:abs|pdf)/)(?P<arxiv_id>\d{4}\.\d{4,5}(?:v\d+)?|[a-z][a-z.-]*/\d{7}(?:v\d+)?)",
-    re.IGNORECASE)
-IDENTIFIER_LINE_PATTERN = re.compile(r"^\s*(?P<label>doi|arxiv(?: id)?)\s*:\s*(?P<value>\S+)\s*$",
-                                     re.IGNORECASE | re.MULTILINE)
+    re.IGNORECASE,
+)
+IDENTIFIER_LINE_PATTERN = re.compile(
+    r"^\s*(?P<label>doi|arxiv(?: id)?)\s*:\s*(?P<value>\S+)\s*$", re.IGNORECASE | re.MULTILINE
+)
 PUBLICATION_YEAR_PATTERN = re.compile(r"\b(1[5-9]\d\d|20\d\d|21\d\d)\b")
 TRAILING_PUNCTUATION = ".,;)]}"
 
@@ -77,15 +79,28 @@ class SeedItem:
     @property
     def stated_identifiers(self) -> tuple[str, ...]:
         """'scheme:value' strings of the identifiers the library states (stored as seed_items.identifiers_json)."""
-        return tuple(identifier for identifier in (f"{DOI_SCHEME}:{self.doi}" if self.doi else None,
-                                                   f"{ARXIV_SCHEME}:{self.arxiv_id}" if self.arxiv_id else None)
-                     if identifier)
+        return tuple(
+            identifier
+            for identifier in (
+                f"{DOI_SCHEME}:{self.doi}" if self.doi else None,
+                f"{ARXIV_SCHEME}:{self.arxiv_id}" if self.arxiv_id else None,
+            )
+            if identifier
+        )
 
     def compute_metadata_sha256(self) -> str:
         """Fingerprint of the seed text used for matching. A changed fingerprint changes the topic profile hash."""
-        metadata_text = json.dumps({"title": self.title, "abstract": self.abstract or "", "authors": self.authors,
-                                    "year": self.publication_year, "identifiers": self.stated_identifiers},
-                                   ensure_ascii=False, sort_keys=True)
+        metadata_text = json.dumps(
+            {
+                "title": self.title,
+                "abstract": self.abstract or "",
+                "authors": self.authors,
+                "year": self.publication_year,
+                "identifiers": self.stated_identifiers,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
         return hashlib.sha256(metadata_text.encode("utf-8")).hexdigest()
 
     def to_catalog_record(self, discovery_route: str) -> CollectedPaperRecord:
@@ -96,10 +111,17 @@ class SeedItem:
         if self.arxiv_id:
             linked_identifiers.append(RawIdentifier(ARXIV_SCHEME, self.arxiv_id))
         return CollectedPaperRecord(
-            provider=self.seed_source, provider_paper_id=self.seed_item_key, title=self.title, authors=self.authors,
-            abstract=self.abstract, first_published_date=str(self.publication_year) if self.publication_year else None,
-            latest_revision_date=None, source_version=None, discovery_route=discovery_route,
-            linked_identifiers=tuple(linked_identifiers))
+            provider=self.seed_source,
+            provider_paper_id=self.seed_item_key,
+            title=self.title,
+            authors=self.authors,
+            abstract=self.abstract,
+            first_published_date=str(self.publication_year) if self.publication_year else None,
+            latest_revision_date=None,
+            source_version=None,
+            discovery_route=discovery_route,
+            linked_identifiers=tuple(linked_identifiers),
+        )
 
 
 def build_seed_id(seed_source: str, seed_item_key: str) -> str:

@@ -29,15 +29,29 @@ from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
 from paperwatch.config import MAXIMUM_REFERENCES_PER_LOOKUP_REQUEST
 from paperwatch.db import write_transaction
-from paperwatch.errors import (PaperwatchError, ProviderUnavailable, SourceAccessDenied, SourceInputError,
-                               SourceRecordNotFound, SourceRequestBudgetExhausted)
-from paperwatch.references.bibliography_identifiers import (BibliographyIdentifier, find_bibliography_identifiers,
-                                                            provider_title_matches_entry)
+from paperwatch.errors import (
+    PaperwatchError,
+    ProviderUnavailable,
+    SourceAccessDenied,
+    SourceInputError,
+    SourceRecordNotFound,
+    SourceRequestBudgetExhausted,
+)
+from paperwatch.references.bibliography_identifiers import (
+    BibliographyIdentifier,
+    find_bibliography_identifiers,
+    provider_title_matches_entry,
+)
 from paperwatch.references.citation_hops import ReviewedPaperToFollow, find_reviewed_papers_to_follow
 from paperwatch.references.paper_text import bibliography_passages, load_extracted_text_passages
 from paperwatch.research_graph import record_citation_edge, resolve_citation_edges
-from paperwatch.scholarly_identifiers import (ARXIV_DATACITE_DOI_PREFIX, ARXIV_SCHEME, DOI_SCHEME, OPENALEX_SCHEME,
-                                             NormalizedIdentifier)
+from paperwatch.scholarly_identifiers import (
+    ARXIV_DATACITE_DOI_PREFIX,
+    ARXIV_SCHEME,
+    DOI_SCHEME,
+    OPENALEX_SCHEME,
+    NormalizedIdentifier,
+)
 from paperwatch.sources.arxiv_atom import parse_api_search_page
 from paperwatch.sources.discovery_routes import openalex_lookup_route, reference_route
 from paperwatch.sources.openalex_works import ParsedSingleWork, parse_single_work, parse_works_page
@@ -63,11 +77,13 @@ class ReferenceFetchRunCounts:
     stopped_reason: str | None = None
 
     def describe(self, considered_count: int) -> str:
-        description = (f"References: {considered_count} reviewed paper(s) to follow; {self.papers_fetched} fetched "
-                       f"({self.referenced_ids} cited id(s), {self.newly_catalogued_works} work(s) new to the "
-                       f"catalog), {self.papers_without_provider_record} without a provider record, "
-                       f"{self.papers_blocked} blocked; bibliography: {self.bibliography_confirmed} confirmed, "
-                       f"{self.bibliography_unresolved} unresolved")
+        description = (
+            f"References: {considered_count} reviewed paper(s) to follow; {self.papers_fetched} fetched "
+            f"({self.referenced_ids} cited id(s), {self.newly_catalogued_works} work(s) new to the "
+            f"catalog), {self.papers_without_provider_record} without a provider record, "
+            f"{self.papers_blocked} blocked; bibliography: {self.bibliography_confirmed} confirmed, "
+            f"{self.bibliography_unresolved} unresolved"
+        )
         return description + (f"; stopped: {self.stopped_reason}" if self.stopped_reason else "")
 
 
@@ -85,8 +101,9 @@ def fetch_references_of_reviewed_papers(context: CollectionContext) -> list[str]
     reference_settings = context.app_config.references
     if not reference_settings.follow_references:
         return ["References: not followed (references.follow_references = false)"]
-    parents = find_reviewed_papers_to_follow(context.connection, context.app_config,
-                                             reference_settings.reference_fetches_per_run)
+    parents = find_reviewed_papers_to_follow(
+        context.connection, context.app_config, reference_settings.reference_fetches_per_run
+    )
     run_counts = ReferenceFetchRunCounts()
     for parent in parents:
         try:
@@ -100,8 +117,11 @@ def fetch_references_of_reviewed_papers(context: CollectionContext) -> list[str]
             _record_fetch(context.connection, parent, FETCH_STATUS_BLOCKED, error=paper_problem)
             run_counts.papers_blocked += 1
             continue
-        final_status = FETCH_STATUS_FETCHED if outcome.openalex_work_id or outcome.bibliography_found \
+        final_status = (
+            FETCH_STATUS_FETCHED
+            if outcome.openalex_work_id or outcome.bibliography_found
             else FETCH_STATUS_NO_PROVIDER_RECORD
+        )
         _record_fetch(context.connection, parent, final_status, outcome=outcome)
         if final_status == FETCH_STATUS_FETCHED:
             run_counts.papers_fetched += 1
@@ -119,15 +139,19 @@ def fetch_references_of_one_paper(context: CollectionContext, parent: ReviewedPa
     referenced_work_ids: list[str] = []
     newly_catalogued_works = 0
     if openalex_work is not None:
-        referenced_work_ids = list(openalex_work.referenced_work_ids[
-            :context.app_config.references.max_references_fetched_per_paper])
+        referenced_work_ids = list(
+            openalex_work.referenced_work_ids[: context.app_config.references.max_references_fetched_per_paper]
+        )
         with write_transaction(context.connection):
             for work_id in referenced_work_ids:
-                record_citation_edge(context.connection, citing_paper_id=parent.paper_id,
-                                     cited_identifier=NormalizedIdentifier(OPENALEX_SCHEME, work_id),
-                                     provenance=OPENALEX_REFERENCES_PROVENANCE)
+                record_citation_edge(
+                    context.connection,
+                    citing_paper_id=parent.paper_id,
+                    cited_identifier=NormalizedIdentifier(OPENALEX_SCHEME, work_id),
+                    provenance=OPENALEX_REFERENCES_PROVENANCE,
+                )
         for batch_start in range(0, len(referenced_work_ids), MAXIMUM_REFERENCES_PER_LOOKUP_REQUEST):
-            batch = referenced_work_ids[batch_start:batch_start + MAXIMUM_REFERENCES_PER_LOOKUP_REQUEST]
+            batch = referenced_work_ids[batch_start : batch_start + MAXIMUM_REFERENCES_PER_LOOKUP_REQUEST]
             provider_response = context.gateway.get_works([f"{OPENALEX_SCHEME}:{work_id}" for work_id in batch])
             parsed_page = parse_works_page(provider_response.body_bytes, reference_route(parent.paper_id))
             newly_catalogued_works += _catalog_cited_records(context, parsed_page.records)
@@ -136,9 +160,12 @@ def fetch_references_of_one_paper(context: CollectionContext, parent: ReviewedPa
         resolve_citation_edges(context.connection)
     return OneFetchOutcome(
         openalex_work_id=openalex_work.record.provider_paper_id if openalex_work and openalex_work.record else None,
-        referenced_id_count=len(referenced_work_ids), newly_catalogued_works=newly_catalogued_works,
-        bibliography_found=bibliography_counts[0], bibliography_confirmed=bibliography_counts[1],
-        bibliography_unresolved=bibliography_counts[2])
+        referenced_id_count=len(referenced_work_ids),
+        newly_catalogued_works=newly_catalogued_works,
+        bibliography_found=bibliography_counts[0],
+        bibliography_confirmed=bibliography_counts[1],
+        bibliography_unresolved=bibliography_counts[2],
+    )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -151,8 +178,9 @@ def openalex_lookup_identifiers(connection: sqlite3.Connection, paper_id: str) -
     aliases = load_paper_aliases(connection, paper_id)
     lookup_ids = [f"{OPENALEX_SCHEME}:{value}" for scheme, value in aliases if scheme == OPENALEX_SCHEME]
     lookup_ids += [f"{DOI_SCHEME}:{value}" for scheme, value in aliases if scheme == DOI_SCHEME]
-    lookup_ids += [f"{DOI_SCHEME}:{ARXIV_DATACITE_DOI_PREFIX}{value}" for scheme, value in aliases
-                   if scheme == ARXIV_SCHEME]
+    lookup_ids += [
+        f"{DOI_SCHEME}:{ARXIV_DATACITE_DOI_PREFIX}{value}" for scheme, value in aliases if scheme == ARXIV_SCHEME
+    ]
     return list(dict.fromkeys(lookup_ids))
 
 
@@ -163,8 +191,9 @@ def look_up_openalex_work_of_paper(context: CollectionContext, paper_id: str) ->
         except SourceRecordNotFound:
             continue
         parsed_work = parse_single_work(provider_response.body_bytes, openalex_lookup_route(paper_id))
-        if parsed_work.record is not None and _record_belongs_to_paper(context.connection, parsed_work.record,
-                                                                         paper_id):
+        if parsed_work.record is not None and _record_belongs_to_paper(
+            context.connection, parsed_work.record, paper_id
+        ):
             _record_openalex_alias(context.connection, paper_id, parsed_work.record)
             return parsed_work
     return None
@@ -177,13 +206,20 @@ def _record_belongs_to_paper(connection: sqlite3.Connection, record: CollectedPa
         prepared_record = prepare_catalog_record(record)
     except SourceInputError:
         return False
-    owners = {identifier: find_paper_id_by_identifier(connection, identifier)
-              for identifier in prepared_record.work_identifiers}
+    owners = {
+        identifier: find_paper_id_by_identifier(connection, identifier)
+        for identifier in prepared_record.work_identifiers
+    }
     if owners.get(prepared_record.primary_identifier) not in (None, paper_id):
         return False
-    return any(owner == paper_id for identifier, owner in owners.items()
-               if identifier != prepared_record.primary_identifier) or \
-        owners.get(prepared_record.primary_identifier) == paper_id
+    return (
+        any(
+            owner == paper_id
+            for identifier, owner in owners.items()
+            if identifier != prepared_record.primary_identifier
+        )
+        or owners.get(prepared_record.primary_identifier) == paper_id
+    )
 
 
 def _record_openalex_alias(connection: sqlite3.Connection, paper_id: str, record: CollectedPaperRecord) -> None:
@@ -192,16 +228,26 @@ def _record_openalex_alias(connection: sqlite3.Connection, paper_id: str, record
         connection.execute(
             """INSERT OR IGNORE INTO paper_aliases (provider, provider_paper_id, paper_id, asserted_by_route,
                    first_seen_at) VALUES (?, ?, ?, ?, ?)""",
-            (openalex_identifier.scheme, openalex_identifier.value, paper_id, record.discovery_route,
-             utc_now_timestamp()))
+            (
+                openalex_identifier.scheme,
+                openalex_identifier.value,
+                paper_id,
+                record.discovery_route,
+                utc_now_timestamp(),
+            ),
+        )
 
 
 def _catalog_cited_records(context: CollectionContext, records: list[CollectedPaperRecord]) -> int:
     if not records:
         return 0
     page_result = ingest_records_with_checkpoints(
-        context.connection, records, admission_limit=None, active_seed_paper_ids=context.active_seed_paper_ids,
-        max_attempts_per_job=context.app_config.worker.max_attempts_per_job)
+        context.connection,
+        records,
+        admission_limit=None,
+        active_seed_paper_ids=context.active_seed_paper_ids,
+        max_attempts_per_job=context.app_config.worker.max_attempts_per_job,
+    )
     return page_result.new_papers_admitted
 
 
@@ -215,20 +261,31 @@ def confirm_bibliography_identifiers(context: CollectionContext, citing_paper_id
     connection = context.connection
     passages = load_extracted_text_passages(connection, context.app_config, citing_paper_id)
     found_identifiers = find_bibliography_identifiers(bibliography_passages(passages)) if passages else []
-    uncovered_identifiers = [found for found in found_identifiers
-                             if not _is_covered_by_existing_edge(connection, citing_paper_id, found.identifier)]
+    uncovered_identifiers = [
+        found
+        for found in found_identifiers
+        if not _is_covered_by_existing_edge(connection, citing_paper_id, found.identifier)
+    ]
     with write_transaction(connection):
         for found in uncovered_identifiers:
             connection.execute(
                 """INSERT OR IGNORE INTO bibliography_identifiers (citing_paper_id, identifier_scheme,
                        identifier_value, passage_id, entry_excerpt, confirmation_status, recorded_at)
                    VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
-                (citing_paper_id, found.identifier.scheme, found.identifier.value, found.passage_id,
-                 found.stored_excerpt, utc_now_timestamp()))
+                (
+                    citing_paper_id,
+                    found.identifier.scheme,
+                    found.identifier.value,
+                    found.passage_id,
+                    found.stored_excerpt,
+                    utc_now_timestamp(),
+                ),
+            )
     pending_rows = connection.execute(
         """SELECT * FROM bibliography_identifiers WHERE citing_paper_id = ? AND confirmation_status = 'pending'
            ORDER BY recorded_at, identifier_scheme, identifier_value LIMIT ?""",
-        (citing_paper_id, context.app_config.references.bibliography_lookups_per_paper)).fetchall()
+        (citing_paper_id, context.app_config.references.bibliography_lookups_per_paper),
+    ).fetchall()
     confirmed_count = unresolved_count = 0
     for pending_row in pending_rows:
         new_status = _confirm_one_bibliography_identifier(context, citing_paper_id, pending_row)
@@ -237,20 +294,27 @@ def confirm_bibliography_identifiers(context: CollectionContext, citing_paper_id
     return len(found_identifiers), confirmed_count, unresolved_count
 
 
-def _is_covered_by_existing_edge(connection: sqlite3.Connection, citing_paper_id: str,
-                                 identifier: NormalizedIdentifier) -> bool:
+def _is_covered_by_existing_edge(
+    connection: sqlite3.Connection, citing_paper_id: str, identifier: NormalizedIdentifier
+) -> bool:
     """The identifier is the citing paper itself, or already a cited work of an edge from it."""
     owner_paper_id = find_paper_id_by_identifier(connection, identifier)
     if owner_paper_id == citing_paper_id:
         return True
-    return connection.execute(
-        """SELECT 1 FROM citation_edges WHERE citing_paper_id = ?
+    return (
+        connection.execute(
+            """SELECT 1 FROM citation_edges WHERE citing_paper_id = ?
              AND ((cited_scheme = ? AND cited_value = ?) OR (cited_paper_id IS NOT NULL AND cited_paper_id = ?))
-           LIMIT 1""", (citing_paper_id, identifier.scheme, identifier.value, owner_paper_id)).fetchone() is not None
+           LIMIT 1""",
+            (citing_paper_id, identifier.scheme, identifier.value, owner_paper_id),
+        ).fetchone()
+        is not None
+    )
 
 
-def _confirm_one_bibliography_identifier(context: CollectionContext, citing_paper_id: str,
-                                         pending_row: sqlite3.Row) -> str:
+def _confirm_one_bibliography_identifier(
+    context: CollectionContext, citing_paper_id: str, pending_row: sqlite3.Row
+) -> str:
     """Look the identifier up and compare the provider's title with the bibliography entry. Provider-wide problems
     propagate (the row stays pending and is retried on a later run)."""
     identifier = NormalizedIdentifier(pending_row["identifier_scheme"], pending_row["identifier_value"])
@@ -272,15 +336,21 @@ def _confirm_one_bibliography_identifier(context: CollectionContext, citing_pape
         return "mismatch"
     _catalog_cited_records(context, [provider_record])
     with write_transaction(context.connection):
-        record_citation_edge(context.connection, citing_paper_id=citing_paper_id, cited_identifier=identifier,
-                             provenance=BIBLIOGRAPHY_CONFIRMED_PROVENANCE)
-    _settle_bibliography_identifier(context.connection, pending_row, "confirmed",
-                                    find_paper_id_by_identifier(context.connection, identifier))
+        record_citation_edge(
+            context.connection,
+            citing_paper_id=citing_paper_id,
+            cited_identifier=identifier,
+            provenance=BIBLIOGRAPHY_CONFIRMED_PROVENANCE,
+        )
+    _settle_bibliography_identifier(
+        context.connection, pending_row, "confirmed", find_paper_id_by_identifier(context.connection, identifier)
+    )
     return "confirmed"
 
 
-def _parse_single_record(identifier: NormalizedIdentifier, body_bytes: bytes,
-                         citing_paper_id: str) -> CollectedPaperRecord | None:
+def _parse_single_record(
+    identifier: NormalizedIdentifier, body_bytes: bytes, citing_paper_id: str
+) -> CollectedPaperRecord | None:
     route = reference_route(citing_paper_id)
     if identifier.scheme == ARXIV_SCHEME:
         parsed_page = parse_api_search_page(body_bytes, route, start_offset=0)
@@ -288,14 +358,22 @@ def _parse_single_record(identifier: NormalizedIdentifier, body_bytes: bytes,
     return parse_single_work(body_bytes, route).record
 
 
-def _settle_bibliography_identifier(connection: sqlite3.Connection, pending_row: sqlite3.Row, new_status: str,
-                                    confirmed_paper_id: str | None) -> None:
+def _settle_bibliography_identifier(
+    connection: sqlite3.Connection, pending_row: sqlite3.Row, new_status: str, confirmed_paper_id: str | None
+) -> None:
     with write_transaction(connection):
         connection.execute(
             """UPDATE bibliography_identifiers SET confirmation_status = ?, confirmed_paper_id = ?, checked_at = ?
                WHERE citing_paper_id = ? AND identifier_scheme = ? AND identifier_value = ?""",
-            (new_status, confirmed_paper_id, utc_now_timestamp(), pending_row["citing_paper_id"],
-             pending_row["identifier_scheme"], pending_row["identifier_value"]))
+            (
+                new_status,
+                confirmed_paper_id,
+                utc_now_timestamp(),
+                pending_row["citing_paper_id"],
+                pending_row["identifier_scheme"],
+                pending_row["identifier_value"],
+            ),
+        )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -303,12 +381,20 @@ def _settle_bibliography_identifier(connection: sqlite3.Connection, pending_row:
 # --------------------------------------------------------------------------------------------------------------------
 
 
-def _record_fetch(connection: sqlite3.Connection, parent: ReviewedPaperToFollow, fetch_status: str, *,
-                  outcome: OneFetchOutcome | None = None, error: PaperwatchError | None = None) -> None:
+def _record_fetch(
+    connection: sqlite3.Connection,
+    parent: ReviewedPaperToFollow,
+    fetch_status: str,
+    *,
+    outcome: OneFetchOutcome | None = None,
+    error: PaperwatchError | None = None,
+) -> None:
     now_timestamp = utc_now_timestamp()
     catalogued_count = connection.execute(
         "SELECT COUNT(DISTINCT cited_paper_id) FROM citation_edges WHERE citing_paper_id = ? "
-        "AND cited_paper_id IS NOT NULL", (parent.paper_id,)).fetchone()[0]
+        "AND cited_paper_id IS NOT NULL",
+        (parent.paper_id,),
+    ).fetchone()[0]
     with write_transaction(connection):
         connection.execute(
             """INSERT INTO reference_fetches (citing_paper_id, parent_review_id, citation_hop_depth, fetch_status,
@@ -323,8 +409,17 @@ def _record_fetch(connection: sqlite3.Connection, parent: ReviewedPaperToFollow,
                    bibliography_identifier_count = excluded.bibliography_identifier_count,
                    attempts = attempts + 1, last_error = excluded.last_error,
                    fetched_at = COALESCE(excluded.fetched_at, fetched_at), updated_at = excluded.updated_at""",
-            (parent.paper_id, parent.review_id, parent.citation_hop_depth, fetch_status,
-             outcome.openalex_work_id if outcome else None, outcome.referenced_id_count if outcome else 0,
-             catalogued_count, outcome.bibliography_found if outcome else 0,
-             f"[{error.failed_component}] {error}"[:MAXIMUM_STORED_ERROR_CHARACTERS] if error else None,
-             now_timestamp if fetch_status != FETCH_STATUS_BLOCKED else None, now_timestamp))
+            (
+                parent.paper_id,
+                parent.review_id,
+                parent.citation_hop_depth,
+                fetch_status,
+                outcome.openalex_work_id if outcome else None,
+                outcome.referenced_id_count if outcome else 0,
+                catalogued_count,
+                outcome.bibliography_found if outcome else 0,
+                f"[{error.failed_component}] {error}"[:MAXIMUM_STORED_ERROR_CHARACTERS] if error else None,
+                now_timestamp if fetch_status != FETCH_STATUS_BLOCKED else None,
+                now_timestamp,
+            ),
+        )

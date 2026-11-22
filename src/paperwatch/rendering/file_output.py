@@ -21,8 +21,9 @@ def write_bytes_atomically(destination_path: Path, file_bytes: bytes, *, file_mo
     """`file_mode` (e.g. 0o640) is applied before the rename; by default the file keeps mkstemp's private 0600."""
     try:
         destination_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_fd, temporary_path = tempfile.mkstemp(dir=destination_path.parent,
-                                                        prefix=f".{destination_path.name}.", suffix=".tmp")
+        temporary_fd, temporary_path = tempfile.mkstemp(
+            dir=destination_path.parent, prefix=f".{destination_path.name}.", suffix=".tmp"
+        )
         try:
             with os.fdopen(temporary_fd, "wb") as temporary_file:
                 temporary_file.write(file_bytes)

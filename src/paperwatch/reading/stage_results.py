@@ -40,13 +40,18 @@ class SavedStageResult:
     prompt_version: str  # the version that produced it (may be a reusable earlier one)
 
 
-def load_saved_stage_result(connection: sqlite3.Connection, stage_identity: ReadingStageIdentity, stage_key: str,
-                            prompt_version: str) -> SavedStageResult | None:
+def load_saved_stage_result(
+    connection: sqlite3.Connection, stage_identity: ReadingStageIdentity, stage_key: str, prompt_version: str
+) -> SavedStageResult | None:
     return next(iter(load_saved_stage_results(connection, stage_identity, stage_key, (prompt_version,))), None)
 
 
-def load_saved_stage_results(connection: sqlite3.Connection, stage_identity: ReadingStageIdentity, stage_key: str,
-                             prompt_versions: tuple[str, ...]) -> list[SavedStageResult]:
+def load_saved_stage_results(
+    connection: sqlite3.Connection,
+    stage_identity: ReadingStageIdentity,
+    stage_key: str,
+    prompt_versions: tuple[str, ...],
+) -> list[SavedStageResult]:
     """Saved results of this stage made by any of `prompt_versions`, in the order the versions are given (the
     current version first)."""
     saved_results = []
@@ -55,25 +60,52 @@ def load_saved_stage_results(connection: sqlite3.Connection, stage_identity: Rea
             """SELECT result_json, model_identity, server_build FROM review_stage_results
                WHERE paper_id = ? AND review_input_key = ? AND reading_plan_sha256 = ? AND stage_key = ?
                  AND prompt_version = ?""",
-            (stage_identity.paper_id, stage_identity.review_input_key, stage_identity.reading_plan_sha256, stage_key,
-             prompt_version)).fetchone()
+            (
+                stage_identity.paper_id,
+                stage_identity.review_input_key,
+                stage_identity.reading_plan_sha256,
+                stage_key,
+                prompt_version,
+            ),
+        ).fetchone()
         if stage_row is not None:
-            saved_results.append(SavedStageResult(json.loads(stage_row["result_json"]), stage_row["model_identity"],
-                                                  stage_row["server_build"], prompt_version))
+            saved_results.append(
+                SavedStageResult(
+                    json.loads(stage_row["result_json"]),
+                    stage_row["model_identity"],
+                    stage_row["server_build"],
+                    prompt_version,
+                )
+            )
     return saved_results
 
 
-def save_stage_result(connection: sqlite3.Connection, stage_identity: ReadingStageIdentity, stage_key: str,
-                      role_result: RoleRunResult, job_id: str | None) -> None:
+def save_stage_result(
+    connection: sqlite3.Connection,
+    stage_identity: ReadingStageIdentity,
+    stage_key: str,
+    role_result: RoleRunResult,
+    job_id: str | None,
+) -> None:
     with write_transaction(connection):
         connection.execute(
             """INSERT OR IGNORE INTO review_stage_results (paper_id, review_input_key, reading_plan_sha256, stage_key,
                    prompt_version, role_name, result_json, model_identity, server_build, job_id, completed_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (stage_identity.paper_id, stage_identity.review_input_key, stage_identity.reading_plan_sha256, stage_key,
-             role_result.prompt_version, role_result.role_name,
-             json.dumps(role_result.validated_output, ensure_ascii=False), role_result.model_response.model_identity,
-             role_result.model_response.server_build, job_id, utc_now_timestamp()))
+            (
+                stage_identity.paper_id,
+                stage_identity.review_input_key,
+                stage_identity.reading_plan_sha256,
+                stage_key,
+                role_result.prompt_version,
+                role_result.role_name,
+                json.dumps(role_result.validated_output, ensure_ascii=False),
+                role_result.model_response.model_identity,
+                role_result.model_response.server_build,
+                job_id,
+                utc_now_timestamp(),
+            ),
+        )
 
 
 def count_saved_stages_of_unfinished_readings(connection: sqlite3.Connection) -> int:
@@ -81,4 +113,5 @@ def count_saved_stages_of_unfinished_readings(connection: sqlite3.Connection) ->
     return connection.execute(
         """SELECT COUNT(*) FROM review_stage_results AS stage
            WHERE NOT EXISTS (SELECT 1 FROM reviews AS review WHERE review.paper_id = stage.paper_id
-                             AND review.review_input_key = stage.review_input_key)""").fetchone()[0]
+                             AND review.review_input_key = stage.review_input_key)"""
+    ).fetchone()[0]

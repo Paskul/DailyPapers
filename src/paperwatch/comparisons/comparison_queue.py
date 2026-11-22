@@ -57,13 +57,23 @@ class ComparisonJobInput:
     shared_dimensions: tuple[str, ...]
 
     def to_payload(self) -> dict[str, Any]:
-        return {"topic_id": self.topic_id, "question_sha256": self.question_sha256, "review_id_a": self.review_id_a,
-                "review_id_b": self.review_id_b, "shared_dimensions": list(self.shared_dimensions)}
+        return {
+            "topic_id": self.topic_id,
+            "question_sha256": self.question_sha256,
+            "review_id_a": self.review_id_a,
+            "review_id_b": self.review_id_b,
+            "shared_dimensions": list(self.shared_dimensions),
+        }
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> ComparisonJobInput:
-        return cls(payload["topic_id"], payload["question_sha256"], payload["review_id_a"], payload["review_id_b"],
-                   tuple(payload.get("shared_dimensions", [])))
+        return cls(
+            payload["topic_id"],
+            payload["question_sha256"],
+            payload["review_id_a"],
+            payload["review_id_b"],
+            tuple(payload.get("shared_dimensions", [])),
+        )
 
     @property
     def comparison_key(self) -> str:
@@ -72,44 +82,59 @@ class ComparisonJobInput:
 
 def count_comparison_jobs_created_today(connection: sqlite3.Connection, moment: datetime) -> int:
     day_start = format_utc_timestamp(moment.replace(hour=0, minute=0, second=0, microsecond=0))
-    return connection.execute("SELECT COUNT(*) FROM jobs WHERE kind = ? AND created_at >= ?",
-                              (COMPARE_REVIEWS_JOB_KIND, day_start)).fetchone()[0]
+    return connection.execute(
+        "SELECT COUNT(*) FROM jobs WHERE kind = ? AND created_at >= ?", (COMPARE_REVIEWS_JOB_KIND, day_start)
+    ).fetchone()[0]
 
 
 def review_has_comparison_job(connection: sqlite3.Connection, review_id: str) -> bool:
-    return connection.execute(
-        """SELECT 1 FROM jobs WHERE kind = ? AND (json_extract(input_json, '$.review_id_a') = ?
+    return (
+        connection.execute(
+            """SELECT 1 FROM jobs WHERE kind = ? AND (json_extract(input_json, '$.review_id_a') = ?
                                                  OR json_extract(input_json, '$.review_id_b') = ?) LIMIT 1""",
-        (COMPARE_REVIEWS_JOB_KIND, review_id, review_id)).fetchone() is not None
+            (COMPARE_REVIEWS_JOB_KIND, review_id, review_id),
+        ).fetchone()
+        is not None
+    )
 
 
-def queue_comparison_for_review(connection: sqlite3.Connection, app_config: AppConfig, review_id: str,
-                                moment: datetime) -> str | None:
+def queue_comparison_for_review(
+    connection: sqlite3.Connection, app_config: AppConfig, review_id: str, moment: datetime
+) -> str | None:
     """Queue the review's comparison with its closest comparable neighbour, if the daily limit allows. Call inside a
     write transaction. Returns the new job's comparison key, or None if nothing was queued."""
     if count_comparison_jobs_created_today(connection, moment) >= app_config.comparisons.daily_comparison_jobs:
         return None
     if review_has_comparison_job(connection, review_id):
         return None
-    review_row = connection.execute("SELECT review_id, paper_id, review_json FROM reviews WHERE review_id = ?",
-                                    (review_id,)).fetchone()
+    review_row = connection.execute(
+        "SELECT review_id, paper_id, review_json FROM reviews WHERE review_id = ?", (review_id,)
+    ).fetchone()
     if review_row is None or load_latest_review_id_of_paper(connection, review_row["paper_id"]) != review_id:
         return None
     topic_by_id = {topic.topic_id: topic for topic in app_config.topics}
     addressed_assessments = sorted(
-        (assessment for assessment in load_latest_topic_assessments(connection, review_id)
-         if assessment.question_fit >= MINIMUM_QUESTION_FIT_FOR_COMPARISON and assessment.topic_id in topic_by_id),
-        key=lambda assessment: (-assessment.priority_score_out_of_100, assessment.topic_id))
+        (
+            assessment
+            for assessment in load_latest_topic_assessments(connection, review_id)
+            if assessment.question_fit >= MINIMUM_QUESTION_FIT_FOR_COMPARISON and assessment.topic_id in topic_by_id
+        ),
+        key=lambda assessment: (-assessment.priority_score_out_of_100, assessment.topic_id),
+    )
     if not addressed_assessments:
         return None
     review_content = json.loads(review_row["review_json"])
     vector_lookup = CachedVectorLookup(connection, configured_embedder_identity(app_config))
     edition_row = select_edition_to_read(connection, review_row["paper_id"])
-    paper_vector = vector_lookup.vector_for_document(edition_row["title"], edition_row["abstract"]) \
-        if edition_row is not None else None
+    paper_vector = (
+        vector_lookup.vector_for_document(edition_row["title"], edition_row["abstract"])
+        if edition_row is not None
+        else None
+    )
     for assessment in addressed_assessments:
-        for neighbour_row in rank_comparable_reviews(connection, vector_lookup, paper_vector, review_row["paper_id"],
-                                                     assessment.topic_id):
+        for neighbour_row in rank_comparable_reviews(
+            connection, vector_lookup, paper_vector, review_row["paper_id"], assessment.topic_id
+        ):
             shared_dimensions = shared_evidence_dimensions(review_content, json.loads(neighbour_row["review_json"]))
             if len(shared_dimensions) < app_config.comparisons.minimum_shared_evidence_dimensions:
                 continue
@@ -117,29 +142,41 @@ def queue_comparison_for_review(connection: sqlite3.Connection, app_config: AppC
             job_input = ComparisonJobInput(
                 topic_id=assessment.topic_id,
                 question_sha256=compute_question_sha256(topic_by_id[assessment.topic_id].question_for_local_model),
-                review_id_a=lower_review_id, review_id_b=higher_review_id,
-                shared_dimensions=tuple(shared_dimensions))
+                review_id_a=lower_review_id,
+                review_id_b=higher_review_id,
+                shared_dimensions=tuple(shared_dimensions),
+            )
             was_added = enqueue_job_if_absent(
-                connection, job_key=build_compare_reviews_job_key(job_input.comparison_key),
-                kind=COMPARE_REVIEWS_JOB_KIND, paper_id=None, input_version=job_input.comparison_key,
+                connection,
+                job_key=build_compare_reviews_job_key(job_input.comparison_key),
+                kind=COMPARE_REVIEWS_JOB_KIND,
+                paper_id=None,
+                input_version=job_input.comparison_key,
                 input_payload=job_input.to_payload(),
                 dispatch_order=dispatch_order_for_comparison(len(shared_dimensions)),
-                max_attempts=app_config.worker.max_attempts_per_job)
+                max_attempts=app_config.worker.max_attempts_per_job,
+            )
             return job_input.comparison_key if was_added else None  # the closest comparable neighbour only
     return None
 
 
-def queue_comparisons_for_recent_reviews(connection: sqlite3.Connection, app_config: AppConfig,
-                                         moment: datetime) -> int:
+def queue_comparisons_for_recent_reviews(
+    connection: sqlite3.Connection, app_config: AppConfig, moment: datetime
+) -> int:
     """`collect`'s sweep: reviews completed in the last comparisons.sweep_reviews_completed_within_days that are in no
     comparison job yet, newest first, until today's limit is used. Call inside a write transaction."""
     since = format_utc_timestamp(moment - timedelta(days=app_config.comparisons.sweep_reviews_completed_within_days))
-    review_ids = [row["review_id"] for row in connection.execute(
-        """SELECT review.review_id FROM reviews AS review WHERE review.completed_at >= ?
+    review_ids = [
+        row["review_id"]
+        for row in connection.execute(
+            """SELECT review.review_id FROM reviews AS review WHERE review.completed_at >= ?
              AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.kind = ?
                              AND (json_extract(jobs.input_json, '$.review_id_a') = review.review_id
                                   OR json_extract(jobs.input_json, '$.review_id_b') = review.review_id))
-           ORDER BY review.completed_at DESC, review.review_id""", (since, COMPARE_REVIEWS_JOB_KIND))]
+           ORDER BY review.completed_at DESC, review.review_id""",
+            (since, COMPARE_REVIEWS_JOB_KIND),
+        )
+    ]
     queued_count = 0
     for review_id in review_ids:
         if count_comparison_jobs_created_today(connection, moment) >= app_config.comparisons.daily_comparison_jobs:

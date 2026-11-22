@@ -45,34 +45,45 @@ class ExtractedText:
     duration_seconds: float
 
 
-def build_extractor_container_command(extractor_settings: ExtractorSettings, input_file_path: Path,
-                                      container_name: str) -> list[str]:
+def build_extractor_container_command(
+    extractor_settings: ExtractorSettings, input_file_path: Path, container_name: str
+) -> list[str]:
     """The complete, fixed `podman run` command. Nothing in it comes from paper text."""
     if "," in str(input_file_path) or "=" in str(input_file_path):
         raise ExtractionError(f"cache path {input_file_path} contains ',' or '=', which a bind mount cannot express")
     memory_limit = f"{extractor_settings.memory_megabytes}m"
     return [
-        extractor_settings.container_runtime, "run", "--rm", f"--name={container_name}",
-        "--pull=never",                       # preinstalled image only; no downloads at run time
-        "--network=none",                     # no network at all
-        "--read-only",                        # read-only root filesystem
-        "--cap-drop=all", "--security-opt=no-new-privileges",
-        "--no-hosts", "--hostname=extractor",
-        f"--memory={memory_limit}", f"--memory-swap={memory_limit}",
-        f"--pids-limit={CONTAINER_PROCESS_LIMIT}", f"--cpus={extractor_settings.cpu_limit}",
+        extractor_settings.container_runtime,
+        "run",
+        "--rm",
+        f"--name={container_name}",
+        "--pull=never",  # preinstalled image only; no downloads at run time
+        "--network=none",  # no network at all
+        "--read-only",  # read-only root filesystem
+        "--cap-drop=all",
+        "--security-opt=no-new-privileges",
+        "--no-hosts",
+        "--hostname=extractor",
+        f"--memory={memory_limit}",
+        f"--memory-swap={memory_limit}",
+        f"--pids-limit={CONTAINER_PROCESS_LIMIT}",
+        f"--cpus={extractor_settings.cpu_limit}",
         f"--tmpfs=/tmp:rw,size={extractor_settings.temporary_space_megabytes}m,mode=1777,nosuid,nodev,noexec",
         f"--timeout={math.ceil(extractor_settings.timeout_seconds)}",  # runtime-side kill as a second guard
         f"--mount=type=bind,source={input_file_path},target={CONTAINER_INPUT_PATH},readonly",
-        extractor_settings.image,             # the image's fixed entrypoint reads /input/source
+        extractor_settings.image,  # the image's fixed entrypoint reads /input/source
     ]
 
 
-def extract_text_in_sandbox(source_cache_dir: Path, source_file_path: Path,
-                            extractor_settings: ExtractorSettings) -> ExtractedText:
+def extract_text_in_sandbox(
+    source_cache_dir: Path, source_file_path: Path, extractor_settings: ExtractorSettings
+) -> ExtractedText:
     if not extractor_settings.image:
-        raise ExtractionError("the text extractor image is not configured",
-                              operator_hint="run deploy/build_extractor_image.sh and set extractor.image in "
-                                            "config.toml to the image id it prints")
+        raise ExtractionError(
+            "the text extractor image is not configured",
+            operator_hint="run deploy/build_extractor_image.sh and set extractor.image in "
+            "config.toml to the image id it prints",
+        )
     input_file_path = require_cached_source_file(source_cache_dir, source_file_path)
     input_bytes = input_file_path.stat().st_size
     if input_bytes > extractor_settings.max_input_megabytes * BYTES_PER_MEGABYTE:
@@ -82,37 +93,53 @@ def extract_text_in_sandbox(source_cache_dir: Path, source_file_path: Path,
     command = build_extractor_container_command(extractor_settings, input_file_path, container_name)
     started_monotonic = time.monotonic()
     try:
-        extractor_process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                             stderr=subprocess.PIPE, env=_runtime_environment(), close_fds=True)
+        extractor_process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=_runtime_environment(),
+            close_fds=True,
+        )
     except OSError as launch_error:
-        raise ExtractionError(f"cannot start the container runtime '{extractor_settings.container_runtime}': "
-                              f"{launch_error}", operator_hint="install podman (rootless) for this account") from None
+        raise ExtractionError(
+            f"cannot start the container runtime '{extractor_settings.container_runtime}': {launch_error}",
+            operator_hint="install podman (rootless) for this account",
+        ) from None
 
-    stdout_reader = BoundedStreamReader(extractor_process.stdout,
-                                        extractor_settings.max_output_megabytes * BYTES_PER_MEGABYTE,
-                                        on_overflow=extractor_process.kill)
+    stdout_reader = BoundedStreamReader(
+        extractor_process.stdout,
+        extractor_settings.max_output_megabytes * BYTES_PER_MEGABYTE,
+        on_overflow=extractor_process.kill,
+    )
     stderr_reader = BoundedStreamReader(extractor_process.stderr, MAXIMUM_STDERR_BYTES, on_overflow=None)
     try:
         extractor_process.wait(timeout=extractor_settings.timeout_seconds)
     except subprocess.TimeoutExpired:
         _stop_container(extractor_process, extractor_settings.container_runtime, container_name)
-        raise ExtractionTimedOut(f"extractor exceeded its {extractor_settings.timeout_seconds:g} s limit; "
-                                 "the container was stopped") from None
+        raise ExtractionTimedOut(
+            f"extractor exceeded its {extractor_settings.timeout_seconds:g} s limit; the container was stopped"
+        ) from None
     finally:
         stdout_reader.join()
         stderr_reader.join()
 
     if stdout_reader.overflowed:
         _stop_container(extractor_process, extractor_settings.container_runtime, container_name)
-        raise ExtractionError(f"extractor output exceeds extractor.max_output_megabytes "
-                              f"({extractor_settings.max_output_megabytes} MB)")
+        raise ExtractionError(
+            f"extractor output exceeds extractor.max_output_megabytes ({extractor_settings.max_output_megabytes} MB)"
+        )
     if extractor_process.returncode != 0:
         error_text = stderr_reader.collected_bytes.decode("utf-8", errors="replace").strip()
-        raise ExtractionError(f"extractor exited with status {extractor_process.returncode}: "
-                              f"{' '.join(error_text.split())[:300] or 'no error output'}")
-    return ExtractedText(text=stdout_reader.collected_bytes.decode("utf-8", errors="replace"),
-                         extractor_image=extractor_settings.image,
-                         duration_seconds=time.monotonic() - started_monotonic)
+        raise ExtractionError(
+            f"extractor exited with status {extractor_process.returncode}: "
+            f"{' '.join(error_text.split())[:300] or 'no error output'}"
+        )
+    return ExtractedText(
+        text=stdout_reader.collected_bytes.decode("utf-8", errors="replace"),
+        extractor_image=extractor_settings.image,
+        duration_seconds=time.monotonic() - started_monotonic,
+    )
 
 
 class BoundedStreamReader:
@@ -153,9 +180,15 @@ def _stop_container(extractor_process: subprocess.Popen, container_runtime: str,
     extractor_process.kill()
     extractor_process.wait()
     try:
-        subprocess.run([container_runtime, "rm", "--force", container_name], stdin=subprocess.DEVNULL,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_runtime_environment(),
-                       timeout=CONTAINER_REMOVAL_TIMEOUT_SECONDS, check=False)
+        subprocess.run(
+            [container_runtime, "rm", "--force", container_name],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=_runtime_environment(),
+            timeout=CONTAINER_REMOVAL_TIMEOUT_SECONDS,
+            check=False,
+        )
     except (OSError, subprocess.TimeoutExpired):
         pass  # --rm and --timeout inside the runtime remain as the fallback
 

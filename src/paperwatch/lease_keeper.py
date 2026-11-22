@@ -27,15 +27,22 @@ LOGGER = logging.getLogger(__name__)
 class JobLeaseKeeper:
     """Context manager: `with JobLeaseKeeper(...): run_the_slow_part()` renews the lease until the block exits."""
 
-    def __init__(self, database_path: Path, claimed_job: ClaimedJob, *, lease_duration_seconds: float,
-                 renewal_interval_seconds: float) -> None:
+    def __init__(
+        self,
+        database_path: Path,
+        claimed_job: ClaimedJob,
+        *,
+        lease_duration_seconds: float,
+        renewal_interval_seconds: float,
+    ) -> None:
         self._database_path = database_path
         self._claimed_job = claimed_job
         self._lease_duration_seconds = lease_duration_seconds
         self._renewal_interval_seconds = renewal_interval_seconds
         self._stop_requested = threading.Event()
-        self._renewal_thread = threading.Thread(target=self._renew_until_stopped, daemon=True,
-                                                name=f"lease-keeper-{claimed_job.job_id}")
+        self._renewal_thread = threading.Thread(
+            target=self._renew_until_stopped, daemon=True, name=f"lease-keeper-{claimed_job.job_id}"
+        )
         self.lease_was_lost = False
         self.successful_renewal_count = 0
 
@@ -43,8 +50,12 @@ class JobLeaseKeeper:
         self._renewal_thread.start()
         return self
 
-    def __exit__(self, exception_type: type[BaseException] | None, exception: BaseException | None,
-                 traceback: TracebackType | None) -> None:
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self._stop_requested.set()
         self._renewal_thread.join()
 
@@ -54,11 +65,17 @@ class JobLeaseKeeper:
             while not self._stop_requested.wait(self._renewal_interval_seconds):
                 try:
                     renewal_connection = renewal_connection or connect_database(self._database_path)
-                    if not renew_job_lease(renewal_connection, self._claimed_job.job_id,
-                                           self._claimed_job.lease_token, self._lease_duration_seconds):
+                    if not renew_job_lease(
+                        renewal_connection,
+                        self._claimed_job.job_id,
+                        self._claimed_job.lease_token,
+                        self._lease_duration_seconds,
+                    ):
                         self.lease_was_lost = True
-                        LOGGER.warning("lease on %s was reclaimed by another worker; its result will be discarded",
-                                       self._claimed_job.job_id)
+                        LOGGER.warning(
+                            "lease on %s was reclaimed by another worker; its result will be discarded",
+                            self._claimed_job.job_id,
+                        )
                         return
                     self.successful_renewal_count += 1
                 except (sqlite3.Error, PaperwatchError) as renewal_error:  # e.g. busy database: try next interval

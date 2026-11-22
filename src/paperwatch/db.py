@@ -28,8 +28,9 @@ CURRENT_SCHEMA_VERSION = len(SCHEMA_MIGRATIONS)
 def connect_database(database_path: Path) -> sqlite3.Connection:
     """Open a connection with WAL mode, foreign keys, and a busy timeout. Does not create or migrate tables."""
     try:
-        connection = sqlite3.connect(database_path, timeout=BUSY_TIMEOUT_MILLISECONDS / 1000,
-                                     isolation_level=None)  # autocommit; explicit BEGIN where needed
+        connection = sqlite3.connect(
+            database_path, timeout=BUSY_TIMEOUT_MILLISECONDS / 1000, isolation_level=None
+        )  # autocommit; explicit BEGIN where needed
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA foreign_keys = ON")
@@ -48,8 +49,10 @@ def apply_pending_migrations(connection: sqlite3.Connection) -> tuple[int, int]:
     """Apply every migration the database has not seen yet. Returns (version_before, version_after)."""
     version_before = read_schema_version(connection)
     if version_before > CURRENT_SCHEMA_VERSION:
-        raise DatabaseError(f"database schema version {version_before} is newer than this code "
-                            f"(supports {CURRENT_SCHEMA_VERSION}); upgrade paperwatch")
+        raise DatabaseError(
+            f"database schema version {version_before} is newer than this code "
+            f"(supports {CURRENT_SCHEMA_VERSION}); upgrade paperwatch"
+        )
     for migration_index in range(version_before, CURRENT_SCHEMA_VERSION):
         migration = SCHEMA_MIGRATIONS[migration_index]
         # DDL, Python backfill and the version bump commit together. executescript() commits any open transaction
@@ -64,8 +67,9 @@ def apply_pending_migrations(connection: sqlite3.Connection) -> tuple[int, int]:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
             if isinstance(migration_error, sqlite3.Error):
-                raise DatabaseError(f"migration {migration_index + 1} ({migration.description}) failed: "
-                                    f"{migration_error}") from migration_error
+                raise DatabaseError(
+                    f"migration {migration_index + 1} ({migration.description}) failed: {migration_error}"
+                ) from migration_error
             raise
     return version_before, CURRENT_SCHEMA_VERSION
 
@@ -78,8 +82,10 @@ def open_initialized_database(database_path: Path) -> sqlite3.Connection:
     schema_version = read_schema_version(connection)
     if schema_version != CURRENT_SCHEMA_VERSION:
         connection.close()
-        raise DatabaseError(f"database schema version is {schema_version}, this code expects "
-                            f"{CURRENT_SCHEMA_VERSION}", operator_hint="run `paperwatch init` to migrate")
+        raise DatabaseError(
+            f"database schema version is {schema_version}, this code expects {CURRENT_SCHEMA_VERSION}",
+            operator_hint="run `paperwatch init` to migrate",
+        )
     return connection
 
 

@@ -27,18 +27,23 @@ MAXIMUM_KEPT_QUOTED_CHARACTERS = 60
 CHATTY_HTTP_LOGGER_NAMES = ("httpx", "httpcore", "urllib3")
 
 SECRET_QUERY_PARAMETER_PATTERN = re.compile(
-    r"(?i)\b(api[_-]?key|key|access[_-]?token|token|signature|sig|x-amz-[a-z-]+|x-goog-[a-z-]+)=([^&\s'\"<>]+)")
-SECRET_HEADER_PATTERN = re.compile(r"(?i)\b(authorization|zotero-api-key|x-api-key)(['\"]?\s*[:=]\s*['\"]?)"
-                                   r"(bearer\s+)?([^\s'\",}]+)")
-QUOTED_FRAGMENT_PATTERN = re.compile(r"'([^'\n]{%d,})'|\"([^\"\n]{%d,})\"" % (MAXIMUM_KEPT_QUOTED_CHARACTERS + 1,
-                                                                            MAXIMUM_KEPT_QUOTED_CHARACTERS + 1))
+    r"(?i)\b(api[_-]?key|key|access[_-]?token|token|signature|sig|x-amz-[a-z-]+|x-goog-[a-z-]+)=([^&\s'\"<>]+)"
+)
+SECRET_HEADER_PATTERN = re.compile(
+    r"(?i)\b(authorization|zotero-api-key|x-api-key)(['\"]?\s*[:=]\s*['\"]?)"
+    r"(bearer\s+)?([^\s'\",}]+)"
+)
+QUOTED_FRAGMENT_PATTERN = re.compile(
+    r"'([^'\n]{%d,})'|\"([^\"\n]{%d,})\"" % (MAXIMUM_KEPT_QUOTED_CHARACTERS + 1, MAXIMUM_KEPT_QUOTED_CHARACTERS + 1)
+)
 
 
 def redact_service_log_text(text: str) -> str:
     """The form of `text` that may be written to a service log."""
     redacted_text = SECRET_QUERY_PARAMETER_PATTERN.sub(lambda match: f"{match.group(1)}={REDACTED_VALUE_TEXT}", text)
     redacted_text = SECRET_HEADER_PATTERN.sub(
-        lambda match: f"{match.group(1)}{match.group(2)}{match.group(3) or ''}{REDACTED_VALUE_TEXT}", redacted_text)
+        lambda match: f"{match.group(1)}{match.group(2)}{match.group(3) or ''}{REDACTED_VALUE_TEXT}", redacted_text
+    )
     redacted_text = QUOTED_FRAGMENT_PATTERN.sub(OMITTED_TEXT_MARKER, redacted_text)
     if len(redacted_text) > MAXIMUM_SERVICE_LOG_LINE_CHARACTERS:
         redacted_text = redacted_text[:MAXIMUM_SERVICE_LOG_LINE_CHARACTERS] + " … (full text in the database)"

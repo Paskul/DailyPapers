@@ -23,13 +23,19 @@ class ComparisonSummary:
         return f"../comparisons/{self.comparison_id}.md"
 
     def to_writer_input(self) -> dict:
-        return {"comparison_id": self.comparison_id, "topic_id": self.topic_id, "review_ids": list(self.review_ids),
-                "conditions_comparability": self.conditions_comparability,
-                "reader_conclusion": self.reader_conclusion, "insufficient_evidence": self.insufficient_evidence}
+        return {
+            "comparison_id": self.comparison_id,
+            "topic_id": self.topic_id,
+            "review_ids": list(self.review_ids),
+            "conditions_comparability": self.conditions_comparability,
+            "reader_conclusion": self.reader_conclusion,
+            "insufficient_evidence": self.insufficient_evidence,
+        }
 
 
-def load_comparison_summaries(connection: sqlite3.Connection, comparison_ids: tuple[str, ...]
-                              ) -> list[ComparisonSummary]:
+def load_comparison_summaries(
+    connection: sqlite3.Connection, comparison_ids: tuple[str, ...]
+) -> list[ComparisonSummary]:
     summaries = []
     for comparison_id in comparison_ids:
         comparison_row = connection.execute(
@@ -39,15 +45,21 @@ def load_comparison_summaries(connection: sqlite3.Connection, comparison_ids: tu
                JOIN papers AS lower_paper ON lower_paper.paper_id = lower_review.paper_id
                JOIN reviews AS higher_review ON higher_review.review_id = comparison.higher_review_id
                JOIN papers AS higher_paper ON higher_paper.paper_id = higher_review.paper_id
-               WHERE comparison.comparison_id = ?""", (comparison_id,)).fetchone()
+               WHERE comparison.comparison_id = ?""",
+            (comparison_id,),
+        ).fetchone()
         if comparison_row is None:
             continue
         content = json.loads(comparison_row["comparison_json"])
-        summaries.append(ComparisonSummary(
-            comparison_id=comparison_id, topic_id=comparison_row["topic_id"],
-            review_ids=(comparison_row["lower_review_id"], comparison_row["higher_review_id"]),
-            paper_titles=(comparison_row["lower_title"], comparison_row["higher_title"]),
-            conditions_comparability=content.get("conditions_comparability", "unknown"),
-            reader_conclusion=content.get("reader_conclusion", {}).get("statement", ""),
-            insufficient_evidence=bool(content.get("insufficient_evidence"))))
+        summaries.append(
+            ComparisonSummary(
+                comparison_id=comparison_id,
+                topic_id=comparison_row["topic_id"],
+                review_ids=(comparison_row["lower_review_id"], comparison_row["higher_review_id"]),
+                paper_titles=(comparison_row["lower_title"], comparison_row["higher_title"]),
+                conditions_comparability=content.get("conditions_comparability", "unknown"),
+                reader_conclusion=content.get("reader_conclusion", {}).get("statement", ""),
+                insufficient_evidence=bool(content.get("insufficient_evidence")),
+            )
+        )
     return summaries

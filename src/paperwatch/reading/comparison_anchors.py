@@ -47,9 +47,13 @@ class TopicAnchors:
         return bool(self.seed_anchors or self.review_anchors)
 
     def as_model_input(self) -> dict[str, Any]:
-        return {"topic_id": self.topic_id, "question": self.question,
-                "comparison_available": self.comparison_available,
-                "seed_anchors": self.seed_anchors, "review_anchors": self.review_anchors}
+        return {
+            "topic_id": self.topic_id,
+            "question": self.question,
+            "comparison_available": self.comparison_available,
+            "seed_anchors": self.seed_anchors,
+            "review_anchors": self.review_anchors,
+        }
 
 
 def assessable_topic_profiles(profiles: tuple[TopicResearchProfile, ...]) -> tuple[TopicResearchProfile, ...]:
@@ -57,20 +61,39 @@ def assessable_topic_profiles(profiles: tuple[TopicResearchProfile, ...]) -> tup
     return tuple(profile for profile in profiles if profile.input_mode != TopicInputMode.EMPTY)
 
 
-def build_topic_anchors(connection: sqlite3.Connection, app_config: AppConfig, *, paper_id: str,
-                        paper_title: str, paper_abstract: str | None,
-                        profiles: tuple[TopicResearchProfile, ...]) -> list[TopicAnchors]:
+def build_topic_anchors(
+    connection: sqlite3.Connection,
+    app_config: AppConfig,
+    *,
+    paper_id: str,
+    paper_title: str,
+    paper_abstract: str | None,
+    profiles: tuple[TopicResearchProfile, ...],
+) -> list[TopicAnchors]:
     vector_lookup = CachedVectorLookup(connection, configured_embedder_identity(app_config))
     paper_vector = vector_lookup.vector_for_document(paper_title, paper_abstract)
     reading_settings = app_config.reading
-    return [TopicAnchors(
-        topic_id=profile.topic_id, question=profile.topic.question_for_local_model,
-        seed_anchors=[_seed_anchor(seed, reading_settings.anchor_abstract_characters) for seed in
-                      _closest_seeds(connection, vector_lookup, paper_vector, paper_id, profile,
-                                     reading_settings.closest_seeds_per_topic)],
-        review_anchors=_comparable_review_anchors(connection, vector_lookup, paper_vector, paper_id,
-                                                  profile.topic_id, reading_settings.comparison_reviews_per_topic))
-        for profile in profiles]
+    return [
+        TopicAnchors(
+            topic_id=profile.topic_id,
+            question=profile.topic.question_for_local_model,
+            seed_anchors=[
+                _seed_anchor(seed, reading_settings.anchor_abstract_characters)
+                for seed in _closest_seeds(
+                    connection, vector_lookup, paper_vector, paper_id, profile, reading_settings.closest_seeds_per_topic
+                )
+            ],
+            review_anchors=_comparable_review_anchors(
+                connection,
+                vector_lookup,
+                paper_vector,
+                paper_id,
+                profile.topic_id,
+                reading_settings.comparison_reviews_per_topic,
+            ),
+        )
+        for profile in profiles
+    ]
 
 
 class CachedVectorLookup:
@@ -84,50 +107,75 @@ class CachedVectorLookup:
         return self.vectors_for_documents([(title, abstract)])[0]
 
     def vectors_for_documents(self, documents: list[tuple[str, str | None]]) -> list[np.ndarray | None]:
-        text_hashes = [hash_model_input_text(build_screening_document_text(title, abstract))
-                       for title, abstract in documents]
+        text_hashes = [
+            hash_model_input_text(build_screening_document_text(title, abstract)) for title, abstract in documents
+        ]
         cached_vectors = load_cached_vectors(self._connection, self._embedder_identity, set(text_hashes))
         return [cached_vectors.get(text_hash) for text_hash in text_hashes]
 
 
-def _closest_seeds(connection: sqlite3.Connection, vector_lookup: CachedVectorLookup,
-                   paper_vector: np.ndarray | None, paper_id: str, profile: TopicResearchProfile,
-                   seed_limit: int) -> list[StoredSeed]:
+def _closest_seeds(
+    connection: sqlite3.Connection,
+    vector_lookup: CachedVectorLookup,
+    paper_vector: np.ndarray | None,
+    paper_id: str,
+    profile: TopicResearchProfile,
+    seed_limit: int,
+) -> list[StoredSeed]:
     seed_by_id = {seed.seed_id: seed for seed in profile.active_seeds}
     if not seed_by_id:
         return []
     score_row = connection.execute(
         "SELECT closest_seed_ids_json FROM candidate_topic_scores WHERE paper_id = ? AND topic_id = ?",
-        (paper_id, profile.topic_id)).fetchone()
+        (paper_id, profile.topic_id),
+    ).fetchone()
     if score_row is not None:
-        screened_closest = [seed_by_id[seed_id] for seed_id in json.loads(score_row["closest_seed_ids_json"])
-                            if seed_id in seed_by_id]
+        screened_closest = [
+            seed_by_id[seed_id] for seed_id in json.loads(score_row["closest_seed_ids_json"]) if seed_id in seed_by_id
+        ]
         if screened_closest:
             return screened_closest[:seed_limit]
     if paper_vector is None:
         return []
     seeds = list(seed_by_id.values())
     seed_vectors = vector_lookup.vectors_for_documents([(seed.title, seed.abstract) for seed in seeds])
-    scored_seeds = [(float(paper_vector @ seed_vector), seed.seed_id, seed)
-                    for seed, seed_vector in zip(seeds, seed_vectors) if seed_vector is not None]
+    scored_seeds = [
+        (float(paper_vector @ seed_vector), seed.seed_id, seed)
+        for seed, seed_vector in zip(seeds, seed_vectors)
+        if seed_vector is not None
+    ]
     scored_seeds.sort(key=lambda scored: (-scored[0], scored[1]))
     return [seed for _cosine, _seed_id, seed in scored_seeds[:seed_limit]]
 
 
 def _seed_anchor(seed: StoredSeed, abstract_characters: int) -> dict[str, Any]:
-    return {"seed_id": seed.seed_id, "title": seed.title, "year": seed.publication_year,
-            "abstract": (seed.abstract or "(title only: no abstract in the library)")[:abstract_characters]}
+    return {
+        "seed_id": seed.seed_id,
+        "title": seed.title,
+        "year": seed.publication_year,
+        "abstract": (seed.abstract or "(title only: no abstract in the library)")[:abstract_characters],
+    }
 
 
-def _comparable_review_anchors(connection: sqlite3.Connection, vector_lookup: CachedVectorLookup,
-                               paper_vector: np.ndarray | None, paper_id: str, topic_id: str,
-                               review_limit: int) -> list[dict[str, Any]]:
+def _comparable_review_anchors(
+    connection: sqlite3.Connection,
+    vector_lookup: CachedVectorLookup,
+    paper_vector: np.ndarray | None,
+    paper_id: str,
+    topic_id: str,
+    review_limit: int,
+) -> list[dict[str, Any]]:
     ranked_rows = rank_comparable_reviews(connection, vector_lookup, paper_vector, paper_id, topic_id)
     return [_review_anchor(row) for row in ranked_rows[:review_limit]]
 
 
-def rank_comparable_reviews(connection: sqlite3.Connection, vector_lookup: CachedVectorLookup,
-                            paper_vector: np.ndarray | None, paper_id: str, topic_id: str) -> list[sqlite3.Row]:
+def rank_comparable_reviews(
+    connection: sqlite3.Connection,
+    vector_lookup: CachedVectorLookup,
+    paper_vector: np.ndarray | None,
+    paper_id: str,
+    topic_id: str,
+) -> list[sqlite3.Row]:
     """The latest reviews of OTHER papers whose newest assessment for `topic_id` rated question_fit >= 2, nearest to
     `paper_vector` first (by cached embeddings), then by topic score. Also used by part-8 comparisons."""
     candidate_rows = connection.execute(
@@ -147,26 +195,31 @@ def rank_comparable_reviews(connection: sqlite3.Connection, vector_lookup: Cache
              AND assessment.assessed_at = (SELECT MAX(newer.assessed_at) FROM review_topic_assessments AS newer
                                            WHERE newer.review_id = assessment.review_id
                                              AND newer.topic_id = assessment.topic_id)""",
-        (topic_id, paper_id)).fetchall()
-    comparable_rows = [row for row in candidate_rows
-                       if _question_fit_of(row) >= MINIMUM_QUESTION_FIT_OF_COMPARABLE_REVIEW]
+        (topic_id, paper_id),
+    ).fetchall()
+    comparable_rows = [
+        row for row in candidate_rows if _question_fit_of(row) >= MINIMUM_QUESTION_FIT_OF_COMPARABLE_REVIEW
+    ]
     comparable_rows = list({row["review_id"]: row for row in comparable_rows}.values())  # one per review
     review_vectors = vector_lookup.vectors_for_documents(
-        [(row["edition_title"] or row["title"], row["edition_abstract"]) for row in comparable_rows])
+        [(row["edition_title"] or row["title"], row["edition_abstract"]) for row in comparable_rows]
+    )
 
     def ranking_key(indexed_row: tuple[int, sqlite3.Row]) -> tuple[float, float, str]:
         row_index, row = indexed_row
         review_vector = review_vectors[row_index]
-        cosine = float(paper_vector @ review_vector) if paper_vector is not None and review_vector is not None \
-            else -2.0  # rows without vectors rank after every row with one
+        cosine = (
+            float(paper_vector @ review_vector) if paper_vector is not None and review_vector is not None else -2.0
+        )  # rows without vectors rank after every row with one
         return (-cosine, -_normalized_topic_score(row), row["review_id"])
 
     return [row for _index, row in sorted(enumerate(comparable_rows), key=ranking_key)]
 
 
 def _question_fit_of(assessment_row: sqlite3.Row) -> int:
-    return question_fit_from_stored_assessment(assessment_row["score_scale"], assessment_row["topic_score"],
-                                               json.loads(assessment_row["assessment_json"]))
+    return question_fit_from_stored_assessment(
+        assessment_row["score_scale"], assessment_row["topic_score"], json.loads(assessment_row["assessment_json"])
+    )
 
 
 def _normalized_topic_score(assessment_row: sqlite3.Row) -> float:
@@ -181,11 +234,15 @@ def _review_anchor(review_row: sqlite3.Row) -> dict[str, Any]:
     method = review_content.get("method", "")
     if isinstance(method, dict):  # part-7 review; a legacy review stores plain strings
         method = method.get("statement", "")
-    results = [finding["claim"] for finding in review_content.get("results", [])] or \
-        list(review_content.get("authors_main_claims", []))
+    results = [finding["claim"] for finding in review_content.get("results", [])] or list(
+        review_content.get("authors_main_claims", [])
+    )
     year = (review_row["first_published_date"] or "")[:4] or None
-    return {"review_id": review_row["review_id"], "title": review_row["title"], "year": year,
-            "summary": str(review_content.get("one_sentence_summary", ""))[:MAXIMUM_ANCHOR_TEXT_CHARACTERS],
-            "method": str(method)[:MAXIMUM_ANCHOR_TEXT_CHARACTERS],
-            "key_results": [str(claim)[:MAXIMUM_ANCHOR_TEXT_CHARACTERS]
-                            for claim in results[:MAXIMUM_ANCHOR_RESULTS]]}
+    return {
+        "review_id": review_row["review_id"],
+        "title": review_row["title"],
+        "year": year,
+        "summary": str(review_content.get("one_sentence_summary", ""))[:MAXIMUM_ANCHOR_TEXT_CHARACTERS],
+        "method": str(method)[:MAXIMUM_ANCHOR_TEXT_CHARACTERS],
+        "key_results": [str(claim)[:MAXIMUM_ANCHOR_TEXT_CHARACTERS] for claim in results[:MAXIMUM_ANCHOR_RESULTS]],
+    }

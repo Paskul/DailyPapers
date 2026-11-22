@@ -32,25 +32,35 @@ class ParserRecoveryAssessment:
     @property
     def tables_summary(self) -> str:
         if self.table_captions_found == 0:
-            return ("no table captions found" if self.table_like_lines_found == 0 else
-                    f"no captions, but {self.table_like_lines_found} table-like line(s); columns may be merged")
+            return (
+                "no table captions found"
+                if self.table_like_lines_found == 0
+                else f"no captions, but {self.table_like_lines_found} table-like line(s); columns may be merged"
+            )
         if self.table_like_lines_found >= TABLE_LINES_PER_CAPTION_FOR_RECOVERED_ROWS * self.table_captions_found:
-            return (f"{self.table_captions_found} table(s); rows recovered as text, column alignment lost "
-                    "(check numbers against the source)")
+            return (
+                f"{self.table_captions_found} table(s); rows recovered as text, column alignment lost "
+                "(check numbers against the source)"
+            )
         return f"{self.table_captions_found} table caption(s), but table bodies were mostly not recovered"
 
     @property
     def equations_summary(self) -> str:
         if self.equation_like_lines_found == 0:
             return "no equation-like lines found"
-        return (f"{self.equation_like_lines_found} equation-like line(s); layout, sub/superscripts and some "
-                "symbols may be lost")
+        return (
+            f"{self.equation_like_lines_found} equation-like line(s); layout, sub/superscripts and some "
+            "symbols may be lost"
+        )
 
     def to_record(self) -> dict[str, object]:
-        return {"table_captions_found": self.table_captions_found,
-                "table_like_lines_found": self.table_like_lines_found,
-                "equation_like_lines_found": self.equation_like_lines_found,
-                "tables": self.tables_summary, "equations": self.equations_summary}
+        return {
+            "table_captions_found": self.table_captions_found,
+            "table_like_lines_found": self.table_like_lines_found,
+            "equation_like_lines_found": self.equation_like_lines_found,
+            "tables": self.tables_summary,
+            "equations": self.equations_summary,
+        }
 
 
 def assess_parser_recovery(extracted_text: str) -> ParserRecoveryAssessment:
@@ -62,12 +72,15 @@ def assess_parser_recovery(extracted_text: str) -> ParserRecoveryAssessment:
         if TABLE_CAPTION_PATTERN.match(line):
             table_captions += 1
             continue
-        if len(line.split()) <= MAXIMUM_WORDS_OF_TABLE_LINE and \
-                len(NUMBER_TOKEN_PATTERN.findall(line)) >= MINIMUM_NUMBERS_OF_TABLE_LINE:
+        if (
+            len(line.split()) <= MAXIMUM_WORDS_OF_TABLE_LINE
+            and len(NUMBER_TOKEN_PATTERN.findall(line)) >= MINIMUM_NUMBERS_OF_TABLE_LINE
+        ):
             table_like_lines += 1
             continue
         symbol_count = sum(character in MATHEMATICAL_SYMBOLS for character in line)
-        if symbol_count >= MINIMUM_SYMBOLS_OF_EQUATION_LINE or \
-                (symbol_count >= 1 and TRAILING_EQUATION_NUMBER_PATTERN.search(line)):
+        if symbol_count >= MINIMUM_SYMBOLS_OF_EQUATION_LINE or (
+            symbol_count >= 1 and TRAILING_EQUATION_NUMBER_PATTERN.search(line)
+        ):
             equation_like_lines += 1
     return ParserRecoveryAssessment(table_captions, table_like_lines, equation_like_lines)

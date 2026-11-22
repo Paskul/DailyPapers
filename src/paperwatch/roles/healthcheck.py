@@ -28,8 +28,10 @@ HEALTHCHECK_OUTPUT_SCHEMA: dict[str, Any] = {
 
 
 def _render_healthcheck_user_message(role_input: RoleInput) -> str:
-    return (f"Compute {HEALTHCHECK_FIRST_ADDEND} + {HEALTHCHECK_SECOND_ADDEND}. "
-            "Answer with a JSON object: status set to \"ready\" and sum set to the result.")
+    return (
+        f"Compute {HEALTHCHECK_FIRST_ADDEND} + {HEALTHCHECK_SECOND_ADDEND}. "
+        'Answer with a JSON object: status set to "ready" and sum set to the result.'
+    )
 
 
 def _find_healthcheck_problems(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:

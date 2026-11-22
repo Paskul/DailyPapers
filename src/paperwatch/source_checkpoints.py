@@ -56,31 +56,45 @@ class SourceCheckpoint:
             coverage_status, stop_reason = SearchCoverageStatus.CAPPED, "candidate budget reached"
         else:
             coverage_status, stop_reason = SearchCoverageStatus.ACTIVE, None
-        return replace(self, cursor=next_cursor, candidates_admitted=candidates_admitted,
-                       coverage_status=coverage_status, stop_reason=stop_reason)
+        return replace(
+            self,
+            cursor=next_cursor,
+            candidates_admitted=candidates_admitted,
+            coverage_status=coverage_status,
+            stop_reason=stop_reason,
+        )
 
 
 def load_source_checkpoint(connection: sqlite3.Connection, search_key: str) -> SourceCheckpoint | None:
-    checkpoint_row = connection.execute("SELECT * FROM source_checkpoints WHERE search_key = ?",
-                                        (search_key,)).fetchone()
+    checkpoint_row = connection.execute(
+        "SELECT * FROM source_checkpoints WHERE search_key = ?", (search_key,)
+    ).fetchone()
     if checkpoint_row is None:
         return None
     return SourceCheckpoint(
-        search_key=checkpoint_row["search_key"], source_name=checkpoint_row["source_name"],
-        topic_id=checkpoint_row["topic_id"], query_parameters=json.loads(checkpoint_row["query_json"]),
-        cursor=checkpoint_row["cursor"], coverage_status=SearchCoverageStatus(checkpoint_row["coverage_status"]),
-        stop_reason=checkpoint_row["stop_reason"], candidates_admitted=checkpoint_row["candidates_admitted"],
+        search_key=checkpoint_row["search_key"],
+        source_name=checkpoint_row["source_name"],
+        topic_id=checkpoint_row["topic_id"],
+        query_parameters=json.loads(checkpoint_row["query_json"]),
+        cursor=checkpoint_row["cursor"],
+        coverage_status=SearchCoverageStatus(checkpoint_row["coverage_status"]),
+        stop_reason=checkpoint_row["stop_reason"],
+        candidates_admitted=checkpoint_row["candidates_admitted"],
         candidate_budget=checkpoint_row["candidate_budget"],
-        last_completed_interval_end=checkpoint_row["last_completed_interval_end"])
+        last_completed_interval_end=checkpoint_row["last_completed_interval_end"],
+    )
 
 
-def load_source_checkpoints_with_prefix(connection: sqlite3.Connection, search_key_prefix: str,
-                                        ) -> list[SourceCheckpoint]:
+def load_source_checkpoints_with_prefix(
+    connection: sqlite3.Connection,
+    search_key_prefix: str,
+) -> list[SourceCheckpoint]:
     """All checkpoints whose key starts with the prefix, e.g. every 'arxiv-recovery:' search, ordered by key."""
     escaped_prefix = search_key_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     key_rows = connection.execute(
         "SELECT search_key FROM source_checkpoints WHERE search_key LIKE ? ESCAPE '\\' ORDER BY search_key",
-        (escaped_prefix + "%",)).fetchall()
+        (escaped_prefix + "%",),
+    ).fetchall()
     return [load_source_checkpoint(connection, key_row["search_key"]) for key_row in key_rows]
 
 
@@ -95,7 +109,17 @@ def save_source_checkpoint(connection: sqlite3.Connection, checkpoint: SourceChe
                coverage_status = excluded.coverage_status, stop_reason = excluded.stop_reason,
                candidates_admitted = excluded.candidates_admitted, candidate_budget = excluded.candidate_budget,
                last_completed_interval_end = excluded.last_completed_interval_end, updated_at = excluded.updated_at""",
-        (checkpoint.search_key, checkpoint.source_name, checkpoint.topic_id,
-         json.dumps(checkpoint.query_parameters, ensure_ascii=False, sort_keys=True), checkpoint.cursor,
-         str(checkpoint.coverage_status), checkpoint.stop_reason, checkpoint.candidates_admitted,
-         checkpoint.candidate_budget, checkpoint.last_completed_interval_end, utc_now_timestamp()))
+        (
+            checkpoint.search_key,
+            checkpoint.source_name,
+            checkpoint.topic_id,
+            json.dumps(checkpoint.query_parameters, ensure_ascii=False, sort_keys=True),
+            checkpoint.cursor,
+            str(checkpoint.coverage_status),
+            checkpoint.stop_reason,
+            checkpoint.candidates_admitted,
+            checkpoint.candidate_budget,
+            checkpoint.last_completed_interval_end,
+            utc_now_timestamp(),
+        ),
+    )

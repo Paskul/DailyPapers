@@ -45,11 +45,29 @@ PUBLIC_HTTPS_PROBE_HOST = "export.arxiv.org"  # a host the collector is allowed 
 EXTRACTOR_SMOKE_TEST_EDITION_ID = "e_0000000000000000"
 EXTRACTOR_SMOKE_TEST_MARKER = "paperwatch extractor smoke test"
 # llama-server flags that give the model tools or let the server download at run time.
-FORBIDDEN_MODEL_SERVER_FLAGS = ("--tools", "--agent", "-ag", "--mcp-servers-config", "--mcp-servers-json",
-                                "--ui-mcp-proxy", "--webui-mcp-proxy", "--allow-unauthenticated-tools",
-                                "--hf-repo", "-hf", "-hfr", "--model-url", "-mu", "--connect")
-FORBIDDEN_MODEL_SERVER_ENVIRONMENT_NAMES = ("LLAMA_ARG_TOOLS", "LLAMA_ARG_AGENT", "LLAMA_ARG_MCP_SERVERS_CONFIG",
-                                            "LLAMA_ARG_MCP_SERVERS_JSON", "LLAMA_ARG_UI_MCP_PROXY")
+FORBIDDEN_MODEL_SERVER_FLAGS = (
+    "--tools",
+    "--agent",
+    "-ag",
+    "--mcp-servers-config",
+    "--mcp-servers-json",
+    "--ui-mcp-proxy",
+    "--webui-mcp-proxy",
+    "--allow-unauthenticated-tools",
+    "--hf-repo",
+    "-hf",
+    "-hfr",
+    "--model-url",
+    "-mu",
+    "--connect",
+)
+FORBIDDEN_MODEL_SERVER_ENVIRONMENT_NAMES = (
+    "LLAMA_ARG_TOOLS",
+    "LLAMA_ARG_AGENT",
+    "LLAMA_ARG_MCP_SERVERS_CONFIG",
+    "LLAMA_ARG_MCP_SERVERS_JSON",
+    "LLAMA_ARG_UI_MCP_PROXY",
+)
 PROVIDER_KEY_ENVIRONMENT_HINTS = ("ZOTERO", "OPENALEX", "API_KEY")
 
 
@@ -75,25 +93,44 @@ def run_access_check_command(app: AppContext, arguments: argparse.Namespace) -> 
 
 def _check_running_account(app: AppContext, component: str) -> list[CheckResult]:
     access_settings = app.config.access
-    expected_account = access_settings.collector_account if component == COMPONENT_COLLECTOR else \
-        access_settings.worker_account
+    expected_account = (
+        access_settings.collector_account if component == COMPONENT_COLLECTOR else access_settings.worker_account
+    )
     running_account = pwd.getpwuid(os.geteuid()).pw_name
-    results = [CheckResult(
-        "account", "service account", PASS if running_account == expected_account else FAIL,
-        f"running as '{running_account}', expected '{expected_account}'",
-        hint=None if running_account == expected_account else
-        f"run deploy/setup_service_accounts.sh, then: sudo -u {expected_account} paperwatch --home "
-        f"{app.config.home_dir} access-check --component {component}")]
+    results = [
+        CheckResult(
+            "account",
+            "service account",
+            PASS if running_account == expected_account else FAIL,
+            f"running as '{running_account}', expected '{expected_account}'",
+            hint=None
+            if running_account == expected_account
+            else f"run deploy/setup_service_accounts.sh, then: sudo -u {expected_account} paperwatch --home "
+            f"{app.config.home_dir} access-check --component {component}",
+        )
+    ]
     try:
         shared_group_id = grp.getgrnam(access_settings.shared_state_group).gr_gid
         in_shared_group = shared_group_id in os.getgroups() or shared_group_id == os.getegid()
-        results.append(CheckResult("account", "shared state group", PASS if in_shared_group else FAIL,
-                                   f"'{access_settings.shared_state_group}' "
-                                   f"{'includes' if in_shared_group else 'does not include'} this account"))
+        results.append(
+            CheckResult(
+                "account",
+                "shared state group",
+                PASS if in_shared_group else FAIL,
+                f"'{access_settings.shared_state_group}' "
+                f"{'includes' if in_shared_group else 'does not include'} this account",
+            )
+        )
     except KeyError:
-        results.append(CheckResult("account", "shared state group", FAIL,
-                                   f"group '{access_settings.shared_state_group}' does not exist",
-                                   hint="run deploy/setup_service_accounts.sh"))
+        results.append(
+            CheckResult(
+                "account",
+                "shared state group",
+                FAIL,
+                f"group '{access_settings.shared_state_group}' does not exist",
+                hint="run deploy/setup_service_accounts.sh",
+            )
+        )
     return results
 
 
@@ -107,10 +144,15 @@ def _check_files_and_directories(app: AppContext, component: str) -> list[CheckR
     is_collector = component == COMPONENT_COLLECTOR
     rules_path = packaged_provider_rules_path()
     rules_writable = os.access(rules_path, os.W_OK) or os.access(rules_path.parent, os.W_OK)
-    results = [CheckResult("files", "provider rules read-only", FAIL if rules_writable else PASS,
-                           f"{rules_path} {'is WRITABLE by' if rules_writable else 'is read-only for'} this account",
-                           hint="install paperwatch root-owned (deploy/install_application.sh)" if rules_writable
-                           else None)]
+    results = [
+        CheckResult(
+            "files",
+            "provider rules read-only",
+            FAIL if rules_writable else PASS,
+            f"{rules_path} {'is WRITABLE by' if rules_writable else 'is read-only for'} this account",
+            hint="install paperwatch root-owned (deploy/install_application.sh)" if rules_writable else None,
+        )
+    ]
     try:
         load_provider_access_rules()
         results.append(CheckResult("files", "provider rules valid", PASS, "rules parsed and validated"))
@@ -121,33 +163,72 @@ def _check_files_and_directories(app: AppContext, component: str) -> list[CheckR
     if is_collector:
         problem = describe_credentials_file_problem(credentials_path) if credentials_path.exists() else None
         if not credentials_path.exists():
-            results.append(CheckResult("files", "credentials private", WARN,
-                                       f"{credentials_path} does not exist (no Zotero / OpenAlex keys yet)"))
+            results.append(
+                CheckResult(
+                    "files",
+                    "credentials private",
+                    WARN,
+                    f"{credentials_path} does not exist (no Zotero / OpenAlex keys yet)",
+                )
+            )
         else:
-            results.append(CheckResult("files", "credentials private", FAIL if problem else PASS,
-                                       problem or f"{credentials_path} belongs to this account, mode 0600"))
+            results.append(
+                CheckResult(
+                    "files",
+                    "credentials private",
+                    FAIL if problem else PASS,
+                    problem or f"{credentials_path} belongs to this account, mode 0600",
+                )
+            )
     else:
         credentials_readable = _can_read(credentials_path)
-        results.append(CheckResult("files", "credentials hidden", FAIL if credentials_readable else PASS,
-                                   f"{credentials_path} is {'READABLE' if credentials_readable else 'not readable'} "
-                                   "by the worker account"))
+        results.append(
+            CheckResult(
+                "files",
+                "credentials hidden",
+                FAIL if credentials_readable else PASS,
+                f"{credentials_path} is {'READABLE' if credentials_readable else 'not readable'} by the worker account",
+            )
+        )
 
     output_writable = os.access(app_config.output_dir, os.W_OK)
     output_should_be_writable = not is_collector
-    results.append(CheckResult("files", "output directory", PASS if output_writable == output_should_be_writable
-                               else FAIL, f"{app_config.output_dir} is {'writable' if output_writable else 'not writable'}"
-                               f" (expected {'writable' if output_should_be_writable else 'not writable'})"))
+    results.append(
+        CheckResult(
+            "files",
+            "output directory",
+            PASS if output_writable == output_should_be_writable else FAIL,
+            f"{app_config.output_dir} is {'writable' if output_writable else 'not writable'}"
+            f" (expected {'writable' if output_should_be_writable else 'not writable'})",
+        )
+    )
 
-    state_paths = [app_config.state_dir, app_config.database_path,
-                   *(Path(f"{app_config.database_path}{suffix}") for suffix in ("-wal", "-shm"))]
+    state_paths = [
+        app_config.state_dir,
+        app_config.database_path,
+        *(Path(f"{app_config.database_path}{suffix}") for suffix in ("-wal", "-shm")),
+    ]
     unusable_paths = [str(path) for path in state_paths if path.exists() and not os.access(path, os.R_OK | os.W_OK)]
-    results.append(CheckResult("files", "database and WAL files", FAIL if unusable_paths else PASS,
-                               f"not readable+writable: {', '.join(unusable_paths)}" if unusable_paths else
-                               "state directory, database, and WAL files are readable and writable"))
+    results.append(
+        CheckResult(
+            "files",
+            "database and WAL files",
+            FAIL if unusable_paths else PASS,
+            f"not readable+writable: {', '.join(unusable_paths)}"
+            if unusable_paths
+            else "state directory, database, and WAL files are readable and writable",
+        )
+    )
     cache_writable = os.access(app_config.source_cache_dir, os.W_OK)
-    results.append(CheckResult("files", "source cache", PASS if cache_writable == is_collector else WARN,
-                               f"{app_config.source_cache_dir} is {'writable' if cache_writable else 'read-only'} "
-                               f"(expected {'writable' if is_collector else 'read-only'})"))
+    results.append(
+        CheckResult(
+            "files",
+            "source cache",
+            PASS if cache_writable == is_collector else WARN,
+            f"{app_config.source_cache_dir} is {'writable' if cache_writable else 'read-only'} "
+            f"(expected {'writable' if is_collector else 'read-only'})",
+        )
+    )
     return results
 
 
@@ -164,8 +245,7 @@ def _can_read(file_path: Path) -> bool:
 # --------------------------------------------------------------------------------------------------------------------
 
 
-def _probe_network_egress(app: AppContext, component: str,
-                          literal_probe_addresses: list[str]) -> list[CheckResult]:
+def _probe_network_egress(app: AppContext, component: str, literal_probe_addresses: list[str]) -> list[CheckResult]:
     """Real connection attempts. `literal_probe_addresses` are public IPs of the probe host, resolved by the caller
     (deploy/check_access_as_service_accounts.sh resolves them as root): a worker that cannot resolve names must
     still be unable to connect to an address it is handed directly."""
@@ -176,31 +256,59 @@ def _probe_network_egress(app: AppContext, component: str,
     if component == COMPONENT_WORKER:
         egress_hint = "load deploy/nftables/paperwatch-egress.nft (sudo deploy/apply_egress_rules.sh)"
         results = [
-            CheckResult("network", "local model reachable", PASS if model_reachable else WARN,
-                        f"{model_host}:{model_port}: {model_detail}",
-                        hint=None if model_reachable else "start llama-server, or allow it in the nftables rules"),
-            CheckResult("network", "internet blocked (by name)", FAIL if internet_reachable else PASS,
-                        f"{PUBLIC_HTTPS_PROBE_HOST}:443: {internet_detail}",
-                        hint=egress_hint if internet_reachable else None),
+            CheckResult(
+                "network",
+                "local model reachable",
+                PASS if model_reachable else WARN,
+                f"{model_host}:{model_port}: {model_detail}",
+                hint=None if model_reachable else "start llama-server, or allow it in the nftables rules",
+            ),
+            CheckResult(
+                "network",
+                "internet blocked (by name)",
+                FAIL if internet_reachable else PASS,
+                f"{PUBLIC_HTTPS_PROBE_HOST}:443: {internet_detail}",
+                hint=egress_hint if internet_reachable else None,
+            ),
         ]
         if not literal_probe_addresses:
-            results.append(CheckResult("network", "internet blocked (by address)", WARN,
-                                       "not tested: no --public-probe-address given, so only name resolution was "
-                                       "shown to be blocked",
-                                       hint="run deploy/check_access_as_service_accounts.sh, which passes them"))
+            results.append(
+                CheckResult(
+                    "network",
+                    "internet blocked (by address)",
+                    WARN,
+                    "not tested: no --public-probe-address given, so only name resolution was shown to be blocked",
+                    hint="run deploy/check_access_as_service_accounts.sh, which passes them",
+                )
+            )
         for probe_address in literal_probe_addresses:
             address_reachable, address_detail = _attempt_tcp_connection(probe_address, 443)
-            results.append(CheckResult("network", "internet blocked (by address)",
-                                       FAIL if address_reachable else PASS, f"{probe_address}:443: {address_detail}",
-                                       hint=egress_hint if address_reachable else None))
+            results.append(
+                CheckResult(
+                    "network",
+                    "internet blocked (by address)",
+                    FAIL if address_reachable else PASS,
+                    f"{probe_address}:443: {address_detail}",
+                    hint=egress_hint if address_reachable else None,
+                )
+            )
         return results
     results = [
-        CheckResult("network", "public HTTPS reachable", PASS if internet_reachable else FAIL,
-                    f"{PUBLIC_HTTPS_PROBE_HOST}:443: {internet_detail}"),
-        CheckResult("network", "local model blocked", WARN if model_reachable else PASS,
-                    f"{model_host}:{model_port}: {model_detail}",
-                    hint="the collector never needs the model; load deploy/nftables/paperwatch-egress.nft"
-                    if model_reachable else None),
+        CheckResult(
+            "network",
+            "public HTTPS reachable",
+            PASS if internet_reachable else FAIL,
+            f"{PUBLIC_HTTPS_PROBE_HOST}:443: {internet_detail}",
+        ),
+        CheckResult(
+            "network",
+            "local model blocked",
+            WARN if model_reachable else PASS,
+            f"{model_host}:{model_port}: {model_detail}",
+            hint="the collector never needs the model; load deploy/nftables/paperwatch-egress.nft"
+            if model_reachable
+            else None,
+        ),
     ]
     return results
 
@@ -244,16 +352,31 @@ def _check_embedding_model_files(app: AppContext) -> list[CheckResult]:
         return [CheckResult("files", "embedding model", WARN, "screening uses the offline test embedder")]
     model_dir = app.config.embedding_model_dir
     pinned_files = look_up_pinned_embedding_model(app.config.screening.embedding_model).pinned_files
-    unreadable = [pinned_file.file_name for pinned_file in pinned_files
-                  if not _can_read(model_dir / pinned_file.file_name)]
-    writable = [pinned_file.file_name for pinned_file in pinned_files
-                if os.access(model_dir / pinned_file.file_name, os.W_OK)]
+    unreadable = [
+        pinned_file.file_name for pinned_file in pinned_files if not _can_read(model_dir / pinned_file.file_name)
+    ]
+    writable = [
+        pinned_file.file_name for pinned_file in pinned_files if os.access(model_dir / pinned_file.file_name, os.W_OK)
+    ]
     if unreadable:
-        return [CheckResult("files", "embedding model", FAIL, f"{', '.join(unreadable)} in {model_dir} missing or "
-                            "unreadable by this account", hint="run deploy/install_embedding_model.sh")]
-    return [CheckResult("files", "embedding model", WARN if writable else PASS,
-                        f"{model_dir}: readable" + (f"; {', '.join(writable)} WRITABLE by this account" if writable
-                                                    else ", read-only for this account"))]
+        return [
+            CheckResult(
+                "files",
+                "embedding model",
+                FAIL,
+                f"{', '.join(unreadable)} in {model_dir} missing or unreadable by this account",
+                hint="run deploy/install_embedding_model.sh",
+            )
+        ]
+    return [
+        CheckResult(
+            "files",
+            "embedding model",
+            WARN if writable else PASS,
+            f"{model_dir}: readable"
+            + (f"; {', '.join(writable)} WRITABLE by this account" if writable else ", read-only for this account"),
+        )
+    ]
 
 
 def _check_model_server_isolation(app: AppContext) -> list[CheckResult]:
@@ -263,32 +386,77 @@ def _check_model_server_isolation(app: AppContext) -> list[CheckResult]:
     results: list[CheckResult] = []
     expected_account = app.config.access.model_server_account
     for process_id, owner_name, arguments, environment in server_processes:
-        forbidden_flags = sorted({argument.split("=", 1)[0] for argument in arguments
-                                  if argument.split("=", 1)[0] in FORBIDDEN_MODEL_SERVER_FLAGS})
-        results.append(CheckResult("model-server", f"pid {process_id} flags", FAIL if forbidden_flags else PASS,
-                                   f"forbidden flags: {', '.join(forbidden_flags)}" if forbidden_flags else
-                                   "no tools, agent, MCP, or download flags"))
+        forbidden_flags = sorted(
+            {
+                argument.split("=", 1)[0]
+                for argument in arguments
+                if argument.split("=", 1)[0] in FORBIDDEN_MODEL_SERVER_FLAGS
+            }
+        )
+        results.append(
+            CheckResult(
+                "model-server",
+                f"pid {process_id} flags",
+                FAIL if forbidden_flags else PASS,
+                f"forbidden flags: {', '.join(forbidden_flags)}"
+                if forbidden_flags
+                else "no tools, agent, MCP, or download flags",
+            )
+        )
         if environment is None:
-            results.append(CheckResult("model-server", f"pid {process_id} environment", SKIP,
-                                       "not readable from this account (expected when isolated)"))
+            results.append(
+                CheckResult(
+                    "model-server",
+                    f"pid {process_id} environment",
+                    SKIP,
+                    "not readable from this account (expected when isolated)",
+                )
+            )
         else:
-            leaked_names = sorted(name for name in environment if name in FORBIDDEN_MODEL_SERVER_ENVIRONMENT_NAMES
-                                  or any(hint in name.upper() for hint in PROVIDER_KEY_ENVIRONMENT_HINTS))
-            results.append(CheckResult("model-server", f"pid {process_id} environment",
-                                       FAIL if leaked_names else PASS,
-                                       f"sets {', '.join(leaked_names)}" if leaked_names else
-                                       "no tool settings or provider keys in its environment"))
+            leaked_names = sorted(
+                name
+                for name in environment
+                if name in FORBIDDEN_MODEL_SERVER_ENVIRONMENT_NAMES
+                or any(hint in name.upper() for hint in PROVIDER_KEY_ENVIRONMENT_HINTS)
+            )
+            results.append(
+                CheckResult(
+                    "model-server",
+                    f"pid {process_id} environment",
+                    FAIL if leaked_names else PASS,
+                    f"sets {', '.join(leaked_names)}"
+                    if leaked_names
+                    else "no tool settings or provider keys in its environment",
+                )
+            )
         if "--offline" not in arguments:
-            results.append(CheckResult("model-server", f"pid {process_id} offline", WARN,
-                                       "started without --offline (runtime downloads not disabled by flag)"))
+            results.append(
+                CheckResult(
+                    "model-server",
+                    f"pid {process_id} offline",
+                    WARN,
+                    "started without --offline (runtime downloads not disabled by flag)",
+                )
+            )
         if expected_account:
-            results.append(CheckResult("model-server", f"pid {process_id} account",
-                                       PASS if owner_name == expected_account else FAIL,
-                                       f"runs as '{owner_name}', expected '{expected_account}'"))
+            results.append(
+                CheckResult(
+                    "model-server",
+                    f"pid {process_id} account",
+                    PASS if owner_name == expected_account else FAIL,
+                    f"runs as '{owner_name}', expected '{expected_account}'",
+                )
+            )
         else:
-            results.append(CheckResult("model-server", f"pid {process_id} account", WARN,
-                                       f"runs as '{owner_name}': not isolated in its own account yet "
-                                       "(access.model_server_account is empty by owner decision)"))
+            results.append(
+                CheckResult(
+                    "model-server",
+                    f"pid {process_id} account",
+                    WARN,
+                    f"runs as '{owner_name}': not isolated in its own account yet "
+                    "(access.model_server_account is empty by owner decision)",
+                )
+            )
     return results
 
 
@@ -297,8 +465,11 @@ def _find_llama_server_processes() -> list[tuple[int, str, list[str], dict[str, 
     found_processes = []
     for process_directory in Path("/proc").glob("[0-9]*"):
         try:
-            arguments = [argument.decode("utf-8", "replace") for argument in
-                         (process_directory / "cmdline").read_bytes().split(b"\0") if argument]
+            arguments = [
+                argument.decode("utf-8", "replace")
+                for argument in (process_directory / "cmdline").read_bytes().split(b"\0")
+                if argument
+            ]
         except OSError:
             continue
         if not arguments or Path(arguments[0]).name != "llama-server":
@@ -308,8 +479,11 @@ def _find_llama_server_processes() -> list[tuple[int, str, list[str], dict[str, 
         except (KeyError, OSError):
             owner_name = "unknown"
         try:
-            environment = dict(entry.decode("utf-8", "replace").partition("=")[::2] for entry in
-                               (process_directory / "environ").read_bytes().split(b"\0") if b"=" in entry)
+            environment = dict(
+                entry.decode("utf-8", "replace").partition("=")[::2]
+                for entry in (process_directory / "environ").read_bytes().split(b"\0")
+                if b"=" in entry
+            )
         except OSError:
             environment = None
         found_processes.append((int(process_directory.name), owner_name, arguments, environment))
@@ -325,39 +499,78 @@ def _check_extractor_sandbox(app: AppContext) -> list[CheckResult]:
     extractor_settings = app.config.extractor
     runtime_path = shutil.which(extractor_settings.container_runtime)
     if runtime_path is None:
-        return [CheckResult("extractor", "container runtime", FAIL,
-                            f"'{extractor_settings.container_runtime}' is not installed for this account",
-                            hint="sudo apt install podman")]
+        return [
+            CheckResult(
+                "extractor",
+                "container runtime",
+                FAIL,
+                f"'{extractor_settings.container_runtime}' is not installed for this account",
+                hint="sudo apt install podman",
+            )
+        ]
     results = [CheckResult("extractor", "container runtime", PASS, runtime_path)]
     if not extractor_settings.image:
-        results.append(CheckResult("extractor", "pinned image", FAIL, "extractor.image is not set",
-                                   hint="run deploy/build_extractor_image.sh and put the printed id in config.toml"))
+        results.append(
+            CheckResult(
+                "extractor",
+                "pinned image",
+                FAIL,
+                "extractor.image is not set",
+                hint="run deploy/build_extractor_image.sh and put the printed id in config.toml",
+            )
+        )
         return results
     try:
-        image_present = subprocess.run([extractor_settings.container_runtime, "image", "exists",
-                                        extractor_settings.image], stdin=subprocess.DEVNULL, capture_output=True,
-                                       timeout=60).returncode == 0
+        image_present = (
+            subprocess.run(
+                [extractor_settings.container_runtime, "image", "exists", extractor_settings.image],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=60,
+            ).returncode
+            == 0
+        )
     except (OSError, subprocess.TimeoutExpired) as runtime_problem:
-        return results + [CheckResult("extractor", "pinned image", FAIL, f"cannot query the image store: "
-                                                                         f"{runtime_problem}")]
-    results.append(CheckResult("extractor", "pinned image", PASS if image_present else FAIL,
-                               f"{extractor_settings.image} {'is present' if image_present else 'is NOT present'} "
-                               "in this account's image store (never pulled at run time)"))
+        return results + [
+            CheckResult("extractor", "pinned image", FAIL, f"cannot query the image store: {runtime_problem}")
+        ]
+    results.append(
+        CheckResult(
+            "extractor",
+            "pinned image",
+            PASS if image_present else FAIL,
+            f"{extractor_settings.image} {'is present' if image_present else 'is NOT present'} "
+            "in this account's image store (never pulled at run time)",
+        )
+    )
     if not image_present:
         return results
-    smoke_test_file = store_source_bytes(app.config.source_cache_dir, EXTRACTOR_SMOKE_TEST_EDITION_ID,
-                                         build_minimal_pdf_bytes(EXTRACTOR_SMOKE_TEST_MARKER), "application/pdf")
+    smoke_test_file = store_source_bytes(
+        app.config.source_cache_dir,
+        EXTRACTOR_SMOKE_TEST_EDITION_ID,
+        build_minimal_pdf_bytes(EXTRACTOR_SMOKE_TEST_MARKER),
+        "application/pdf",
+    )
     try:
-        extracted_text = extract_text_in_sandbox(app.config.source_cache_dir, smoke_test_file.file_path,
-                                                 extractor_settings)
+        extracted_text = extract_text_in_sandbox(
+            app.config.source_cache_dir, smoke_test_file.file_path, extractor_settings
+        )
         marker_found = EXTRACTOR_SMOKE_TEST_MARKER in extracted_text.text
-        results.append(CheckResult("extractor", "sandboxed extraction", PASS if marker_found else FAIL,
-                                   f"generated PDF extracted in {extracted_text.duration_seconds:.1f} s with "
-                                   "--network=none, read-only root, one read-only input"
-                                   if marker_found else "extractor ran but returned unexpected text"))
+        results.append(
+            CheckResult(
+                "extractor",
+                "sandboxed extraction",
+                PASS if marker_found else FAIL,
+                f"generated PDF extracted in {extracted_text.duration_seconds:.1f} s with "
+                "--network=none, read-only root, one read-only input"
+                if marker_found
+                else "extractor ran but returned unexpected text",
+            )
+        )
     except PaperwatchError as extraction_failure:
-        results.append(CheckResult("extractor", "sandboxed extraction", FAIL, str(extraction_failure),
-                                   extraction_failure))
+        results.append(
+            CheckResult("extractor", "sandboxed extraction", FAIL, str(extraction_failure), extraction_failure)
+        )
     finally:
         smoke_test_file.file_path.unlink(missing_ok=True)
         _remove_empty_directory(smoke_test_file.file_path.parent)
@@ -380,8 +593,7 @@ def build_minimal_pdf_bytes(page_text: str) -> bytes:
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
         b"/Resources << /Font << /F1 5 0 R >> >> >>",
-        b"<< /Length " + str(len(content_stream)).encode("ascii") + b" >>\nstream\n" + content_stream +
-        b"\nendstream",
+        b"<< /Length " + str(len(content_stream)).encode("ascii") + b" >>\nstream\n" + content_stream + b"\nendstream",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
     pdf_bytes = bytearray(b"%PDF-1.4\n")
@@ -393,6 +605,7 @@ def build_minimal_pdf_bytes(page_text: str) -> bytes:
     pdf_bytes += f"xref\n0 {len(pdf_objects) + 1}\n0000000000 65535 f \n".encode("ascii")
     for object_offset in object_offsets:
         pdf_bytes += f"{object_offset:010d} 00000 n \n".encode("ascii")
-    pdf_bytes += (f"trailer\n<< /Size {len(pdf_objects) + 1} /Root 1 0 R >>\nstartxref\n"
-                  f"{cross_reference_offset}\n%%EOF\n").encode("ascii")
+    pdf_bytes += (
+        f"trailer\n<< /Size {len(pdf_objects) + 1} /Root 1 0 R >>\nstartxref\n{cross_reference_offset}\n%%EOF\n"
+    ).encode("ascii")
     return bytes(pdf_bytes)

@@ -18,36 +18,51 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from paperwatch.reading.evidence_checks import (PassageTextById, check_cited_statement, check_quoted_finding,
-                                                find_unknown_passage_ids)
+from paperwatch.reading.evidence_checks import (
+    PassageTextById,
+    check_cited_statement,
+    check_quoted_finding,
+    find_unknown_passage_ids,
+)
 
 EVIDENCE_STATUS_INSUFFICIENT = "insufficient_evidence"
 EVIDENCE_STATUS_SUPPORTED = "supported"
 MAXIMUM_STATEMENT_CHARACTERS = 1200
 MAXIMUM_PASSAGES_PER_STATEMENT = 6
 
-PASSAGE_ID_LIST_SCHEMA: dict[str, Any] = {"type": "array", "items": {"type": "string"},
-                                          "maxItems": MAXIMUM_PASSAGES_PER_STATEMENT}
+PASSAGE_ID_LIST_SCHEMA: dict[str, Any] = {
+    "type": "array",
+    "items": {"type": "string"},
+    "maxItems": MAXIMUM_PASSAGES_PER_STATEMENT,
+}
 FINDING_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"claim": {"type": "string"}, "conditions": {"type": "string"},
-                   "passage_id": {"type": "string"}, "excerpt": {"type": "string"}},
+    "properties": {
+        "claim": {"type": "string"},
+        "conditions": {"type": "string"},
+        "passage_id": {"type": "string"},
+        "excerpt": {"type": "string"},
+    },
     "required": ["claim", "conditions", "passage_id", "excerpt"],
     "additionalProperties": False,
 }
 STATEMENT_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"statement": {"type": "string"},
-                   "evidence_status": {"type": "string",
-                                       "enum": [EVIDENCE_STATUS_INSUFFICIENT, EVIDENCE_STATUS_SUPPORTED]},
-                   "supporting_passage_ids": PASSAGE_ID_LIST_SCHEMA},
+    "properties": {
+        "statement": {"type": "string"},
+        "evidence_status": {"type": "string", "enum": [EVIDENCE_STATUS_INSUFFICIENT, EVIDENCE_STATUS_SUPPORTED]},
+        "supporting_passage_ids": PASSAGE_ID_LIST_SCHEMA,
+    },
     "required": ["statement", "evidence_status", "supporting_passage_ids"],
     "additionalProperties": False,
 }
 LIMITATION_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"statement": {"type": "string"}, "stated_by": {"type": "string", "enum": ["reviewer", "authors"]},
-                   "supporting_passage_ids": PASSAGE_ID_LIST_SCHEMA},
+    "properties": {
+        "statement": {"type": "string"},
+        "stated_by": {"type": "string", "enum": ["reviewer", "authors"]},
+        "supporting_passage_ids": PASSAGE_ID_LIST_SCHEMA,
+    },
     "required": ["statement", "stated_by", "supporting_passage_ids"],
     "additionalProperties": False,
 }
@@ -66,8 +81,7 @@ AMBIGUOUS_PASSAGE_SCHEMA: dict[str, Any] = {
 PARSER_PROBLEM_KINDS = ("table_unreadable", "equation_unreadable", "text_garbled")
 PARSER_PROBLEM_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"passage_id": {"type": "string"},
-                   "problem": {"type": "string", "enum": list(PARSER_PROBLEM_KINDS)}},
+    "properties": {"passage_id": {"type": "string"}, "problem": {"type": "string", "enum": list(PARSER_PROBLEM_KINDS)}},
     "required": ["passage_id", "problem"],
     "additionalProperties": False,
 }
@@ -101,9 +115,17 @@ ItemCheck = Callable[[Mapping[str, Any], PassageTextById, str], list[str]]
 
 
 def check_finding(finding: Mapping[str, Any], passage_text_by_id: PassageTextById, where: str) -> list[str]:
-    return (check_quoted_finding(f"{finding['claim']} {finding['conditions']}", finding["passage_id"],
-                                 finding["excerpt"], passage_text_by_id, where)
-            + _check_length(finding["claim"], where) + _check_length(finding["conditions"], where))
+    return (
+        check_quoted_finding(
+            f"{finding['claim']} {finding['conditions']}",
+            finding["passage_id"],
+            finding["excerpt"],
+            passage_text_by_id,
+            where,
+        )
+        + _check_length(finding["claim"], where)
+        + _check_length(finding["conditions"], where)
+    )
 
 
 def check_statement(statement: Mapping[str, Any], passage_text_by_id: PassageTextById, where: str) -> list[str]:
@@ -118,32 +140,36 @@ def check_limitation(limitation: Mapping[str, Any], passage_text_by_id: PassageT
     problems = _check_length(limitation["statement"], where)
     if limitation["stated_by"] == "authors" and not limitation["supporting_passage_ids"]:
         problems.append(f"{where}: a limitation stated by the authors must cite the passage that states it")
-    return problems + check_cited_statement(limitation["statement"], list(limitation["supporting_passage_ids"]),
-                                            passage_text_by_id, where)
+    return problems + check_cited_statement(
+        limitation["statement"], list(limitation["supporting_passage_ids"]), passage_text_by_id, where
+    )
 
 
 def check_inference(inference: Mapping[str, Any], passage_text_by_id: PassageTextById, where: str) -> list[str]:
-    return (_check_length(inference["inference"], where)
-            + check_cited_statement(inference["inference"], list(inference["supporting_passage_ids"]),
-                                    passage_text_by_id, where))
+    return _check_length(inference["inference"], where) + check_cited_statement(
+        inference["inference"], list(inference["supporting_passage_ids"]), passage_text_by_id, where
+    )
 
 
-def check_flagged_passage(flagged_item: Mapping[str, Any], passage_text_by_id: PassageTextById,
-                          where: str) -> list[str]:
+def check_flagged_passage(
+    flagged_item: Mapping[str, Any], passage_text_by_id: PassageTextById, where: str
+) -> list[str]:
     """An ambiguous_passages or parser_problems entry may only name a passage from the input."""
     return find_unknown_passage_ids([flagged_item["passage_id"]], passage_text_by_id, where)
 
 
-def check_each_item(items: list[dict[str, Any]], item_check: ItemCheck, passage_text_by_id: PassageTextById,
-                    field_name: str) -> list[str]:
+def check_each_item(
+    items: list[dict[str, Any]], item_check: ItemCheck, passage_text_by_id: PassageTextById, field_name: str
+) -> list[str]:
     problems: list[str] = []
     for item_index, item in enumerate(items, start=1):
         problems += item_check(item, passage_text_by_id, f"{field_name}[{item_index}]")
     return problems
 
 
-def check_finding_list(findings: list[dict[str, Any]], passage_text_by_id: PassageTextById,
-                       field_name: str) -> list[str]:
+def check_finding_list(
+    findings: list[dict[str, Any]], passage_text_by_id: PassageTextById, field_name: str
+) -> list[str]:
     return check_each_item(findings, check_finding, passage_text_by_id, field_name)
 
 
@@ -157,10 +183,9 @@ def check_inference_list(inferences: list[dict[str, Any]], passage_text_by_id: P
 
 def check_flagged_passages(answer: Mapping[str, Any], passage_text_by_id: PassageTextById) -> list[str]:
     """ambiguous_passages and parser_problems may only name passages from the input."""
-    return (check_each_item(answer.get("ambiguous_passages", []), check_flagged_passage, passage_text_by_id,
-                            "ambiguous_passages")
-            + check_each_item(answer.get("parser_problems", []), check_flagged_passage, passage_text_by_id,
-                              "parser_problems"))
+    return check_each_item(
+        answer.get("ambiguous_passages", []), check_flagged_passage, passage_text_by_id, "ambiguous_passages"
+    ) + check_each_item(answer.get("parser_problems", []), check_flagged_passage, passage_text_by_id, "parser_problems")
 
 
 def _check_length(text: str, where: str) -> list[str]:

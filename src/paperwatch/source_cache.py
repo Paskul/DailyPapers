@@ -19,8 +19,13 @@ from paperwatch.rendering.file_output import write_bytes_atomically
 SOURCE_FILES_SUBDIRECTORY = "sources"
 INTERNAL_ID_PATTERN = re.compile(r"^[a-z]_[0-9a-f]{16}$")
 CACHED_SOURCE_FILE_NAME_PATTERN = re.compile(r"^[0-9a-f]{32}\.(pdf|xml)$")
-FILE_SUFFIX_BY_CONTENT_TYPE = {"application/pdf": ".pdf", "application/xml": ".xml", "text/xml": ".xml",
-                               "application/jats+xml": ".xml", "application/tei+xml": ".xml"}
+FILE_SUFFIX_BY_CONTENT_TYPE = {
+    "application/pdf": ".pdf",
+    "application/xml": ".xml",
+    "text/xml": ".xml",
+    "application/jats+xml": ".xml",
+    "application/tei+xml": ".xml",
+}
 SHA256_PREFIX_CHARACTERS = 32
 EXTRACTED_TEXT_SUFFIX = ".txt"
 SOURCE_FILE_MODE = 0o640  # the collector writes; the worker (same group) reads extracted text later (part 7)
@@ -42,8 +47,12 @@ def store_source_bytes(cache_dir: Path, edition_id: str, body_bytes: bytes, cont
     if content_type not in FILE_SUFFIX_BY_CONTENT_TYPE:
         raise SourceAccessDenied(f"content type '{content_type}' cannot be stored as a source file")
     content_sha256 = hashlib.sha256(body_bytes).hexdigest()
-    file_path = cache_dir / SOURCE_FILES_SUBDIRECTORY / edition_id / \
-        f"{content_sha256[:SHA256_PREFIX_CHARACTERS]}{FILE_SUFFIX_BY_CONTENT_TYPE[content_type]}"
+    file_path = (
+        cache_dir
+        / SOURCE_FILES_SUBDIRECTORY
+        / edition_id
+        / f"{content_sha256[:SHA256_PREFIX_CHARACTERS]}{FILE_SUFFIX_BY_CONTENT_TYPE[content_type]}"
+    )
     write_bytes_atomically(file_path, body_bytes, file_mode=SOURCE_FILE_MODE)
     return CachedSourceFile(edition_id, file_path, content_sha256, content_type, len(body_bytes))
 
@@ -52,11 +61,14 @@ def require_cached_source_file(cache_dir: Path, candidate_path: Path) -> Path:
     """Return the resolved path if it is a regular source file inside the cache with a cache-generated name."""
     resolved_cache_dir = (cache_dir / SOURCE_FILES_SUBDIRECTORY).resolve()
     resolved_path = candidate_path.resolve()
-    if resolved_path.parent.parent != resolved_cache_dir or \
-            not INTERNAL_ID_PATTERN.match(resolved_path.parent.name) or \
-            not CACHED_SOURCE_FILE_NAME_PATTERN.match(resolved_path.name):
-        raise SourceAccessDenied(f"{candidate_path} is not a cached source file "
-                                 f"({resolved_cache_dir}/<edition id>/<hash>.pdf|xml)")
+    if (
+        resolved_path.parent.parent != resolved_cache_dir
+        or not INTERNAL_ID_PATTERN.match(resolved_path.parent.name)
+        or not CACHED_SOURCE_FILE_NAME_PATTERN.match(resolved_path.name)
+    ):
+        raise SourceAccessDenied(
+            f"{candidate_path} is not a cached source file ({resolved_cache_dir}/<edition id>/<hash>.pdf|xml)"
+        )
     if candidate_path.is_symlink() or not resolved_path.is_file():
         raise SourceAccessDenied(f"{candidate_path} is missing or not a regular file")
     return resolved_path
@@ -67,8 +79,12 @@ def store_extracted_text(cache_dir: Path, edition_id: str, source_sha256: str, e
     same file overwrites the same path. A .txt file can never be fed back to the extractor (pdf|xml only)."""
     if not INTERNAL_ID_PATTERN.match(edition_id) or not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
         raise SourceAccessDenied("extracted text needs an internal edition id and a source SHA-256")
-    text_path = cache_dir / SOURCE_FILES_SUBDIRECTORY / edition_id / \
-        f"{source_sha256[:SHA256_PREFIX_CHARACTERS]}{EXTRACTED_TEXT_SUFFIX}"
+    text_path = (
+        cache_dir
+        / SOURCE_FILES_SUBDIRECTORY
+        / edition_id
+        / f"{source_sha256[:SHA256_PREFIX_CHARACTERS]}{EXTRACTED_TEXT_SUFFIX}"
+    )
     write_bytes_atomically(text_path, extracted_text.encode("utf-8"), file_mode=SOURCE_FILE_MODE)
     return text_path
 

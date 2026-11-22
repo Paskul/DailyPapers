@@ -41,8 +41,13 @@ from jsonschema import Draft202012Validator
 from paperwatch.activity_log import finish_activity, start_activity
 from paperwatch.clock import utc_now_timestamp
 from paperwatch.config import AppConfig, RoleLimits
-from paperwatch.errors import (ModelCallDeadlineExceeded, ModelOutputInvalid, ModelOutputRejectedAfterRepair,
-                               ModelPromptExceedsContextBudget, PaperwatchError)
+from paperwatch.errors import (
+    ModelCallDeadlineExceeded,
+    ModelOutputInvalid,
+    ModelOutputRejectedAfterRepair,
+    ModelPromptExceedsContextBudget,
+    PaperwatchError,
+)
 from paperwatch.identifiers import MODEL_CALL_ID_PREFIX, new_internal_id
 from paperwatch.llm.inference_lock import hold_inference_lock
 from paperwatch.llm.inference_reservation import wait_while_inference_is_reserved
@@ -105,45 +110,64 @@ def estimate_prompt_tokens(*texts: str) -> int:
     return CHAT_TEMPLATE_OVERHEAD_TOKENS + int(sum(len(text) for text in texts) / CHARACTERS_PER_TOKEN_ESTIMATE) + 1
 
 
-def run_role_with_one_repair(*, role_definition: RoleDefinition, role_input: RoleInput, app_config: AppConfig,
-                             model_client: ModelClient, connection: sqlite3.Connection,
-                             job_id: str | None = None, deadline_monotonic: float | None = None,
-                             holds_inference_reservation: bool = False) -> RoleRunResult:
+def run_role_with_one_repair(
+    *,
+    role_definition: RoleDefinition,
+    role_input: RoleInput,
+    app_config: AppConfig,
+    model_client: ModelClient,
+    connection: sqlite3.Connection,
+    job_id: str | None = None,
+    deadline_monotonic: float | None = None,
+    holds_inference_reservation: bool = False,
+) -> RoleRunResult:
     """Run the role; if its answer is invalid, ask once more with the problems listed. Outages, timeouts and lock
     waits propagate unchanged (they are retried by the worker). Two invalid answers end the job with both reasons."""
-    call_options = dict(role_definition=role_definition, role_input=role_input, app_config=app_config,
-                        model_client=model_client, connection=connection, job_id=job_id,
-                        deadline_monotonic=deadline_monotonic,
-                        holds_inference_reservation=holds_inference_reservation)
+    call_options = dict(
+        role_definition=role_definition,
+        role_input=role_input,
+        app_config=app_config,
+        model_client=model_client,
+        connection=connection,
+        job_id=job_id,
+        deadline_monotonic=deadline_monotonic,
+        holds_inference_reservation=holds_inference_reservation,
+    )
     try:
         return run_role_once(**call_options, salvage_policy=SALVAGE_IF_AT_MOST_HALF_DROPPED)
     except ModelOutputInvalid as first_rejection:
         try:
-            return run_role_once(**call_options, rejected_first_answer=first_rejection,
-                                 salvage_policy=SALVAGE_ALWAYS)
+            return run_role_once(**call_options, rejected_first_answer=first_rejection, salvage_policy=SALVAGE_ALWAYS)
         except ModelOutputInvalid as second_rejection:
             if first_rejection.salvage is not None:
-                return _result_from_salvaged_first_answer(role_definition, first_rejection,
-                                                          f"the repair was rejected too ({second_rejection})")
+                return _result_from_salvaged_first_answer(
+                    role_definition, first_rejection, f"the repair was rejected too ({second_rejection})"
+                )
             raise ModelOutputRejectedAfterRepair(
                 f"role '{role_definition.role_name}' answer still invalid after one repair attempt: "
                 f"{second_rejection} (first answer: {first_rejection})",
                 rejected_answer_text=second_rejection.rejected_answer_text,
-                problems=second_rejection.problems) from second_rejection
+                problems=second_rejection.problems,
+            ) from second_rejection
         except PaperwatchError as repair_failure:  # e.g. the repair call timed out: the corrected answer is valid
             if first_rejection.salvage is not None:
-                return _result_from_salvaged_first_answer(role_definition, first_rejection,
-                                                          f"the repair call failed ({repair_failure})")
+                return _result_from_salvaged_first_answer(
+                    role_definition, first_rejection, f"the repair call failed ({repair_failure})"
+                )
             raise
 
 
-def _result_from_salvaged_first_answer(role_definition: RoleDefinition, first_rejection: ModelOutputInvalid,
-                                       why_not_the_repair: str) -> RoleRunResult:
+def _result_from_salvaged_first_answer(
+    role_definition: RoleDefinition, first_rejection: ModelOutputInvalid, why_not_the_repair: str
+) -> RoleRunResult:
     salvage = first_rejection.salvage
-    return RoleRunResult(validated_output=salvage.salvaged_output, model_response=first_rejection.model_response,
-                         role_name=role_definition.role_name, prompt_version=role_definition.prompt_version,
-                         host_corrections=f"{salvage.describe()}; used the corrected first answer because "
-                                          f"{why_not_the_repair}")
+    return RoleRunResult(
+        validated_output=salvage.salvaged_output,
+        model_response=first_rejection.model_response,
+        role_name=role_definition.role_name,
+        prompt_version=role_definition.prompt_version,
+        host_corrections=f"{salvage.describe()}; used the corrected first answer because {why_not_the_repair}",
+    )
 
 
 def _salvage_is_acceptable(salvage: AnswerSalvage | None, salvage_policy: str) -> bool:
@@ -152,12 +176,19 @@ def _salvage_is_acceptable(salvage: AnswerSalvage | None, salvage_policy: str) -
     return salvage_policy == SALVAGE_ALWAYS or salvage.dropped_at_most_half
 
 
-def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app_config: AppConfig,
-                  model_client: ModelClient, connection: sqlite3.Connection,
-                  job_id: str | None = None, rejected_first_answer: ModelOutputInvalid | None = None,
-                  deadline_monotonic: float | None = None,
-                  holds_inference_reservation: bool = False,
-                  salvage_policy: str = SALVAGE_NEVER) -> RoleRunResult:
+def run_role_once(
+    *,
+    role_definition: RoleDefinition,
+    role_input: RoleInput,
+    app_config: AppConfig,
+    model_client: ModelClient,
+    connection: sqlite3.Connection,
+    job_id: str | None = None,
+    rejected_first_answer: ModelOutputInvalid | None = None,
+    deadline_monotonic: float | None = None,
+    holds_inference_reservation: bool = False,
+    salvage_policy: str = SALVAGE_NEVER,
+) -> RoleRunResult:
     """One request. With `rejected_first_answer` it is the repair request: the same input plus the rejected answer
     and its problems, in a new fresh context. `holds_inference_reservation` is True only for the holder of the
     reservation (the report writer); every other caller yields to a reservation before taking the lock.
@@ -175,16 +206,25 @@ def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app
             f"{role_limits.max_output_tokens} reserved for reasoning and the answer exceed "
             f"model.required_context_tokens = {app_config.model.required_context_tokens}",
             operator_hint="lower reading.section_max_characters, or raise model.required_context_tokens if the "
-                          "server's per-slot context allows it")
+            "server's per-slot context allows it",
+        )
     lock_wait_seconds = float(app_config.model.inference_lock_wait_seconds)
     call_timeout_seconds = float(role_limits.timeout_seconds)
 
     call_started_at = utc_now_timestamp()
     call_started_monotonic = time.monotonic()
     model_response: StructuredChatResponse | None = None
-    activity_id = start_activity(connection, "model_call", {
-        "role": role_definition.role_name, "repair": rejected_first_answer is not None, "job_id": job_id,
-        "estimated_prompt_tokens": estimated_prompt_tokens, "timeout_seconds": int(call_timeout_seconds)})
+    activity_id = start_activity(
+        connection,
+        "model_call",
+        {
+            "role": role_definition.role_name,
+            "repair": rejected_first_answer is not None,
+            "job_id": job_id,
+            "estimated_prompt_tokens": estimated_prompt_tokens,
+            "timeout_seconds": int(call_timeout_seconds),
+        },
+    )
     host_corrections: str | None = None
     try:
         with interruptible_model_wait():  # a worker stop request aborts the wait and the request (worker_stop.py)
@@ -193,22 +233,26 @@ def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app
             if deadline_monotonic is not None:
                 seconds_left = deadline_monotonic - time.monotonic()
                 if seconds_left <= 0:
-                    raise ModelCallDeadlineExceeded(f"role '{role_definition.role_name}': the caller's deadline "
-                                                    "passed before the call could start")
+                    raise ModelCallDeadlineExceeded(
+                        f"role '{role_definition.role_name}': the caller's deadline passed before the call could start"
+                    )
                 lock_wait_seconds = min(lock_wait_seconds, seconds_left)
                 call_timeout_seconds = min(call_timeout_seconds, seconds_left)
             with hold_inference_lock(app_config.inference_lock_path, lock_wait_seconds):
                 if deadline_monotonic is not None:  # the wait for the lock used part of the time left
                     call_timeout_seconds = min(call_timeout_seconds, deadline_monotonic - time.monotonic())
                     if call_timeout_seconds <= 0:
-                        raise ModelCallDeadlineExceeded(f"role '{role_definition.role_name}': the caller's "
-                                                        "deadline passed while waiting for the inference slot")
+                        raise ModelCallDeadlineExceeded(
+                            f"role '{role_definition.role_name}': the caller's "
+                            "deadline passed while waiting for the inference slot"
+                        )
                 model_response = model_client.request_structured_completion(
-                    _build_chat_request(role_definition, role_input, user_message, role_limits,
-                                        call_timeout_seconds))
+                    _build_chat_request(role_definition, role_input, user_message, role_limits, call_timeout_seconds)
+                )
         try:
-            validated_output = parse_and_validate_role_output(role_definition, model_response.final_answer_text,
-                                                              role_input)
+            validated_output = parse_and_validate_role_output(
+                role_definition, model_response.final_answer_text, role_input
+            )
         except ModelOutputInvalid as rejection:
             rejection.model_response = model_response
             if not _salvage_is_acceptable(rejection.salvage, salvage_policy):
@@ -216,9 +260,17 @@ def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app
             validated_output = rejection.salvage.salvaged_output
             host_corrections = rejection.salvage.describe()
     except PaperwatchError as call_error:
-        _log_model_call(connection, role_definition.role_name, logged_prompt_version, job_id, call_started_at,
-                        time.monotonic() - call_started_monotonic, model_response,
-                        outcome=call_error.model_call_outcome, error_message=str(call_error))
+        _log_model_call(
+            connection,
+            role_definition.role_name,
+            logged_prompt_version,
+            job_id,
+            call_started_at,
+            time.monotonic() - call_started_monotonic,
+            model_response,
+            outcome=call_error.model_call_outcome,
+            error_message=str(call_error),
+        )
         if call_error.is_service_outage:
             record_service_outage(connection, MODEL_SERVICE_NAME, str(call_error), app_config.model)
         finish_activity(connection, activity_id, call_error.model_call_outcome, note=str(call_error))
@@ -227,19 +279,41 @@ def run_role_once(*, role_definition: RoleDefinition, role_input: RoleInput, app
         finish_activity(connection, activity_id, "stopped")
         raise
 
-    _log_model_call(connection, role_definition.role_name, logged_prompt_version, job_id, call_started_at,
-                    time.monotonic() - call_started_monotonic, model_response, outcome="ok",
-                    error_message=host_corrections)  # on success the column holds the host corrections, if any
-    finish_activity(connection, activity_id, "ok", note=host_corrections,
-                    detail_update={"completion_tokens": model_response.completion_tokens})
+    _log_model_call(
+        connection,
+        role_definition.role_name,
+        logged_prompt_version,
+        job_id,
+        call_started_at,
+        time.monotonic() - call_started_monotonic,
+        model_response,
+        outcome="ok",
+        error_message=host_corrections,
+    )  # on success the column holds the host corrections, if any
+    finish_activity(
+        connection,
+        activity_id,
+        "ok",
+        note=host_corrections,
+        detail_update={"completion_tokens": model_response.completion_tokens},
+    )
     record_service_success(connection, MODEL_SERVICE_NAME)
-    return RoleRunResult(validated_output=validated_output, model_response=model_response,
-                         role_name=role_definition.role_name, prompt_version=role_definition.prompt_version,
-                         host_corrections=host_corrections)
+    return RoleRunResult(
+        validated_output=validated_output,
+        model_response=model_response,
+        role_name=role_definition.role_name,
+        prompt_version=role_definition.prompt_version,
+        host_corrections=host_corrections,
+    )
 
 
-def _build_chat_request(role_definition: RoleDefinition, role_input: RoleInput, user_message: str,
-                        role_limits: RoleLimits, call_timeout_seconds: float) -> StructuredChatRequest:
+def _build_chat_request(
+    role_definition: RoleDefinition,
+    role_input: RoleInput,
+    user_message: str,
+    role_limits: RoleLimits,
+    call_timeout_seconds: float,
+) -> StructuredChatRequest:
     return StructuredChatRequest(
         role_name=role_definition.role_name,
         system_prompt=role_definition.system_prompt,
@@ -253,8 +327,9 @@ def _build_chat_request(role_definition: RoleDefinition, role_input: RoleInput, 
     )
 
 
-def parse_and_validate_role_output(role_definition: RoleDefinition, final_answer_text: str,
-                                   role_input: RoleInput) -> dict[str, Any]:
+def parse_and_validate_role_output(
+    role_definition: RoleDefinition, final_answer_text: str, role_input: RoleInput
+) -> dict[str, Any]:
     role_name = role_definition.role_name
     answer_text = _strip_markdown_code_fence(final_answer_text)
     if not answer_text:
@@ -262,31 +337,41 @@ def parse_and_validate_role_output(role_definition: RoleDefinition, final_answer
     try:
         parsed_answer = json.loads(answer_text)
     except json.JSONDecodeError as decode_error:
-        raise ModelOutputInvalid(f"role '{role_name}' answer is not valid JSON: {decode_error}",
-                                 rejected_answer_text=answer_text,
-                                 problems=(f"not valid JSON: {decode_error}",)) from decode_error
+        raise ModelOutputInvalid(
+            f"role '{role_name}' answer is not valid JSON: {decode_error}",
+            rejected_answer_text=answer_text,
+            problems=(f"not valid JSON: {decode_error}",),
+        ) from decode_error
 
     schema_validator = Draft202012Validator(role_definition.output_schema)
     schema_violations = sorted(schema_validator.iter_errors(parsed_answer), key=lambda violation: list(violation.path))
     if schema_violations:
         readable_violations = "; ".join(
             f"{'/'.join(map(str, violation.path)) or '<root>'}: {violation.message}"
-            for violation in schema_violations[:MAX_REPORTED_SCHEMA_ERRORS])
-        raise ModelOutputInvalid(f"role '{role_name}' answer violates its schema: {readable_violations}",
-                                 rejected_answer_text=answer_text, problems=(readable_violations,))
+            for violation in schema_violations[:MAX_REPORTED_SCHEMA_ERRORS]
+        )
+        raise ModelOutputInvalid(
+            f"role '{role_name}' answer violates its schema: {readable_violations}",
+            rejected_answer_text=answer_text,
+            problems=(readable_violations,),
+        )
 
     semantic_problems = role_definition.find_semantic_problems(parsed_answer, role_input)
     if semantic_problems:
         reported_problems = semantic_problems[:MAX_REPORTED_SEMANTIC_PROBLEMS]
-        rejection = ModelOutputInvalid(f"role '{role_name}' answer failed host checks: {'; '.join(reported_problems)}",
-                                       rejected_answer_text=answer_text, problems=tuple(reported_problems))
+        rejection = ModelOutputInvalid(
+            f"role '{role_name}' answer failed host checks: {'; '.join(reported_problems)}",
+            rejected_answer_text=answer_text,
+            problems=tuple(reported_problems),
+        )
         rejection.salvage = _salvage_that_passes_every_check(role_definition, parsed_answer, role_input)
         raise rejection
     return parsed_answer
 
 
-def _salvage_that_passes_every_check(role_definition: RoleDefinition, parsed_answer: dict[str, Any],
-                                     role_input: RoleInput) -> AnswerSalvage | None:
+def _salvage_that_passes_every_check(
+    role_definition: RoleDefinition, parsed_answer: dict[str, Any], role_input: RoleInput
+) -> AnswerSalvage | None:
     """The role's corrected answer, only if it passes the schema and EVERY host check again; otherwise None."""
     if role_definition.salvage_answer is None:
         return None
@@ -304,12 +389,14 @@ def _render_repair_request(rejected_answer: ModelOutputInvalid) -> str:
     """Appended to the original user message for the one repair attempt."""
     previous_answer = (rejected_answer.rejected_answer_text or "")[:MAXIMUM_REJECTED_ANSWER_CHARACTERS_IN_REPAIR]
     problem_lines = "\n".join(f"- {problem}" for problem in rejected_answer.problems)
-    return (f"\nREPAIR REQUEST: your previous answer to this input was rejected by automatic checks.\n"
-            f"PROBLEMS:\n{problem_lines}\n"
-            f"PREVIOUS ANSWER (rejected):\n{previous_answer or '(empty or cut off)'}\n"
-            "Return a corrected, complete JSON object that fixes every problem. A quotation or number that is in a "
-            "different passage must cite THAT passage. Where the input cannot support a claim, remove it or mark it "
-            "as insufficient evidence instead of guessing.\n")
+    return (
+        f"\nREPAIR REQUEST: your previous answer to this input was rejected by automatic checks.\n"
+        f"PROBLEMS:\n{problem_lines}\n"
+        f"PREVIOUS ANSWER (rejected):\n{previous_answer or '(empty or cut off)'}\n"
+        "Return a corrected, complete JSON object that fixes every problem. A quotation or number that is in a "
+        "different passage must cite THAT passage. Where the input cannot support a claim, remove it or mark it "
+        "as insufficient evidence instead of guessing.\n"
+    )
 
 
 def _strip_markdown_code_fence(answer_text: str) -> str:
@@ -319,17 +406,34 @@ def _strip_markdown_code_fence(answer_text: str) -> str:
     return stripped_text.strip()
 
 
-def _log_model_call(connection: sqlite3.Connection, role_name: str, prompt_version: str, job_id: str | None,
-                    started_at: str, duration_seconds: float, model_response: StructuredChatResponse | None, *,
-                    outcome: str, error_message: str | None) -> None:
+def _log_model_call(
+    connection: sqlite3.Connection,
+    role_name: str,
+    prompt_version: str,
+    job_id: str | None,
+    started_at: str,
+    duration_seconds: float,
+    model_response: StructuredChatResponse | None,
+    *,
+    outcome: str,
+    error_message: str | None,
+) -> None:
     connection.execute(
         """INSERT INTO model_calls (call_id, role_name, prompt_version, job_id, model_identity, server_build,
                started_at, duration_seconds, outcome, prompt_tokens, completion_tokens, error_message)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (new_internal_id(MODEL_CALL_ID_PREFIX), role_name, prompt_version, job_id,
-         model_response.model_identity if model_response else None,
-         model_response.server_build if model_response else None,
-         started_at, round(duration_seconds, 3), outcome,
-         model_response.prompt_tokens if model_response else None,
-         model_response.completion_tokens if model_response else None,
-         error_message))
+        (
+            new_internal_id(MODEL_CALL_ID_PREFIX),
+            role_name,
+            prompt_version,
+            job_id,
+            model_response.model_identity if model_response else None,
+            model_response.server_build if model_response else None,
+            started_at,
+            round(duration_seconds, 3),
+            outcome,
+            model_response.prompt_tokens if model_response else None,
+            model_response.completion_tokens if model_response else None,
+            error_message,
+        ),
+    )

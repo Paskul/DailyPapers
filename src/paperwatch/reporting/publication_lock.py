@@ -24,7 +24,8 @@ def hold_report_publication_lock(lock_file_path: Path) -> Iterator[None]:
         except BlockingIOError:
             raise ReportPublicationInProgress(
                 f"another `paperwatch report` holds {lock_file_path}; it is publishing now",
-                operator_hint="wait for it to finish; a rerun afterwards changes nothing") from None
+                operator_hint="wait for it to finish; a rerun afterwards changes nothing",
+            ) from None
         try:
             yield
         finally:

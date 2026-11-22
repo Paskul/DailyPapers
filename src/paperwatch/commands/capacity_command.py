@@ -11,7 +11,8 @@ from paperwatch.measurement.capacity import describe_capacity, measure_capacity
 
 
 def run_capacity_command(app: AppContext, arguments: argparse.Namespace) -> int:
-    measurement = measure_capacity(app.connection, app.config, window_end=utc_now(),
-                                   window_hours=float(arguments.window_hours))
+    measurement = measure_capacity(
+        app.connection, app.config, window_end=utc_now(), window_hours=float(arguments.window_hours)
+    )
     print("\n".join(describe_capacity(measurement)))
     return 0

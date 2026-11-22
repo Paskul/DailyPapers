@@ -37,7 +37,9 @@ def test_recorded_paper_flows_through_cli_with_fake_model(initialized_home: Pape
     [review_row] = initialized_home.query("SELECT review_id, model_identity, prompt_version FROM reviews")
     assert paper_row["status"] == "complete"
     assert review_row["prompt_version"] == REVIEWER_PROMPT_VERSION
-    note_path = initialized_home.home_dir / "output" / "papers" / paper_row["paper_id"] / f"{review_row['review_id']}.md"
+    note_path = (
+        initialized_home.home_dir / "output" / "papers" / paper_row["paper_id"] / f"{review_row['review_id']}.md"
+    )
     assert note_path.is_file()
     assert f"../papers/{paper_row['paper_id']}/{review_row['review_id']}.md" in report_text
 

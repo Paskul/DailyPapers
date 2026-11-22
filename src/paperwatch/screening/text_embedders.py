@@ -22,8 +22,12 @@ import numpy as np
 
 from paperwatch.config import AppConfig
 from paperwatch.errors import ScreeningUnavailable
-from paperwatch.screening.embedding_model_registry import (POOLING_CLS_TOKEN, POOLING_MEAN_OF_TOKENS,
-                                                           PinnedEmbeddingModel, look_up_pinned_embedding_model)
+from paperwatch.screening.embedding_model_registry import (
+    POOLING_CLS_TOKEN,
+    POOLING_MEAN_OF_TOKENS,
+    PinnedEmbeddingModel,
+    look_up_pinned_embedding_model,
+)
 
 EMBEDDING_BACKEND_ONNX = "onnx"
 EMBEDDING_BACKEND_HASHING = "hashing"
@@ -56,9 +60,12 @@ def load_text_embedder(app_config: AppConfig) -> TextEmbedder:
     screening_settings = app_config.screening
     if screening_settings.embedding_backend == EMBEDDING_BACKEND_HASHING:
         return HashingTestEmbedder()
-    return OnnxSentenceEmbedder.load(look_up_pinned_embedding_model(screening_settings.embedding_model),
-                                     app_config.embedding_model_dir, thread_count=screening_settings.embedding_threads,
-                                     batch_size=screening_settings.embedding_batch_size)
+    return OnnxSentenceEmbedder.load(
+        look_up_pinned_embedding_model(screening_settings.embedding_model),
+        app_config.embedding_model_dir,
+        thread_count=screening_settings.embedding_threads,
+        batch_size=screening_settings.embedding_batch_size,
+    )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -77,15 +84,18 @@ def verify_pinned_model_files(pinned_model: PinnedEmbeddingModel, model_dir: Pat
                 while chunk := model_file.read(FILE_HASH_CHUNK_BYTES):
                     file_hash.update(chunk)
         except FileNotFoundError:
-            raise ScreeningUnavailable(f"embedding model file {file_path} is missing",
-                                       operator_hint=install_hint) from None
+            raise ScreeningUnavailable(
+                f"embedding model file {file_path} is missing", operator_hint=install_hint
+            ) from None
         except OSError as read_error:
-            raise ScreeningUnavailable(f"embedding model file {file_path} cannot be read: {read_error}",
-                                       operator_hint="the collector account needs read access to the model "
-                                                     "directory") from None
+            raise ScreeningUnavailable(
+                f"embedding model file {file_path} cannot be read: {read_error}",
+                operator_hint="the collector account needs read access to the model directory",
+            ) from None
         if file_hash.hexdigest() != pinned_file.sha256:
-            raise ScreeningUnavailable(f"embedding model file {file_path} does not match its pinned sha256",
-                                       operator_hint=install_hint)
+            raise ScreeningUnavailable(
+                f"embedding model file {file_path} does not match its pinned sha256", operator_hint=install_hint
+            )
 
 
 class OnnxSentenceEmbedder:
@@ -99,27 +109,33 @@ class OnnxSentenceEmbedder:
         self._input_names = {session_input.name for session_input in inference_session.get_inputs()}
 
     @classmethod
-    def load(cls, pinned_model: PinnedEmbeddingModel, model_dir: Path, *, thread_count: int,
-             batch_size: int) -> OnnxSentenceEmbedder:
+    def load(
+        cls, pinned_model: PinnedEmbeddingModel, model_dir: Path, *, thread_count: int, batch_size: int
+    ) -> OnnxSentenceEmbedder:
         verify_pinned_model_files(pinned_model, model_dir)
         try:
             import onnxruntime
             from tokenizers import Tokenizer
         except ImportError as import_error:
-            raise ScreeningUnavailable(f"the ONNX runtime is not installed: {import_error}",
-                                       operator_hint="reinstall paperwatch with its dependencies (uv sync)") from None
+            raise ScreeningUnavailable(
+                f"the ONNX runtime is not installed: {import_error}",
+                operator_hint="reinstall paperwatch with its dependencies (uv sync)",
+            ) from None
         session_options = onnxruntime.SessionOptions()
         session_options.intra_op_num_threads = thread_count
         session_options.inter_op_num_threads = 1
         session_options.log_severity_level = 3  # errors only
         try:
             inference_session = onnxruntime.InferenceSession(
-                str(model_dir / pinned_model.onnx_model_file.file_name), sess_options=session_options,
-                providers=["CPUExecutionProvider"])
+                str(model_dir / pinned_model.onnx_model_file.file_name),
+                sess_options=session_options,
+                providers=["CPUExecutionProvider"],
+            )
             tokenizer = Tokenizer.from_file(str(model_dir / pinned_model.tokenizer_file.file_name))
         except Exception as load_error:  # onnxruntime raises its own exception types
-            raise ScreeningUnavailable(f"the embedding model {pinned_model.name} failed to load: {load_error}") \
-                from None
+            raise ScreeningUnavailable(
+                f"the embedding model {pinned_model.name} failed to load: {load_error}"
+            ) from None
         tokenizer.enable_truncation(max_length=pinned_model.maximum_tokens)
         tokenizer.enable_padding(pad_id=tokenizer.token_to_id("[PAD]") or 0, pad_token="[PAD]")
         return cls(pinned_model, inference_session, tokenizer, batch_size)
@@ -130,19 +146,23 @@ class OnnxSentenceEmbedder:
     def embed_texts(self, model_input_texts: list[str]) -> np.ndarray:
         embeddings = np.zeros((len(model_input_texts), self.dimensions), dtype=np.float32)
         # Batches of similar length waste less work on padding; results go back to their input positions.
-        positions_by_length = sorted(range(len(model_input_texts)),
-                                     key=lambda position: len(model_input_texts[position]))
+        positions_by_length = sorted(
+            range(len(model_input_texts)), key=lambda position: len(model_input_texts[position])
+        )
         for batch_start in range(0, len(positions_by_length), self._batch_size):
-            batch_positions = positions_by_length[batch_start:batch_start + self._batch_size]
-            embeddings[batch_positions] = self._embed_one_batch([model_input_texts[position]
-                                                                 for position in batch_positions])
+            batch_positions = positions_by_length[batch_start : batch_start + self._batch_size]
+            embeddings[batch_positions] = self._embed_one_batch(
+                [model_input_texts[position] for position in batch_positions]
+            )
         return embeddings
 
     def _embed_one_batch(self, batch_texts: list[str]) -> np.ndarray:
         encodings = self._tokenizer.encode_batch(batch_texts)
         attention_mask = np.array([encoding.attention_mask for encoding in encodings], dtype=np.int64)
-        model_inputs = {"input_ids": np.array([encoding.ids for encoding in encodings], dtype=np.int64),
-                        "attention_mask": attention_mask}
+        model_inputs = {
+            "input_ids": np.array([encoding.ids for encoding in encodings], dtype=np.int64),
+            "attention_mask": attention_mask,
+        }
         if "token_type_ids" in self._input_names:
             model_inputs["token_type_ids"] = np.array([encoding.type_ids for encoding in encodings], dtype=np.int64)
         last_hidden_states = self._inference_session.run(None, model_inputs)[0]

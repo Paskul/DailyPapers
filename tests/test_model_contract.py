@@ -23,31 +23,56 @@ from paperwatch.sources.fixture_source import RecordedFixtureSource
 from conftest import EXAMPLE_TOPIC_TOML, RECORDED_PAPER_FIXTURE
 
 
-@pytest.mark.parametrize("content, reasoning_content, expected_answer, expected_reasoning", [
-    ('{"a": 1}', "thinking", '{"a": 1}', "thinking"),
-    ('<think>inline</think>\n{"a": 1}', None, '{"a": 1}', "inline"),
-    ('template opened it</think>{"a": 1}', None, '{"a": 1}', "template opened it"),
-    ("<think>never finished", None, "", "never finished"),
-])
+@pytest.mark.parametrize(
+    "content, reasoning_content, expected_answer, expected_reasoning",
+    [
+        ('{"a": 1}', "thinking", '{"a": 1}', "thinking"),
+        ('<think>inline</think>\n{"a": 1}', None, '{"a": 1}', "inline"),
+        ('template opened it</think>{"a": 1}', None, '{"a": 1}', "template opened it"),
+        ("<think>never finished", None, "", "never finished"),
+    ],
+)
 def test_reasoning_is_separated_from_final_answer(content, reasoning_content, expected_answer, expected_reasoning):
     assert separate_reasoning_from_final_answer(content, reasoning_content) == (expected_answer, expected_reasoning)
 
 
 PASSAGE_TEXT = "In 200 simulated warehouse episodes the monitor rejected all 37 plans that blocked an exit."
-REVIEWER_ROLE_INPUT = {"coverage": "abstract_only", "paper": {"title": "t"}, "reading_mode": "passages",
-                       "passages": [{"passage_id": "A1", "section": "Abstract", "text": PASSAGE_TEXT}],
-                       "citable_passages": {"A1": PASSAGE_TEXT}}
-INSUFFICIENT = {"statement": "insufficient evidence", "evidence_status": "insufficient_evidence",
-                "supporting_passage_ids": []}
+REVIEWER_ROLE_INPUT = {
+    "coverage": "abstract_only",
+    "paper": {"title": "t"},
+    "reading_mode": "passages",
+    "passages": [{"passage_id": "A1", "section": "Abstract", "text": PASSAGE_TEXT}],
+    "citable_passages": {"A1": PASSAGE_TEXT},
+}
+INSUFFICIENT = {
+    "statement": "insufficient evidence",
+    "evidence_status": "insufficient_evidence",
+    "supporting_passage_ids": [],
+}
 VALID_REVIEWER_ANSWER = {
     "one_sentence_summary": "A monitor rejected all 37 exit-blocking plans.",
-    "research_question": {"statement": "Can plans be checked before dispatch?", "evidence_status": "supported",
-                          "supporting_passage_ids": ["A1"]},
-    "method": INSUFFICIENT, "evaluation_setting": INSUFFICIENT, "assumptions": [],
-    "results": [{"claim": "The monitor rejected all 37 blocking plans.", "conditions": "200 simulated episodes",
-                 "passage_id": "A1", "excerpt": "the monitor rejected all 37 plans"}],
-    "limitations": [], "reviewer_inferences": [], "ambiguous_passages": [], "parser_problems": [],
-    "insufficient_evidence": False}
+    "research_question": {
+        "statement": "Can plans be checked before dispatch?",
+        "evidence_status": "supported",
+        "supporting_passage_ids": ["A1"],
+    },
+    "method": INSUFFICIENT,
+    "evaluation_setting": INSUFFICIENT,
+    "assumptions": [],
+    "results": [
+        {
+            "claim": "The monitor rejected all 37 blocking plans.",
+            "conditions": "200 simulated episodes",
+            "passage_id": "A1",
+            "excerpt": "the monitor rejected all 37 plans",
+        }
+    ],
+    "limitations": [],
+    "reviewer_inferences": [],
+    "ambiguous_passages": [],
+    "parser_problems": [],
+    "insufficient_evidence": False,
+}
 
 
 def test_valid_reviewer_answer_passes():
@@ -55,14 +80,28 @@ def test_valid_reviewer_answer_passes():
     assert validated == VALID_REVIEWER_ANSWER
 
 
-@pytest.mark.parametrize("bad_answer_text, expected_message", [
-    ("not json", "not valid JSON"),
-    (json.dumps({**VALID_REVIEWER_ANSWER, "invented_field": 1}), "violates its schema"),
-    (json.dumps({**VALID_REVIEWER_ANSWER, "results": [{**VALID_REVIEWER_ANSWER["results"][0],
-                                                       "passage_id": "P99"}]}), "not in the input packet"),
-    (json.dumps({**VALID_REVIEWER_ANSWER, "results": [{**VALID_REVIEWER_ANSWER["results"][0],
-                                                       "claim": "Accuracy was 97.3%."}]}), "97.3"),
-])
+@pytest.mark.parametrize(
+    "bad_answer_text, expected_message",
+    [
+        ("not json", "not valid JSON"),
+        (json.dumps({**VALID_REVIEWER_ANSWER, "invented_field": 1}), "violates its schema"),
+        (
+            json.dumps(
+                {**VALID_REVIEWER_ANSWER, "results": [{**VALID_REVIEWER_ANSWER["results"][0], "passage_id": "P99"}]}
+            ),
+            "not in the input packet",
+        ),
+        (
+            json.dumps(
+                {
+                    **VALID_REVIEWER_ANSWER,
+                    "results": [{**VALID_REVIEWER_ANSWER["results"][0], "claim": "Accuracy was 97.3%."}],
+                }
+            ),
+            "97.3",
+        ),
+    ],
+)
 def test_invalid_reviewer_answers_are_rejected(bad_answer_text, expected_message):
     with pytest.raises(ModelOutputInvalid, match=expected_message):
         parse_and_validate_role_output(REVIEWER_ROLE, bad_answer_text, REVIEWER_ROLE_INPUT)
@@ -75,7 +114,9 @@ def _load_app_with_one_queued_paper(home_dir: Path, model_client) -> AppContext:
     config_path.write_text(config_path.read_text().replace("retry_delay_seconds = 600", "retry_delay_seconds = 0"))
     app = AppContext.load(home_dir, model_client=model_client)
     [record] = RecordedFixtureSource(RECORDED_PAPER_FIXTURE).fetch_records()
-    promote_paper_directly_and_queue_review(app.connection, record_collected_paper(app.connection, record).paper_id, max_attempts=3)
+    promote_paper_directly_and_queue_review(
+        app.connection, record_collected_paper(app.connection, record).paper_id, max_attempts=3
+    )
     return app
 
 
@@ -90,17 +131,27 @@ def test_invalid_model_output_gets_one_repair_then_fails_the_job_with_its_reason
     assert app.connection.execute("SELECT status FROM papers").fetchone()[0] == "failed"
     [job_row] = app.connection.execute("SELECT status, last_error FROM jobs").fetchall()
     assert job_row["status"] == "failed" and "violates its schema" in job_row["last_error"]
-    assert [row[0] for row in app.connection.execute(
-        "SELECT prompt_version FROM model_calls WHERE outcome = 'invalid_output' ORDER BY started_at, rowid")] == \
-        [REVIEWER_ROLE.prompt_version, REVIEWER_ROLE.prompt_version + "+repair"]
+    assert [
+        row[0]
+        for row in app.connection.execute(
+            "SELECT prompt_version FROM model_calls WHERE outcome = 'invalid_output' ORDER BY started_at, rowid"
+        )
+    ] == [REVIEWER_ROLE.prompt_version, REVIEWER_ROLE.prompt_version + "+repair"]
     assert "REPAIR REQUEST" in fake_model.received_requests[1].user_message
     assert run_single_work_cycle(app, probe_paused_model_now=False).outcome == WorkCycleOutcome.NO_JOB_DUE
 
 
 def test_a_repaired_answer_is_accepted(tmp_path):
     from paperwatch.llm.fake_answers import build_fake_review
-    fake_model = FakeModelClient({"reviewer": [json.dumps({"wrong": "shape"}),
-                                               lambda request: json.dumps(build_fake_review(request.role_input))]})
+
+    fake_model = FakeModelClient(
+        {
+            "reviewer": [
+                json.dumps({"wrong": "shape"}),
+                lambda request: json.dumps(build_fake_review(request.role_input)),
+            ]
+        }
+    )
     app = _load_app_with_one_queued_paper(tmp_path, fake_model)
     assert run_single_work_cycle(app, probe_paused_model_now=False).outcome == WorkCycleOutcome.JOB_COMPLETED
     assert app.connection.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 1
@@ -123,6 +174,7 @@ def test_live_server_reviews_recorded_paper(tmp_path):
     """Optional: the same vertical slice against the real local llama.cpp server."""
     from paperwatch.llm.llama_cpp_client import LlamaCppModelClient
     from paperwatch.config import ModelSettings
+
     app = _load_app_with_one_queued_paper(tmp_path, LlamaCppModelClient(ModelSettings()))
     cycle_report = run_single_work_cycle(app, probe_paused_model_now=True)
     assert cycle_report.outcome == WorkCycleOutcome.JOB_COMPLETED, cycle_report.message

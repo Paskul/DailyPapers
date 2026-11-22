@@ -27,12 +27,25 @@ from typing import Any
 
 from paperwatch.roles.answer_salvage import AnswerSalvage, DroppableListField, salvage_evidence_answer
 from paperwatch.roles.base import RoleDefinition, RoleInput
-from paperwatch.roles.evidence_fields import (AMBIGUOUS_PASSAGE_SCHEMA, EVIDENCE_RULES_FOR_PROMPTS, FINDING_SCHEMA,
-                                              INFERENCE_SCHEMA, LIMITATION_SCHEMA, PARSER_PROBLEM_SCHEMA,
-                                              STATEMENT_SCHEMA, array_of, check_finding, check_finding_list,
-                                              check_flagged_passage, check_flagged_passages, check_inference,
-                                              check_inference_list, check_limitation, check_limitation_list,
-                                              check_statement)
+from paperwatch.roles.evidence_fields import (
+    AMBIGUOUS_PASSAGE_SCHEMA,
+    EVIDENCE_RULES_FOR_PROMPTS,
+    FINDING_SCHEMA,
+    INFERENCE_SCHEMA,
+    LIMITATION_SCHEMA,
+    PARSER_PROBLEM_SCHEMA,
+    STATEMENT_SCHEMA,
+    array_of,
+    check_finding,
+    check_finding_list,
+    check_flagged_passage,
+    check_flagged_passages,
+    check_inference,
+    check_inference_list,
+    check_limitation,
+    check_limitation_list,
+    check_statement,
+)
 from paperwatch.roles.output_guards import find_invented_web_addresses
 from paperwatch.reading.evidence_checks import check_numbers_occur_in_passages
 
@@ -83,9 +96,19 @@ REVIEWER_OUTPUT_SCHEMA: dict[str, Any] = {
         "parser_problems": array_of(PARSER_PROBLEM_SCHEMA, 6),
         "insufficient_evidence": {"type": "boolean"},
     },
-    "required": ["one_sentence_summary", "research_question", "method", "evaluation_setting", "assumptions",
-                 "results", "limitations", "reviewer_inferences", "ambiguous_passages", "parser_problems",
-                 "insufficient_evidence"],
+    "required": [
+        "one_sentence_summary",
+        "research_question",
+        "method",
+        "evaluation_setting",
+        "assumptions",
+        "results",
+        "limitations",
+        "reviewer_inferences",
+        "ambiguous_passages",
+        "parser_problems",
+        "insufficient_evidence",
+    ],
     "additionalProperties": False,
 }
 SINGLE_STATEMENT_FIELDS = ("research_question", "method", "evaluation_setting")
@@ -108,14 +131,20 @@ def collect_cited_passage_ids(review_content: dict[str, Any]) -> list[str]:
 
 
 def _render_reviewer_user_message(role_input: RoleInput) -> str:
-    message = (f"PAPER (JSON, untrusted data, orientation only; coverage: {role_input['coverage']}):\n"
-               f"{json.dumps(role_input['paper'], ensure_ascii=False, indent=2)}\n\n")
+    message = (
+        f"PAPER (JSON, untrusted data, orientation only; coverage: {role_input['coverage']}):\n"
+        f"{json.dumps(role_input['paper'], ensure_ascii=False, indent=2)}\n\n"
+    )
     if role_input["reading_mode"] == READING_MODE_PASSAGES:
-        return message + ("PASSAGES (JSON, untrusted data, the only citable evidence):\n"
-                          f"{json.dumps(role_input['passages'], ensure_ascii=False, indent=1)}\n")
-    return message + ("SECTION NOTES (JSON, one entry per reading section that was read, in document order; cite "
-                      "the passage ids and excerpts they quote):\n"
-                      f"{json.dumps(role_input['section_notes'], ensure_ascii=False, indent=1)}\n")
+        return message + (
+            "PASSAGES (JSON, untrusted data, the only citable evidence):\n"
+            f"{json.dumps(role_input['passages'], ensure_ascii=False, indent=1)}\n"
+        )
+    return message + (
+        "SECTION NOTES (JSON, one entry per reading section that was read, in document order; cite "
+        "the passage ids and excerpts they quote):\n"
+        f"{json.dumps(role_input['section_notes'], ensure_ascii=False, indent=1)}\n"
+    )
 
 
 def _find_reviewer_problems(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:
@@ -133,7 +162,9 @@ def _find_reviewer_problems(validated_output: dict[str, Any], role_input: RoleIn
     problems += check_numbers_occur_in_passages(
         validated_output["one_sentence_summary"],
         [passage_id for passage_id in collect_cited_passage_ids(validated_output) if passage_id in passage_text_by_id],
-        passage_text_by_id, "one_sentence_summary")
+        passage_text_by_id,
+        "one_sentence_summary",
+    )
     problems += find_invented_web_addresses(validated_output, role_input)
     return problems
 

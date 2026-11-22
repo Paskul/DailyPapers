@@ -27,35 +27,42 @@ class InferenceReservation:
     reserved_until: datetime
 
 
-def reserve_inference_slot(connection: sqlite3.Connection, reservation_name: str, *, purpose: str,
-                           reserved_until: datetime) -> None:
+def reserve_inference_slot(
+    connection: sqlite3.Connection, reservation_name: str, *, purpose: str, reserved_until: datetime
+) -> None:
     """Create or extend a reservation (autocommit; call outside any open transaction)."""
     connection.execute(
         """INSERT INTO inference_reservations (reservation_name, purpose, reserved_at, reserved_until)
            VALUES (?, ?, ?, ?)
            ON CONFLICT(reservation_name) DO UPDATE SET purpose = excluded.purpose,
                reserved_at = excluded.reserved_at, reserved_until = excluded.reserved_until""",
-        (reservation_name, purpose, format_utc_timestamp(utc_now()), format_utc_timestamp(reserved_until)))
+        (reservation_name, purpose, format_utc_timestamp(utc_now()), format_utc_timestamp(reserved_until)),
+    )
 
 
 def release_inference_reservation(connection: sqlite3.Connection, reservation_name: str) -> None:
     connection.execute("DELETE FROM inference_reservations WHERE reservation_name = ?", (reservation_name,))
 
 
-def find_active_inference_reservation(connection: sqlite3.Connection,
-                                      moment: datetime) -> InferenceReservation | None:
+def find_active_inference_reservation(connection: sqlite3.Connection, moment: datetime) -> InferenceReservation | None:
     """The unexpired reservation that ends last, or None."""
     reservation_row = connection.execute(
         """SELECT * FROM inference_reservations WHERE reserved_until > ?
-           ORDER BY reserved_until DESC LIMIT 1""", (format_utc_timestamp(moment),)).fetchone()
+           ORDER BY reserved_until DESC LIMIT 1""",
+        (format_utc_timestamp(moment),),
+    ).fetchone()
     if reservation_row is None:
         return None
-    return InferenceReservation(reservation_row["reservation_name"], reservation_row["purpose"],
-                                parse_utc_timestamp(reservation_row["reserved_until"]))
+    return InferenceReservation(
+        reservation_row["reservation_name"],
+        reservation_row["purpose"],
+        parse_utc_timestamp(reservation_row["reserved_until"]),
+    )
 
 
-def wait_while_inference_is_reserved(connection: sqlite3.Connection, *,
-                                     sleep_function: Callable[[float], None] = time.sleep) -> float:
+def wait_while_inference_is_reserved(
+    connection: sqlite3.Connection, *, sleep_function: Callable[[float], None] = time.sleep
+) -> float:
     """Block until no unexpired reservation exists. Returns the seconds waited (0.0 when nothing was reserved).
 
     Bounded by the reservations themselves: each one expires at its `reserved_until`."""

@@ -23,8 +23,7 @@ def print_check_results(check_results: list[CheckResult], command_label: str) ->
     """Print every result, then a summary. Returns 0 if nothing FAILED, else the first failure's exit code (or 1)."""
     component_column_width = max(len(result.component) for result in check_results)
     for result in check_results:
-        print(f"{result.verdict:4}  {result.component:<{component_column_width}}  {result.check_name}: "
-              f"{result.detail}")
+        print(f"{result.verdict:4}  {result.component:<{component_column_width}}  {result.check_name}: {result.detail}")
         hint = result.hint or (result.failure.operator_hint if result.failure is not None else None)
         if hint:
             print(f"{'':4}  {'':<{component_column_width}}  hint: {hint}")
@@ -33,7 +32,9 @@ def print_check_results(check_results: list[CheckResult], command_label: str) ->
     if not failed_results:
         print(f"\n{command_label}: all required checks passed")
         return 0
-    print(f"\n{command_label}: {len(failed_results)} check(s) FAILED in: "
-          f"{', '.join(sorted({result.component for result in failed_results}))}")
+    print(
+        f"\n{command_label}: {len(failed_results)} check(s) FAILED in: "
+        f"{', '.join(sorted({result.component for result in failed_results}))}"
+    )
     first_failure = next((result.failure for result in failed_results if result.failure is not None), None)
     return first_failure.process_exit_code if first_failure else 1

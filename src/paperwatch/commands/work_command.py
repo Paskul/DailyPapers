@@ -38,22 +38,46 @@ from paperwatch.catalog import load_edition_row, set_paper_status
 from paperwatch.clock import utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
 from paperwatch.service_log_redaction import redact_service_log_text
-from paperwatch.errors import (InferenceLockTimeout, ModelServerUnavailable, PaperwatchError, SourceInputError,
-                               UnexpectedWorkerError, describe_failure_for_operator)
+from paperwatch.errors import (
+    InferenceLockTimeout,
+    ModelServerUnavailable,
+    PaperwatchError,
+    SourceInputError,
+    UnexpectedWorkerError,
+    describe_failure_for_operator,
+)
 from paperwatch.comparisons.comparison_job import prepare_comparison, write_comparison
 from paperwatch.comparisons.comparison_queue import ComparisonJobInput, queue_comparison_for_review
-from paperwatch.jobs import (ATTEMPT_SETTLEMENT_FAILED_PERMANENTLY, ATTEMPT_SETTLEMENT_LEASE_LOST,
-                             COMPARE_REVIEWS_JOB_KIND, REVIEW_PAPER_JOB_KIND, ClaimedJob, claim_next_due_job,
-                             find_next_job_due_time, finish_job_with_writes, record_job_attempt_failure,
-                             release_job_without_charging_attempt)
+from paperwatch.jobs import (
+    ATTEMPT_SETTLEMENT_FAILED_PERMANENTLY,
+    ATTEMPT_SETTLEMENT_LEASE_LOST,
+    COMPARE_REVIEWS_JOB_KIND,
+    REVIEW_PAPER_JOB_KIND,
+    ClaimedJob,
+    claim_next_due_job,
+    find_next_job_due_time,
+    finish_job_with_writes,
+    record_job_attempt_failure,
+    release_job_without_charging_attempt,
+)
 from paperwatch.lease_keeper import JobLeaseKeeper
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, ensure_model_service_available, read_service_health_state
 from paperwatch.reading.reading_pipeline import read_paper
 from paperwatch.reading.review_packet import ExtractedTextUnavailable, build_review_packet
-from paperwatch.readings import (ReadingEnqueueOutcome, ReadingJobInput, dispatch_order_of_job_row,
-                                 enqueue_reading_if_needed, refresh_paper_status_from_work, select_reading_input)
-from paperwatch.references.reference_selection import (SELECT_REFERENCES_JOB_KIND, ReferenceSelectionJobInput,
-                                                       prepare_reference_selection, write_reference_selection_outcome)
+from paperwatch.readings import (
+    ReadingEnqueueOutcome,
+    ReadingJobInput,
+    dispatch_order_of_job_row,
+    enqueue_reading_if_needed,
+    refresh_paper_status_from_work,
+    select_reading_input,
+)
+from paperwatch.references.reference_selection import (
+    SELECT_REFERENCES_JOB_KIND,
+    ReferenceSelectionJobInput,
+    prepare_reference_selection,
+    write_reference_selection_outcome,
+)
 from paperwatch.rendering.comparison_notes import write_comparison_note_if_missing
 from paperwatch.rendering.review_notes import load_selected_review, write_paper_note_if_missing
 from paperwatch.research_profile import load_active_seed_library_paper_ids
@@ -61,8 +85,13 @@ from paperwatch.review_store import insert_completed_reading
 from paperwatch.roles.base import run_role_with_one_repair
 from paperwatch.roles.comparison import COMPARISON_ROLE
 from paperwatch.roles.research import RESEARCH_ROLE
-from paperwatch.worker_stop import (WorkerStopRequested, request_worker_stop, reset_worker_stop_request,
-                                    stop_was_requested, wait_for_stop_request)
+from paperwatch.worker_stop import (
+    WorkerStopRequested,
+    request_worker_stop,
+    reset_worker_stop_request,
+    stop_was_requested,
+    wait_for_stop_request,
+)
 
 LOGGER = logging.getLogger(__name__)
 RETRY_AFTER_LOCK_TIMEOUT_SECONDS = 5.0
@@ -121,66 +150,93 @@ def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHand
     if current_input is None or current_input.review_input_key != claimed_job.input_version:
         # Newer text arrived after this job was queued (full text was extracted, or an abstract appeared). Queue
         # the reading of the current input in this job's place; this job ends without a model call.
-        return _supersede_with_current_input(app, claimed_job, reading_job_input,
-                                             "input superseded by newer text; no model call made")
+        return _supersede_with_current_input(
+            app, claimed_job, reading_job_input, "input superseded by newer text; no model call made"
+        )
     try:
         review_packet = build_review_packet(app.connection, app.config, claimed_job.paper_id, current_input)
     except ExtractedTextUnavailable as unavailable_text:
-        return _fall_back_from_unusable_text(app, claimed_job, reading_job_input, current_input.edition_id,
-                                             unavailable_text)
+        return _fall_back_from_unusable_text(
+            app, claimed_job, reading_job_input, current_input.edition_id, unavailable_text
+        )
 
     completed_reading = read_paper(app, review_packet, job_id=claimed_job.job_id)
     committed_review_ids: list[str] = []
 
     def write_review_and_mark_paper_complete(connection: sqlite3.Connection) -> None:
-        committed_review_ids.append(insert_completed_reading(connection, paper_id=claimed_job.paper_id,
-                                                             job_id=claimed_job.job_id,
-                                                             completed_reading=completed_reading))
+        committed_review_ids.append(
+            insert_completed_reading(
+                connection,
+                paper_id=claimed_job.paper_id,
+                job_id=claimed_job.job_id,
+                completed_reading=completed_reading,
+            )
+        )
         set_paper_status(connection, claimed_job.paper_id, "complete")
         # Plan part 8: compare the new review with its closest comparable neighbour (within the daily limit).
         queue_comparison_for_review(connection, app.config, committed_review_ids[0], utc_now())
 
     def write_permanent_note() -> None:
-        write_paper_note_if_missing(app.config.paper_notes_dir,
-                                    load_selected_review(app.connection, committed_review_ids[0]))
+        write_paper_note_if_missing(
+            app.config.paper_notes_dir, load_selected_review(app.connection, committed_review_ids[0])
+        )
 
-    best_score = max((assessment.scored.reading_priority_score for assessment in completed_reading.topic_assessments),
-                     default=None)
+    best_score = max(
+        (assessment.scored.reading_priority_score for assessment in completed_reading.topic_assessments), default=None
+    )
     return JobHandlerResult(
         write_review_and_mark_paper_complete,
         f"review saved for paper {claimed_job.paper_id} ({review_packet.coverage}, "
         f"{len(review_packet.reading_plan.sections_to_read)} reading section(s), best reading priority "
         f"{'not rated' if best_score is None else f'{best_score}/100'})",
-        after_commit=write_permanent_note)
+        after_commit=write_permanent_note,
+    )
 
 
-def _supersede_with_current_input(app: AppContext, claimed_job: ClaimedJob, reading_job_input: ReadingJobInput,
-                                  completion_note: str) -> JobHandlerResult:
+def _supersede_with_current_input(
+    app: AppContext, claimed_job: ClaimedJob, reading_job_input: ReadingJobInput, completion_note: str
+) -> JobHandlerResult:
     job_row = app.connection.execute("SELECT * FROM jobs WHERE job_id = ?", (claimed_job.job_id,)).fetchone()
 
     def queue_current_input(connection: sqlite3.Connection) -> None:
         enqueue_outcome, _reading_input = enqueue_reading_if_needed(
-            connection, claimed_job.paper_id, dispatch_order=dispatch_order_of_job_row(job_row),
-            max_attempts=claimed_job.max_attempts, reading_generation=reading_job_input.reading_generation,
-            operator_reason=reading_job_input.operator_reason)
+            connection,
+            claimed_job.paper_id,
+            dispatch_order=dispatch_order_of_job_row(job_row),
+            max_attempts=claimed_job.max_attempts,
+            reading_generation=reading_job_input.reading_generation,
+            operator_reason=reading_job_input.operator_reason,
+        )
         if enqueue_outcome != ReadingEnqueueOutcome.QUEUED:
-            LOGGER.info("superseded job %s: current input of %s is %s", claimed_job.job_id, claimed_job.paper_id,
-                        enqueue_outcome)
+            LOGGER.info(
+                "superseded job %s: current input of %s is %s",
+                claimed_job.job_id,
+                claimed_job.paper_id,
+                enqueue_outcome,
+            )
         refresh_paper_status_from_work(connection, claimed_job.paper_id)
 
     return JobHandlerResult(queue_current_input, completion_note)
 
 
-def _fall_back_from_unusable_text(app: AppContext, claimed_job: ClaimedJob, reading_job_input: ReadingJobInput,
-                                  edition_id: str, problem: ExtractedTextUnavailable) -> JobHandlerResult:
+def _fall_back_from_unusable_text(
+    app: AppContext,
+    claimed_job: ClaimedJob,
+    reading_job_input: ReadingJobInput,
+    edition_id: str,
+    problem: ExtractedTextUnavailable,
+) -> JobHandlerResult:
     """The cached full text is gone or altered: record that, and queue the next best input (usually the abstract)."""
     supersede_result = _supersede_with_current_input(
-        app, claimed_job, reading_job_input, f"{problem}; the next best input was queued instead")
+        app, claimed_job, reading_job_input, f"{problem}; the next best input was queued instead"
+    )
 
     def mark_text_failed_then_requeue(connection: sqlite3.Connection) -> None:
         connection.execute(
             """UPDATE edition_source_texts SET extraction_status = 'failed', last_error = ?, updated_at = ?
-               WHERE edition_id = ?""", (str(problem)[:300], utc_now_timestamp(), edition_id))
+               WHERE edition_id = ?""",
+            (str(problem)[:300], utc_now_timestamp(), edition_id),
+        )
         supersede_result.write_results(connection)
 
     return JobHandlerResult(mark_text_failed_then_requeue, supersede_result.completion_note)
@@ -192,11 +248,14 @@ def load_edition_checked_against_catalog(app: AppContext, claimed_job: ClaimedJo
     try:
         edition_row = load_edition_row(app.connection, edition_id)
     except LookupError:
-        raise SourceInputError(f"job {claimed_job.job_id} names edition {edition_id}, which is not in the catalog") \
-            from None
+        raise SourceInputError(
+            f"job {claimed_job.job_id} names edition {edition_id}, which is not in the catalog"
+        ) from None
     if edition_row["paper_id"] != claimed_job.paper_id:
-        raise SourceInputError(f"job {claimed_job.job_id} names edition {edition_id} of paper "
-                               f"{edition_row['paper_id']}, not of its own paper {claimed_job.paper_id}")
+        raise SourceInputError(
+            f"job {claimed_job.job_id} names edition {edition_id} of paper "
+            f"{edition_row['paper_id']}, not of its own paper {claimed_job.paper_id}"
+        )
     return edition_row
 
 
@@ -206,41 +265,65 @@ def handle_select_references_job(app: AppContext, claimed_job: ClaimedJob) -> Jo
     job_input = ReferenceSelectionJobInput.from_payload(claimed_job.input_payload)
     active_seed_paper_ids = load_active_seed_library_paper_ids(app.connection, app.config)
     try:
-        prepared = prepare_reference_selection(app.connection, app.config, job_input,
-                                               active_seed_paper_ids=active_seed_paper_ids, moment=utc_now())
+        prepared = prepare_reference_selection(
+            app.connection, app.config, job_input, active_seed_paper_ids=active_seed_paper_ids, moment=utc_now()
+        )
     except LookupError as missing_review:
         raise SourceInputError(f"job {claimed_job.job_id}: {missing_review}") from None
     role_result = None
     if prepared.candidates:
-        role_result = run_role_with_one_repair(role_definition=RESEARCH_ROLE, role_input=prepared.role_input,
-                                               app_config=app.config, model_client=app.model_client,
-                                               connection=app.connection, job_id=claimed_job.job_id)
+        role_result = run_role_with_one_repair(
+            role_definition=RESEARCH_ROLE,
+            role_input=prepared.role_input,
+            app_config=app.config,
+            model_client=app.model_client,
+            connection=app.connection,
+            job_id=claimed_job.job_id,
+        )
     write_summaries = []
 
     def write_selection(connection: sqlite3.Connection) -> None:
-        write_summaries.append(write_reference_selection_outcome(
-            connection, app.config, prepared, role_result, job_id=claimed_job.job_id,
-            active_seed_paper_ids=active_seed_paper_ids, moment=utc_now()))
+        write_summaries.append(
+            write_reference_selection_outcome(
+                connection,
+                app.config,
+                prepared,
+                role_result,
+                job_id=claimed_job.job_id,
+                active_seed_paper_ids=active_seed_paper_ids,
+                moment=utc_now(),
+            )
+        )
 
     def describe_after_commit() -> str:  # the outcome is known only once the commit admitted the choices
-        return (f"references of review {job_input.parent_review_id}: "
-                + (write_summaries[0].describe() if write_summaries else "not written")
-                + ("" if role_result else " (no unread candidate; no model call made)"))
+        return (
+            f"references of review {job_input.parent_review_id}: "
+            + (write_summaries[0].describe() if write_summaries else "not written")
+            + ("" if role_result else " (no unread candidate; no model call made)")
+        )
 
     return JobHandlerResult(write_selection, describe_after_commit)
 
 
 def handle_compare_reviews_job(app: AppContext, claimed_job: ClaimedJob) -> JobHandlerResult:
     """Plan part 8: compare two saved reviews on the same question; store the comparison once, then write its note."""
-    prepared = prepare_comparison(app.connection, app.config,
-                                  ComparisonJobInput.from_payload(claimed_job.input_payload))
+    prepared = prepare_comparison(
+        app.connection, app.config, ComparisonJobInput.from_payload(claimed_job.input_payload)
+    )
     if prepared.role_input is None:
-        return JobHandlerResult(lambda connection: None,
-                                f"comparison {prepared.job_input.comparison_key} not made: "
-                                f"{prepared.reason_without_model_call}; no model call made")
-    role_result = run_role_with_one_repair(role_definition=COMPARISON_ROLE, role_input=prepared.role_input,
-                                           app_config=app.config, model_client=app.model_client,
-                                           connection=app.connection, job_id=claimed_job.job_id)
+        return JobHandlerResult(
+            lambda connection: None,
+            f"comparison {prepared.job_input.comparison_key} not made: "
+            f"{prepared.reason_without_model_call}; no model call made",
+        )
+    role_result = run_role_with_one_repair(
+        role_definition=COMPARISON_ROLE,
+        role_input=prepared.role_input,
+        app_config=app.config,
+        model_client=app.model_client,
+        connection=app.connection,
+        job_id=claimed_job.job_id,
+    )
     written: list[tuple[str, bool]] = []
 
     def store_comparison(connection: sqlite3.Connection) -> None:
@@ -249,11 +332,13 @@ def handle_compare_reviews_job(app: AppContext, claimed_job: ClaimedJob) -> JobH
     def write_comparison_note() -> None:
         write_comparison_note_if_missing(app.connection, app.config.comparison_notes_dir, written[0][0])
 
-    return JobHandlerResult(store_comparison,
-                            f"comparison of reviews {prepared.job_input.review_id_a} and "
-                            f"{prepared.job_input.review_id_b} "
-                            f"({role_result.validated_output['conditions_comparability']})",
-                            after_commit=write_comparison_note)
+    return JobHandlerResult(
+        store_comparison,
+        f"comparison of reviews {prepared.job_input.review_id_a} and "
+        f"{prepared.job_input.review_id_b} "
+        f"({role_result.validated_output['conditions_comparability']})",
+        after_commit=write_comparison_note,
+    )
 
 
 JOB_HANDLERS_BY_KIND: dict[str, JobHandler] = {
@@ -270,8 +355,9 @@ JOB_HANDLERS_BY_KIND: dict[str, JobHandler] = {
 
 def run_single_work_cycle(app: AppContext, *, probe_paused_model_now: bool) -> WorkCycleReport:
     try:
-        ensure_model_service_available(app.connection, app.model_client, app.config.model,
-                                       probe_now_even_if_backing_off=probe_paused_model_now)
+        ensure_model_service_available(
+            app.connection, app.model_client, app.config.model, probe_now_even_if_backing_off=probe_paused_model_now
+        )
     except ModelServerUnavailable as outage:
         return WorkCycleReport(WorkCycleOutcome.MODEL_SERVICE_PAUSED, str(outage), failure=outage)
 
@@ -282,15 +368,26 @@ def run_single_work_cycle(app: AppContext, *, probe_paused_model_now: bool) -> W
         return WorkCycleReport(WorkCycleOutcome.NO_JOB_DUE, "no job is due")
     if claimed_job.paper_id and claimed_job.kind == REVIEW_PAPER_JOB_KIND:
         set_paper_status(app.connection, claimed_job.paper_id, "reviewing")
-    LOGGER.info("claimed %s (%s, attempt %d/%d)", claimed_job.job_id, claimed_job.kind,
-                claimed_job.attempts_including_this_one, claimed_job.max_attempts)
-    job_detail = {"job_id": claimed_job.job_id, "kind": claimed_job.kind, "paper_id": claimed_job.paper_id,
-                  "attempt": claimed_job.attempts_including_this_one, "max_attempts": claimed_job.max_attempts}
+    LOGGER.info(
+        "claimed %s (%s, attempt %d/%d)",
+        claimed_job.job_id,
+        claimed_job.kind,
+        claimed_job.attempts_including_this_one,
+        claimed_job.max_attempts,
+    )
+    job_detail = {
+        "job_id": claimed_job.job_id,
+        "kind": claimed_job.kind,
+        "paper_id": claimed_job.paper_id,
+        "attempt": claimed_job.attempts_including_this_one,
+        "max_attempts": claimed_job.max_attempts,
+    }
     with recorded_activity(app.connection, "job", job_detail, component=COMPONENT_WORKER) as job_activity:
         cycle_report = _run_claimed_job(app, claimed_job)
-        job_activity.end_as(ACTIVITY_OUTCOME_BY_CYCLE_OUTCOME.get(cycle_report.outcome, cycle_report.outcome.value),
-                            note=None if cycle_report.outcome == WorkCycleOutcome.JOB_COMPLETED
-                            else cycle_report.message)
+        job_activity.end_as(
+            ACTIVITY_OUTCOME_BY_CYCLE_OUTCOME.get(cycle_report.outcome, cycle_report.outcome.value),
+            note=None if cycle_report.outcome == WorkCycleOutcome.JOB_COMPLETED else cycle_report.message,
+        )
     return cycle_report
 
 
@@ -312,9 +409,12 @@ def _run_claimed_job(app: AppContext, claimed_job: ClaimedJob) -> WorkCycleRepor
         job_handler = JOB_HANDLERS_BY_KIND.get(claimed_job.kind)
         if job_handler is None:
             raise UnexpectedWorkerError(f"no handler registered for job kind '{claimed_job.kind}'")
-        with JobLeaseKeeper(app.config.database_path, claimed_job,
-                            lease_duration_seconds=app.config.worker.lease_seconds,
-                            renewal_interval_seconds=app.config.worker.lease_renewal_interval_seconds):
+        with JobLeaseKeeper(
+            app.config.database_path,
+            claimed_job,
+            lease_duration_seconds=app.config.worker.lease_seconds,
+            renewal_interval_seconds=app.config.worker.lease_renewal_interval_seconds,
+        ):
             handler_result = job_handler(app, claimed_job)
     except WorkerStopRequested as stop_request:
         return _release_job_after_stop_request(app, claimed_job, stop_request)
@@ -325,17 +425,21 @@ def _run_claimed_job(app: AppContext, claimed_job: ClaimedJob) -> WorkCycleRepor
         return _settle_failed_job(app, claimed_job, UnexpectedWorkerError(repr(unexpected_exception)))
 
     if not finish_job_with_writes(app.connection, claimed_job, handler_result.write_results):
-        return WorkCycleReport(WorkCycleOutcome.LEASE_LOST, f"lease on {claimed_job.job_id} was lost; result "
-                               "discarded so a newer worker's result is not overwritten",
-                               job_id=claimed_job.job_id, paper_id=claimed_job.paper_id)
+        return WorkCycleReport(
+            WorkCycleOutcome.LEASE_LOST,
+            f"lease on {claimed_job.job_id} was lost; result discarded so a newer worker's result is not overwritten",
+            job_id=claimed_job.job_id,
+            paper_id=claimed_job.paper_id,
+        )
     completion_message = f"completed {claimed_job.kind} {claimed_job.job_id}: {handler_result.describe_completion()}"
     if handler_result.after_commit is not None:
         try:
             handler_result.after_commit()
         except PaperwatchError as output_failure:  # the result is committed; `report` restores the note later
             completion_message += f" (note not written yet: {output_failure}; `report` will restore it)"
-    return WorkCycleReport(WorkCycleOutcome.JOB_COMPLETED, completion_message,
-                           job_id=claimed_job.job_id, paper_id=claimed_job.paper_id)
+    return WorkCycleReport(
+        WorkCycleOutcome.JOB_COMPLETED, completion_message, job_id=claimed_job.job_id, paper_id=claimed_job.paper_id
+    )
 
 
 class JobInterruptedByStopRequest(PaperwatchError):
@@ -344,46 +448,64 @@ class JobInterruptedByStopRequest(PaperwatchError):
     failed_component = "worker"
 
 
-def _release_job_after_stop_request(app: AppContext, claimed_job: ClaimedJob,
-                                    stop_request: WorkerStopRequested) -> WorkCycleReport:
+def _release_job_after_stop_request(
+    app: AppContext, claimed_job: ClaimedJob, stop_request: WorkerStopRequested
+) -> WorkCycleReport:
     interruption = JobInterruptedByStopRequest(str(stop_request))
     with write_transaction(app.connection):
         released = release_job_without_charging_attempt(app.connection, claimed_job, interruption)
         if released and claimed_job.paper_id and claimed_job.kind == REVIEW_PAPER_JOB_KIND:
             set_paper_status(app.connection, claimed_job.paper_id, "queued")
-    message = (f"stopped during {claimed_job.kind} {claimed_job.job_id}; "
-               + ("it is back in the queue without using an attempt" if released
-                  else "its lease was already lost, so the newer worker's state is left untouched")
-               + "; saved reading stages are kept")
-    return WorkCycleReport(WorkCycleOutcome.STOPPED, message, job_id=claimed_job.job_id,
-                           paper_id=claimed_job.paper_id)
+    message = (
+        f"stopped during {claimed_job.kind} {claimed_job.job_id}; "
+        + (
+            "it is back in the queue without using an attempt"
+            if released
+            else "its lease was already lost, so the newer worker's state is left untouched"
+        )
+        + "; saved reading stages are kept"
+    )
+    return WorkCycleReport(WorkCycleOutcome.STOPPED, message, job_id=claimed_job.job_id, paper_id=claimed_job.paper_id)
 
 
 def _settle_failed_job(app: AppContext, claimed_job: ClaimedJob, failure: PaperwatchError) -> WorkCycleReport:
     job_reference = dict(job_id=claimed_job.job_id, paper_id=claimed_job.paper_id, failure=failure)
     lease_lost_report = WorkCycleReport(
-        WorkCycleOutcome.LEASE_LOST, f"{failure}; lease on {claimed_job.job_id} was already lost, so the newer "
-        "worker's state is left untouched", **job_reference)
+        WorkCycleOutcome.LEASE_LOST,
+        f"{failure}; lease on {claimed_job.job_id} was already lost, so the newer worker's state is left untouched",
+        **job_reference,
+    )
     with write_transaction(app.connection):
         if failure.is_service_outage or isinstance(failure, InferenceLockTimeout):
             if not release_job_without_charging_attempt(app.connection, claimed_job, failure):
                 return lease_lost_report
-            paper_status, outcome = "queued", (WorkCycleOutcome.MODEL_SERVICE_PAUSED if failure.is_service_outage
-                                               else WorkCycleOutcome.JOB_RELEASED_UNCHARGED)
+            paper_status, outcome = (
+                "queued",
+                (
+                    WorkCycleOutcome.MODEL_SERVICE_PAUSED
+                    if failure.is_service_outage
+                    else WorkCycleOutcome.JOB_RELEASED_UNCHARGED
+                ),
+            )
             message = f"{failure}; job {claimed_job.job_id} returned to the queue without using an attempt"
         else:
-            settlement = record_job_attempt_failure(app.connection, claimed_job, failure,
-                                                    app.config.worker.retry_delay_seconds)
+            settlement = record_job_attempt_failure(
+                app.connection, claimed_job, failure, app.config.worker.retry_delay_seconds
+            )
             if settlement == ATTEMPT_SETTLEMENT_LEASE_LOST:
                 return lease_lost_report
             if settlement == ATTEMPT_SETTLEMENT_FAILED_PERMANENTLY:
                 paper_status, outcome = "failed", WorkCycleOutcome.JOB_FAILED_PERMANENTLY
-                message = f"{failure}; job {claimed_job.job_id} failed permanently after " \
-                          f"{claimed_job.attempts_including_this_one} attempt(s)"
+                message = (
+                    f"{failure}; job {claimed_job.job_id} failed permanently after "
+                    f"{claimed_job.attempts_including_this_one} attempt(s)"
+                )
             else:
                 paper_status, outcome = "queued", WorkCycleOutcome.JOB_RETRY_SCHEDULED
-                message = f"{failure}; job {claimed_job.job_id} will retry " \
-                          f"(attempt {claimed_job.attempts_including_this_one}/{claimed_job.max_attempts} used)"
+                message = (
+                    f"{failure}; job {claimed_job.job_id} will retry "
+                    f"(attempt {claimed_job.attempts_including_this_one}/{claimed_job.max_attempts} used)"
+                )
         if claimed_job.paper_id and claimed_job.kind == REVIEW_PAPER_JOB_KIND:
             set_paper_status(app.connection, claimed_job.paper_id, paper_status)
     if claimed_job.paper_id:
@@ -422,13 +544,12 @@ def _run_worker_loop(app: AppContext) -> int:
         LOGGER.info("received signal %d; stopping now (a wait for the model is aborted)", signal_number)
         request_worker_stop()  # raises WorkerStopRequested if the main thread is waiting for the model
 
-    previous_handlers = {signal_number: signal.signal(signal_number, request_stop)
-                         for signal_number in (signal.SIGTERM, signal.SIGINT)}
-    print("paperwatch worker started; Ctrl+C or SIGTERM stops it (the current job goes back to the queue)",
-          flush=True)
+    previous_handlers = {
+        signal_number: signal.signal(signal_number, request_stop) for signal_number in (signal.SIGTERM, signal.SIGINT)
+    }
+    print("paperwatch worker started; Ctrl+C or SIGTERM stops it (the current job goes back to the queue)", flush=True)
     try:
-        with recorded_activity(app.connection, "run", {"mode": "loop"},
-                               component=COMPONENT_WORKER) as run_activity:
+        with recorded_activity(app.connection, "run", {"mode": "loop"}, component=COMPONENT_WORKER) as run_activity:
             completed_job_count = 0
             while not stop_was_requested():
                 cycle_report = run_single_work_cycle(app, probe_paused_model_now=False)
@@ -465,7 +586,10 @@ def _seconds_until_next_cycle(app: AppContext, cycle_report: WorkCycleReport) ->
 
 def _print_cycle_report(cycle_report: WorkCycleReport) -> None:
     if cycle_report.failure is not None:
-        print(describe_failure_for_operator(cycle_report.failure, message_override=cycle_report.message),
-              file=sys.stderr, flush=True)
+        print(
+            describe_failure_for_operator(cycle_report.failure, message_override=cycle_report.message),
+            file=sys.stderr,
+            flush=True,
+        )
     else:
         print(f"work: {redact_service_log_text(cycle_report.message)}", flush=True)

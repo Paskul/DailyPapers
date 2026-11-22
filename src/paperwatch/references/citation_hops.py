@@ -36,13 +36,16 @@ class ReviewedPaperToFollow:
 
 
 def citation_hop_depth_of_paper(connection: sqlite3.Connection, paper_id: str) -> int:
-    promotion_row = connection.execute("SELECT promotion_reason FROM paper_promotions WHERE paper_id = ?",
-                                       (paper_id,)).fetchone()
+    promotion_row = connection.execute(
+        "SELECT promotion_reason FROM paper_promotions WHERE paper_id = ?", (paper_id,)
+    ).fetchone()
     if promotion_row is not None and promotion_row["promotion_reason"] != PROMOTION_REASON_REFERENCE:
         return 0
     depth_row = connection.execute(
         """SELECT MIN(citation_hop_depth) AS depth FROM reference_selections
-           WHERE cited_paper_id = ? AND admission_status = 'admitted'""", (paper_id,)).fetchone()
+           WHERE cited_paper_id = ? AND admission_status = 'admitted'""",
+        (paper_id,),
+    ).fetchone()
     return int(depth_row["depth"]) if depth_row["depth"] is not None else 0
 
 
@@ -54,15 +57,18 @@ def latest_reviews_of_unwithdrawn_papers(connection: sqlite3.Connection) -> list
              AND review.review_id = (SELECT newest.review_id FROM reviews AS newest
                                      WHERE newest.paper_id = review.paper_id
                                      ORDER BY newest.completed_at DESC, newest.review_id DESC LIMIT 1)
-           ORDER BY review.completed_at DESC, review.review_id""").fetchall()
+           ORDER BY review.completed_at DESC, review.review_id"""
+    ).fetchall()
 
 
-def describe_followable_review(connection: sqlite3.Connection, app_config: AppConfig, paper_id: str,
-                               review_id: str) -> ReviewedPaperToFollow | None:
+def describe_followable_review(
+    connection: sqlite3.Connection, app_config: AppConfig, paper_id: str, review_id: str
+) -> ReviewedPaperToFollow | None:
     """The review as a parent whose references may be followed, or None if it does not qualify."""
     reference_settings = app_config.references
     best_question_fit, best_priority = best_question_fit_and_priority(
-        load_latest_topic_assessments(connection, review_id))
+        load_latest_topic_assessments(connection, review_id)
+    )
     if best_question_fit < reference_settings.minimum_parent_question_fit:
         return None
     hop_depth = citation_hop_depth_of_paper(connection, paper_id)
@@ -71,14 +77,19 @@ def describe_followable_review(connection: sqlite3.Connection, app_config: AppCo
     return ReviewedPaperToFollow(paper_id, review_id, hop_depth, best_question_fit, best_priority)
 
 
-def find_reviewed_papers_to_follow(connection: sqlite3.Connection, app_config: AppConfig,
-                                   limit: int) -> list[ReviewedPaperToFollow]:
+def find_reviewed_papers_to_follow(
+    connection: sqlite3.Connection, app_config: AppConfig, limit: int
+) -> list[ReviewedPaperToFollow]:
     """Reviewed papers whose references have not been fetched yet (a blocked fetch is retried a few times), the
     highest reading priority first."""
-    finished_or_given_up = {row["citing_paper_id"] for row in connection.execute(
-        f"""SELECT citing_paper_id FROM reference_fetches
+    finished_or_given_up = {
+        row["citing_paper_id"]
+        for row in connection.execute(
+            f"""SELECT citing_paper_id FROM reference_fetches
             WHERE fetch_status IN ({", ".join("?" * len(FETCH_STATUSES_THAT_ARE_FINAL))}) OR attempts >= ?""",
-        (*FETCH_STATUSES_THAT_ARE_FINAL, MAXIMUM_REFERENCE_FETCH_ATTEMPTS))}
+            (*FETCH_STATUSES_THAT_ARE_FINAL, MAXIMUM_REFERENCE_FETCH_ATTEMPTS),
+        )
+    }
     followable = []
     for review_row in latest_reviews_of_unwithdrawn_papers(connection):
         if review_row["paper_id"] in finished_or_given_up:

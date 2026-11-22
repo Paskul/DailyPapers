@@ -33,10 +33,19 @@ from typing import Any
 from paperwatch.clock import format_utc_timestamp, utc_now_timestamp
 from paperwatch.dispatch_order import JobDispatchOrder, JobPriorityClass
 from paperwatch.identifiers import READING_GENERATION_ID_PREFIX, new_internal_id
-from paperwatch.jobs import (REVIEW_PAPER_JOB_KIND, build_review_job_key, enqueue_job_if_absent,
-                             upgrade_queued_job_dispatch_order_if_higher)
-from paperwatch.review_inputs import (INITIAL_READING_GENERATION, TEXT_KIND_ABSTRACT, TEXT_KIND_EXTRACTED_TEXT,
-                                      ReadingInputIdentity, build_abstract_reading_identity)
+from paperwatch.jobs import (
+    REVIEW_PAPER_JOB_KIND,
+    build_review_job_key,
+    enqueue_job_if_absent,
+    upgrade_queued_job_dispatch_order_if_higher,
+)
+from paperwatch.review_inputs import (
+    INITIAL_READING_GENERATION,
+    TEXT_KIND_ABSTRACT,
+    TEXT_KIND_EXTRACTED_TEXT,
+    ReadingInputIdentity,
+    build_abstract_reading_identity,
+)
 
 # Extracted text shorter than this (e.g. a scanned PDF without a text layer) is not worth a full-text reading.
 MINIMUM_USABLE_EXTRACTED_TEXT_CHARACTERS = 1500
@@ -59,8 +68,11 @@ class ReadingJobInput:
     operator_reason: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
-        payload = {"edition_id": self.edition_id, "reading_generation": self.reading_generation,
-                   "text_kind": self.text_kind}
+        payload = {
+            "edition_id": self.edition_id,
+            "reading_generation": self.reading_generation,
+            "text_kind": self.text_kind,
+        }
         if self.operator_reason:
             payload["operator_reason"] = self.operator_reason
         return payload
@@ -68,10 +80,12 @@ class ReadingJobInput:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> ReadingJobInput:
         """Jobs queued before part 7 have no text_kind: they were abstract readings."""
-        return cls(edition_id=payload["edition_id"],
-                   reading_generation=payload.get("reading_generation", INITIAL_READING_GENERATION),
-                   text_kind=payload.get("text_kind", TEXT_KIND_ABSTRACT),
-                   operator_reason=payload.get("operator_reason"))
+        return cls(
+            edition_id=payload["edition_id"],
+            reading_generation=payload.get("reading_generation", INITIAL_READING_GENERATION),
+            text_kind=payload.get("text_kind", TEXT_KIND_ABSTRACT),
+            operator_reason=payload.get("operator_reason"),
+        )
 
 
 # The edition an abstract reading should use: one with an abstract if any, then the most recently first-seen, then
@@ -88,12 +102,13 @@ FULL_TEXT_EDITION_ORDER_SQL = """CASE WHEN edition_key LIKE 'arxiv:%' THEN 0 WHE
 
 def select_edition_to_read(connection: sqlite3.Connection, paper_id: str) -> sqlite3.Row | None:
     return connection.execute(
-        f"SELECT * FROM paper_editions WHERE paper_id = ? ORDER BY {PREFERRED_EDITION_ORDER_SQL} LIMIT 1",
-        (paper_id,)).fetchone()
+        f"SELECT * FROM paper_editions WHERE paper_id = ? ORDER BY {PREFERRED_EDITION_ORDER_SQL} LIMIT 1", (paper_id,)
+    ).fetchone()
 
 
-def select_reading_input(connection: sqlite3.Connection, paper_id: str,
-                         reading_generation: str = INITIAL_READING_GENERATION) -> ReadingInputIdentity | None:
+def select_reading_input(
+    connection: sqlite3.Connection, paper_id: str, reading_generation: str = INITIAL_READING_GENERATION
+) -> ReadingInputIdentity | None:
     """The best input available now: usable extracted full text, else the preferred edition's abstract.
 
     Uses only database columns (no file is read), so the collector can call it inside a write transaction. The
@@ -108,25 +123,39 @@ def select_reading_input(connection: sqlite3.Connection, paper_id: str,
                   AND source_text.normalized_text_sha256 IS NOT NULL
                   AND source_text.extracted_text_characters >= ?)
             SELECT * FROM readable_editions ORDER BY {FULL_TEXT_EDITION_ORDER_SQL} LIMIT 1""",
-        (paper_id, MINIMUM_USABLE_EXTRACTED_TEXT_CHARACTERS)).fetchone()
+        (paper_id, MINIMUM_USABLE_EXTRACTED_TEXT_CHARACTERS),
+    ).fetchone()
     if extracted_row is not None:
         return ReadingInputIdentity(
-            edition_id=extracted_row["edition_id"], text_kind=TEXT_KIND_EXTRACTED_TEXT,
-            source_text_sha256=extracted_row["normalized_text_sha256"], reading_generation=reading_generation,
-            extracted_text_file_name=extracted_row["extracted_text_file_name"])
+            edition_id=extracted_row["edition_id"],
+            text_kind=TEXT_KIND_EXTRACTED_TEXT,
+            source_text_sha256=extracted_row["normalized_text_sha256"],
+            reading_generation=reading_generation,
+            extracted_text_file_name=extracted_row["extracted_text_file_name"],
+        )
     edition_row = select_edition_to_read(connection, paper_id)
     return build_abstract_reading_identity(edition_row, reading_generation) if edition_row is not None else None
 
 
 def review_exists_for_input(connection: sqlite3.Connection, paper_id: str, review_input_key: str) -> bool:
-    return connection.execute("SELECT 1 FROM reviews WHERE paper_id = ? AND review_input_key = ?",
-                              (paper_id, review_input_key)).fetchone() is not None
+    return (
+        connection.execute(
+            "SELECT 1 FROM reviews WHERE paper_id = ? AND review_input_key = ?", (paper_id, review_input_key)
+        ).fetchone()
+        is not None
+    )
 
 
-def enqueue_reading_if_needed(connection: sqlite3.Connection, paper_id: str, *, dispatch_order: JobDispatchOrder,
-                              max_attempts: int, reading_generation: str = INITIAL_READING_GENERATION,
-                              operator_reason: str | None = None, hold_until: datetime | None = None,
-                              ) -> tuple[ReadingEnqueueOutcome, ReadingInputIdentity | None]:
+def enqueue_reading_if_needed(
+    connection: sqlite3.Connection,
+    paper_id: str,
+    *,
+    dispatch_order: JobDispatchOrder,
+    max_attempts: int,
+    reading_generation: str = INITIAL_READING_GENERATION,
+    operator_reason: str | None = None,
+    hold_until: datetime | None = None,
+) -> tuple[ReadingEnqueueOutcome, ReadingInputIdentity | None]:
     """Queue a reading of the paper's best available input unless this exact input was already read or queued.
 
     If the job already exists and is still queued, it is moved up to `dispatch_order` when that is a higher class
@@ -141,21 +170,30 @@ def enqueue_reading_if_needed(connection: sqlite3.Connection, paper_id: str, *, 
         return ReadingEnqueueOutcome.ALREADY_REVIEWED, reading_input
     review_job_key = build_review_job_key(paper_id, reading_input.review_input_key)
     job_was_added = enqueue_job_if_absent(
-        connection, job_key=review_job_key,
-        kind=REVIEW_PAPER_JOB_KIND, paper_id=paper_id, input_version=reading_input.review_input_key,
-        input_payload=ReadingJobInput(edition_id=reading_input.edition_id, reading_generation=reading_generation,
-                                      text_kind=reading_input.text_kind,
-                                      operator_reason=operator_reason).to_payload(),
-        dispatch_order=dispatch_order, max_attempts=max_attempts,
-        due_at=format_utc_timestamp(hold_until) if hold_until is not None else None)
+        connection,
+        job_key=review_job_key,
+        kind=REVIEW_PAPER_JOB_KIND,
+        paper_id=paper_id,
+        input_version=reading_input.review_input_key,
+        input_payload=ReadingJobInput(
+            edition_id=reading_input.edition_id,
+            reading_generation=reading_generation,
+            text_kind=reading_input.text_kind,
+            operator_reason=operator_reason,
+        ).to_payload(),
+        dispatch_order=dispatch_order,
+        max_attempts=max_attempts,
+        due_at=format_utc_timestamp(hold_until) if hold_until is not None else None,
+    )
     if not job_was_added:
         upgrade_queued_job_dispatch_order_if_higher(connection, review_job_key, dispatch_order)
     retire_superseded_queued_readings(connection, paper_id, reading_input)
     return (ReadingEnqueueOutcome.QUEUED if job_was_added else ReadingEnqueueOutcome.ALREADY_HAS_JOB), reading_input
 
 
-def retire_superseded_queued_readings(connection: sqlite3.Connection, paper_id: str,
-                                      current_input: ReadingInputIdentity) -> int:
+def retire_superseded_queued_readings(
+    connection: sqlite3.Connection, paper_id: str, current_input: ReadingInputIdentity
+) -> int:
     """Mark still-QUEUED readings of the same paper and generation on another input as done (superseded). A running
     job is left alone: its worker notices at commit time that its input is no longer current."""
     retire_cursor = connection.execute(
@@ -163,8 +201,16 @@ def retire_superseded_queued_readings(connection: sqlite3.Connection, paper_id: 
                last_error = 'superseded by a newer input: ' || ?, updated_at = ?
            WHERE kind = ? AND paper_id = ? AND status = 'queued' AND input_version != ?
              AND COALESCE(json_extract(input_json, '$.reading_generation'), ?) = ?""",
-        (current_input.review_input_key, utc_now_timestamp(), REVIEW_PAPER_JOB_KIND, paper_id,
-         current_input.review_input_key, INITIAL_READING_GENERATION, current_input.reading_generation))
+        (
+            current_input.review_input_key,
+            utc_now_timestamp(),
+            REVIEW_PAPER_JOB_KIND,
+            paper_id,
+            current_input.review_input_key,
+            INITIAL_READING_GENERATION,
+            current_input.reading_generation,
+        ),
+    )
     return retire_cursor.rowcount
 
 
@@ -179,16 +225,19 @@ def release_readings_held_for_source_text(connection: sqlite3.Connection) -> int
     release_cursor = connection.execute(
         """UPDATE jobs SET due_at = ?, updated_at = ?
            WHERE kind = ? AND status = 'queued' AND attempts = 0 AND due_at > ?""",
-        (now_timestamp, now_timestamp, REVIEW_PAPER_JOB_KIND, now_timestamp))
+        (now_timestamp, now_timestamp, REVIEW_PAPER_JOB_KIND, now_timestamp),
+    )
     return release_cursor.rowcount
 
 
 def dispatch_order_of_job_row(job_row: sqlite3.Row) -> JobDispatchOrder:
     """The dispatch order a queued job was given, so a superseding job can be queued in the same place."""
-    return JobDispatchOrder(priority_class=JobPriorityClass(job_row["priority"]),
-                            within_class_order_primary=job_row["within_class_order_primary"],
-                            within_class_order_secondary=job_row["within_class_order_secondary"],
-                            new_release_fresh_until=job_row["new_release_fresh_until"])
+    return JobDispatchOrder(
+        priority_class=JobPriorityClass(job_row["priority"]),
+        within_class_order_primary=job_row["within_class_order_primary"],
+        within_class_order_secondary=job_row["within_class_order_secondary"],
+        new_release_fresh_until=job_row["new_release_fresh_until"],
+    )
 
 
 def new_reading_generation_id() -> str:
@@ -209,11 +258,21 @@ def refresh_paper_status_from_work(connection: sqlite3.Connection, paper_id: str
                EXISTS(SELECT 1 FROM reviews WHERE paper_id = :paper_id) AS has_review,
                EXISTS(SELECT 1 FROM jobs WHERE paper_id = :paper_id AND status = 'failed') AS has_failed_job,
                (SELECT status FROM papers WHERE paper_id = :paper_id) AS current_status""",
-        {"paper_id": paper_id}).fetchone()
-    derived_status = ("reviewing" if status_row["has_running_job"] else
-                      "queued" if status_row["has_queued_job"] else
-                      "complete" if status_row["has_review"] else
-                      "failed" if status_row["has_failed_job"] else status_row["current_status"])
-    connection.execute("UPDATE papers SET status = ?, updated_at = ? WHERE paper_id = ? AND status != ?",
-                       (derived_status, utc_now_timestamp(), paper_id, derived_status))
+        {"paper_id": paper_id},
+    ).fetchone()
+    derived_status = (
+        "reviewing"
+        if status_row["has_running_job"]
+        else "queued"
+        if status_row["has_queued_job"]
+        else "complete"
+        if status_row["has_review"]
+        else "failed"
+        if status_row["has_failed_job"]
+        else status_row["current_status"]
+    )
+    connection.execute(
+        "UPDATE papers SET status = ?, updated_at = ? WHERE paper_id = ? AND status != ?",
+        (derived_status, utc_now_timestamp(), paper_id, derived_status),
+    )
     return derived_status

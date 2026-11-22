@@ -71,8 +71,9 @@ def read_boot_id() -> str | None:
         return None
 
 
-def start_activity(connection: sqlite3.Connection, step: str, detail: dict[str, Any] | None = None, *,
-                   component: str | None = None) -> str | None:
+def start_activity(
+    connection: sqlite3.Connection, step: str, detail: dict[str, Any] | None = None, *, component: str | None = None
+) -> str | None:
     """Insert the row of a step that starts now, as a child of the current step. Returns its id (None if the row
     could not be written; the step goes on regardless)."""
     parent = _current_activity.get()
@@ -82,56 +83,84 @@ def start_activity(connection: sqlite3.Connection, step: str, detail: dict[str, 
         connection.execute(
             """INSERT INTO activity_log (activity_id, parent_activity_id, component, step, detail_json, process_id,
                    boot_id, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (activity_id, parent.activity_id if parent else None, resolved_component, step,
-             json.dumps(detail or {}, ensure_ascii=False, sort_keys=True), os.getpid(), read_boot_id(),
-             utc_now_timestamp()))
+            (
+                activity_id,
+                parent.activity_id if parent else None,
+                resolved_component,
+                step,
+                json.dumps(detail or {}, ensure_ascii=False, sort_keys=True),
+                os.getpid(),
+                read_boot_id(),
+                utc_now_timestamp(),
+            ),
+        )
     except sqlite3.Error as write_error:
         LOGGER.warning("activity log: could not record the start of %s: %s", step, write_error)
         return None
     return activity_id
 
 
-def finish_activity(connection: sqlite3.Connection, activity_id: str | None, outcome: str, *,
-                    note: str | None = None, detail_update: dict[str, Any] | None = None) -> None:
+def finish_activity(
+    connection: sqlite3.Connection,
+    activity_id: str | None,
+    outcome: str,
+    *,
+    note: str | None = None,
+    detail_update: dict[str, Any] | None = None,
+) -> None:
     """Mark a step finished. `detail_update` merges counts known only at the end (e.g. papers promoted)."""
     if activity_id is None:
         return
     try:
         if detail_update:
-            row = connection.execute("SELECT detail_json FROM activity_log WHERE activity_id = ?",
-                                     (activity_id,)).fetchone()
+            row = connection.execute(
+                "SELECT detail_json FROM activity_log WHERE activity_id = ?", (activity_id,)
+            ).fetchone()
             merged_detail = {**(json.loads(row[0]) if row else {}), **detail_update}
-            connection.execute("UPDATE activity_log SET detail_json = ? WHERE activity_id = ?",
-                               (json.dumps(merged_detail, ensure_ascii=False, sort_keys=True), activity_id))
+            connection.execute(
+                "UPDATE activity_log SET detail_json = ? WHERE activity_id = ?",
+                (json.dumps(merged_detail, ensure_ascii=False, sort_keys=True), activity_id),
+            )
         connection.execute(
             "UPDATE activity_log SET finished_at = ?, outcome = ?, note = ? WHERE activity_id = ?",
-            (utc_now_timestamp(), outcome, _shorten_note(note), activity_id))
+            (utc_now_timestamp(), outcome, _shorten_note(note), activity_id),
+        )
     except sqlite3.Error as write_error:
         LOGGER.warning("activity log: could not record the end of %s: %s", activity_id, write_error)
 
 
 @contextmanager
-def recorded_activity(connection: sqlite3.Connection, step: str, detail: dict[str, Any] | None = None, *,
-                      component: str | None = None) -> Iterator[ActivityHandle]:
+def recorded_activity(
+    connection: sqlite3.Connection, step: str, detail: dict[str, Any] | None = None, *, component: str | None = None
+) -> Iterator[ActivityHandle]:
     """Record a step around a block. The block's exception (if any) becomes the outcome and is re-raised."""
     parent = _current_activity.get()
     activity_id = start_activity(connection, step, detail, component=component)
     handle = ActivityHandle(activity_id)
     # Children attach to this step; if its row could not be written, they attach to the parent instead.
-    token = None if activity_id is None else _current_activity.set(_OpenActivity(
-        activity_id, component or (parent.component if parent else COMPONENT_OTHER)))
+    token = (
+        None
+        if activity_id is None
+        else _current_activity.set(
+            _OpenActivity(activity_id, component or (parent.component if parent else COMPONENT_OTHER))
+        )
+    )
     try:
         yield handle
     except (KeyboardInterrupt, SystemExit, WorkerStopRequested):
         finish_activity(connection, activity_id, OUTCOME_STOPPED, detail_update=handle.detail_update)
         raise
     except BaseException as step_error:
-        finish_activity(connection, activity_id, OUTCOME_FAILED, note=f"{type(step_error).__name__}: {step_error}",
-                        detail_update=handle.detail_update)
+        finish_activity(
+            connection,
+            activity_id,
+            OUTCOME_FAILED,
+            note=f"{type(step_error).__name__}: {step_error}",
+            detail_update=handle.detail_update,
+        )
         raise
     else:
-        finish_activity(connection, activity_id, handle.outcome, note=handle.note,
-                        detail_update=handle.detail_update)
+        finish_activity(connection, activity_id, handle.outcome, note=handle.note, detail_update=handle.detail_update)
     finally:
         if token is not None:
             _current_activity.reset(token)
@@ -140,6 +169,7 @@ def recorded_activity(connection: sqlite3.Connection, step: str, detail: dict[st
 @dataclass
 class ActivityHandle:
     """Lets a block report how its step ended without raising (e.g. a job that failed and will retry)."""
+
     activity_id: str | None
     outcome: str = OUTCOME_OK
     note: str | None = None
@@ -169,4 +199,4 @@ def _shorten_note(note: str | None) -> str | None:
     redacted_note = redact_service_log_text(note)
     if len(redacted_note) <= MAXIMUM_NOTE_CHARACTERS:
         return redacted_note
-    return redacted_note[:MAXIMUM_NOTE_CHARACTERS - 1] + "…"
+    return redacted_note[: MAXIMUM_NOTE_CHARACTERS - 1] + "…"

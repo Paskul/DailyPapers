@@ -26,8 +26,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from paperwatch.reading.evidence_checks import (PassageTextById, check_numbers_occur_in_passages,
-                                                normalize_for_matching)
+from paperwatch.reading.evidence_checks import PassageTextById, check_numbers_occur_in_passages, normalize_for_matching
 from paperwatch.roles.evidence_fields import ItemCheck, check_finding
 from paperwatch.roles.output_guards import find_invented_web_addresses
 
@@ -57,16 +56,24 @@ class AnswerSalvage:
     def describe(self) -> str:
         parts = []
         if self.relocated_citations:
-            parts.append(f"moved {len(self.relocated_citations)} citation(s) to the passage that holds the quote "
-                         f"({'; '.join(self.relocated_citations)})")
+            parts.append(
+                f"moved {len(self.relocated_citations)} citation(s) to the passage that holds the quote "
+                f"({'; '.join(self.relocated_citations)})"
+            )
         if self.dropped_items:
-            parts.append(f"dropped {len(self.dropped_items)} of {self.droppable_item_count} item(s) that failed the "
-                         f"evidence checks ({'; '.join(self.dropped_items)})")
+            parts.append(
+                f"dropped {len(self.dropped_items)} of {self.droppable_item_count} item(s) that failed the "
+                f"evidence checks ({'; '.join(self.dropped_items)})"
+            )
         return "host corrections: " + ("; ".join(parts) if parts else "none")
 
 
-def salvage_evidence_answer(answer: Mapping[str, Any], role_input: RoleInput, passage_text_by_id: PassageTextById,
-                            droppable_fields: tuple[DroppableListField, ...]) -> AnswerSalvage | None:
+def salvage_evidence_answer(
+    answer: Mapping[str, Any],
+    role_input: RoleInput,
+    passage_text_by_id: PassageTextById,
+    droppable_fields: tuple[DroppableListField, ...],
+) -> AnswerSalvage | None:
     """Fix citations, then drop failing items. None when the answer cannot be salvaged (see the module doc). The
     caller still re-runs the role's full checks on `salvaged_output` before using it."""
     if find_invented_web_addresses(answer, role_input):
@@ -105,9 +112,11 @@ def find_passage_that_backs_finding(finding: Mapping[str, Any], passage_text_by_
         return None
     stated_text = f"{finding['claim']} {finding['conditions']}"
     backing_passage_ids = [
-        passage_id for passage_id, passage_text in passage_text_by_id.items()
+        passage_id
+        for passage_id, passage_text in passage_text_by_id.items()
         if normalized_excerpt in normalize_for_matching(passage_text)
-        and not check_numbers_occur_in_passages(stated_text, [passage_id], passage_text_by_id, "finding")]
+        and not check_numbers_occur_in_passages(stated_text, [passage_id], passage_text_by_id, "finding")
+    ]
     if len(backing_passage_ids) != 1:
         return None
     candidate_finding = {**finding, "passage_id": backing_passage_ids[0]}

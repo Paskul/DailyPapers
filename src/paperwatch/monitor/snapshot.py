@@ -27,19 +27,30 @@ HORIZON_AFTER_CUTOFF = timedelta(hours=2)  # the report run, and the pilot's fin
 ACTIVITY_LOG_TABLE = "activity_log"
 
 
-def build_monitor_snapshot(connection: sqlite3.Connection, app_config: AppConfig, *, now: datetime,
-                           history_hours: float, schedule: ScheduleState) -> dict[str, Any]:
+def build_monitor_snapshot(
+    connection: sqlite3.Connection,
+    app_config: AppConfig,
+    *,
+    now: datetime,
+    history_hours: float,
+    schedule: ScheduleState,
+) -> dict[str, Any]:
     window_start = now - timedelta(hours=history_hours)
     next_report_cutoff = next_report_cutoff_after(now, app_config)
     horizon_end = max(next_report_cutoff + HORIZON_AFTER_CUTOFF, now + MINIMUM_HORIZON_AHEAD)
     has_activity_log = ACTIVITY_LOG_TABLE in existing_table_names(connection)
     activity: ActivityTree | None = load_activity_tree(connection, window_start) if has_activity_log else None
 
-    running_job_ids = [row["job_id"] for row in connection.execute(
-        "SELECT job_id FROM jobs WHERE status = 'running' AND lease_expires_at > ? ORDER BY updated_at",
-        (format_utc_timestamp(now),))]
-    history = describe_history(connection, app_config, now=now, window_start=window_start, activity=activity,
-                               running_job_ids=running_job_ids)
+    running_job_ids = [
+        row["job_id"]
+        for row in connection.execute(
+            "SELECT job_id FROM jobs WHERE status = 'running' AND lease_expires_at > ? ORDER BY updated_at",
+            (format_utc_timestamp(now),),
+        )
+    ]
+    history = describe_history(
+        connection, app_config, now=now, window_start=window_start, activity=activity, running_job_ids=running_job_ids
+    )
     return {
         "meta": {
             "generated_at": format_utc_timestamp(now),
@@ -52,10 +63,23 @@ def build_monitor_snapshot(connection: sqlite3.Connection, app_config: AppConfig
             "horizon_end": format_utc_timestamp(horizon_end),
             "topics": [topic.topic_id for topic in app_config.topics],  # ids only: questions stay private
         },
-        "now": describe_now(connection, app_config, now=now, activity=activity, schedule=schedule,
-                            next_report_cutoff=next_report_cutoff,
-                            last_collect_run=latest_collect_run(history["lanes"]["collect"])),
-        "plan": describe_plan(connection, app_config, now=now, window_start=window_start, horizon_end=horizon_end,
-                              schedule=schedule, next_report_cutoff=next_report_cutoff),
+        "now": describe_now(
+            connection,
+            app_config,
+            now=now,
+            activity=activity,
+            schedule=schedule,
+            next_report_cutoff=next_report_cutoff,
+            last_collect_run=latest_collect_run(history["lanes"]["collect"]),
+        ),
+        "plan": describe_plan(
+            connection,
+            app_config,
+            now=now,
+            window_start=window_start,
+            horizon_end=horizon_end,
+            schedule=schedule,
+            next_report_cutoff=next_report_cutoff,
+        ),
         "history": history,
     }

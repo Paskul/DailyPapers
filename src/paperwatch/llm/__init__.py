@@ -18,6 +18,9 @@ def build_model_client(model_settings: ModelSettings) -> ModelClient:
     if model_settings.backend == "fake":
         # Imported here to avoid a cycle: the healthcheck role imports from paperwatch.llm.
         from paperwatch.roles.healthcheck import HEALTHCHECK_ROLE, HEALTHCHECK_EXPECTED_FINAL_ANSWER
-        return FakeModelClient({HEALTHCHECK_ROLE.role_name: HEALTHCHECK_EXPECTED_FINAL_ANSWER},
-                               response_delay_seconds=float(os.environ.get(FAKE_MODEL_DELAY_ENVIRONMENT_VARIABLE, "0")))
+
+        return FakeModelClient(
+            {HEALTHCHECK_ROLE.role_name: HEALTHCHECK_EXPECTED_FINAL_ANSWER},
+            response_delay_seconds=float(os.environ.get(FAKE_MODEL_DELAY_ENVIRONMENT_VARIABLE, "0")),
+        )
     return LlamaCppModelClient(model_settings)

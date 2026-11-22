@@ -103,19 +103,52 @@ SECTION_KIND_BY_HEADING_KEYWORD: tuple[tuple[str, SectionKind], ...] = (
     ("dataset", SectionKind.RESULTS),
 )
 # Unnumbered lines are headings only if they are one of these names (numbered headings need no list).
-UNNUMBERED_HEADING_NAMES = frozenset({
-    "abstract", "introduction", "background", "related work", "related works", "preliminaries", "method",
-    "methods", "methodology", "approach", "our approach", "experiments", "experimental setup", "evaluation",
-    "results", "experimental results", "discussion", "limitations", "conclusion", "conclusions",
-    "conclusion and future work", "conclusions and future work", "future work", "acknowledgments",
-    "acknowledgements", "acknowledgment", "acknowledgement", "references", "bibliography", "appendix",
-    "appendices", "supplementary material", "threats to validity", "case study", "funding", "summary",
-})
+UNNUMBERED_HEADING_NAMES = frozenset(
+    {
+        "abstract",
+        "introduction",
+        "background",
+        "related work",
+        "related works",
+        "preliminaries",
+        "method",
+        "methods",
+        "methodology",
+        "approach",
+        "our approach",
+        "experiments",
+        "experimental setup",
+        "evaluation",
+        "results",
+        "experimental results",
+        "discussion",
+        "limitations",
+        "conclusion",
+        "conclusions",
+        "conclusion and future work",
+        "conclusions and future work",
+        "future work",
+        "acknowledgments",
+        "acknowledgements",
+        "acknowledgment",
+        "acknowledgement",
+        "references",
+        "bibliography",
+        "appendix",
+        "appendices",
+        "supplementary material",
+        "threats to validity",
+        "case study",
+        "funding",
+        "summary",
+    }
+)
 # "3", "3.2", "3.2.1.", "IV.", or an appendix letter WITH a dot ("A.", "B.1"), then a capitalized name. A bare
 # "A " is not a number: "A Monte Carlo run ..." is the first line of a paragraph.
 NUMBERED_HEADING_PATTERN = re.compile(
     r"^(?P<number>(?:\d{1,2}(?:\.\d{1,2}){0,3}\.?)|(?:[IVX]{1,5}\.)|(?:[A-H]\.(?:\d{1,2}(?:\.\d{1,2})?\.?)?))\s+"
-    r"(?P<name>[A-Z][^\n]*)$")
+    r"(?P<name>[A-Z][^\n]*)$"
+)
 APPENDIX_LETTER_PATTERN = re.compile(r"^[A-H]\.")
 # A numbered heading run into its paragraph (not a block of its own) must be this short and comma-free; otherwise
 # it is more likely the first wrapped line of a paragraph that starts with a number.
@@ -135,8 +168,11 @@ class Passage:
 
     def as_model_input(self) -> dict[str, object]:
         """The plain-data form the reviewer roles receive."""
-        model_input: dict[str, object] = {"passage_id": self.passage_id, "section": self.section_title,
-                                          "text": self.text}
+        model_input: dict[str, object] = {
+            "passage_id": self.passage_id,
+            "section": self.section_title,
+            "text": self.text,
+        }
         if self.page_number is not None:
             model_input["page"] = self.page_number
         return model_input
@@ -158,8 +194,10 @@ def build_abstract_passages(title: str, abstract: str | None) -> tuple[Passage, 
     if not abstract_text:
         return (Passage("T1", None, TITLE_SECTION_TITLE, SectionKind.TITLE, clean_passage_text(title)),)
     sentences = [sentence for sentence in SENTENCE_BOUNDARY_PATTERN.split(abstract_text) if sentence.strip()]
-    return tuple(Passage(f"A{sentence_index}", None, ABSTRACT_SECTION_TITLE, SectionKind.ABSTRACT, sentence.strip())
-                 for sentence_index, sentence in enumerate(sentences, start=1))
+    return tuple(
+        Passage(f"A{sentence_index}", None, ABSTRACT_SECTION_TITLE, SectionKind.ABSTRACT, sentence.strip())
+        for sentence_index, sentence in enumerate(sentences, start=1)
+    )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -174,8 +212,9 @@ class _OpenSection:
     top_level_kind: SectionKind  # a numbered subsection without its own keyword inherits its parent's kind
 
 
-def segment_extracted_text(extracted_text: str, *, passage_max_characters: int,
-                           passage_min_characters: int) -> tuple[Passage, ...]:
+def segment_extracted_text(
+    extracted_text: str, *, passage_max_characters: int, passage_min_characters: int
+) -> tuple[Passage, ...]:
     """Passages P1..Pn of the extractor's text, in document order, with page numbers when pages are marked."""
     has_page_marks = FORM_FEED in extracted_text
     raw_paragraphs: list[tuple[int | None, _OpenSection, str]] = []
@@ -197,8 +236,10 @@ def segment_extracted_text(extracted_text: str, *, passage_max_characters: int,
             raw_paragraphs.append((page_number, open_section, paragraph_text))
 
     bounded_paragraphs = _merge_and_split_paragraphs(raw_paragraphs, passage_max_characters, passage_min_characters)
-    return tuple(Passage(f"P{passage_index}", page_number, section.title, section.kind, text)
-                 for passage_index, (page_number, section, text) in enumerate(bounded_paragraphs, start=1))
+    return tuple(
+        Passage(f"P{passage_index}", page_number, section.title, section.kind, text)
+        for passage_index, (page_number, section, text) in enumerate(bounded_paragraphs, start=1)
+    )
 
 
 @dataclass(frozen=True)
@@ -212,7 +253,7 @@ def recognize_heading_line(line: str, *, is_whole_block: bool = True) -> Recogni
     """A heading line, or None. Deliberately conservative: a missed heading only coarsens the section names, while
     a false one would split a paragraph. `is_whole_block` is False when more lines of the same block follow."""
     if line.startswith(XML_HEADING_PREFIX):
-        heading_title = clean_passage_text(line[len(XML_HEADING_PREFIX):])
+        heading_title = clean_passage_text(line[len(XML_HEADING_PREFIX) :])
         return RecognizedHeading(heading_title, 0, False) if heading_title else None
     candidate = clean_passage_text(line)
     if not candidate or len(candidate) > MAXIMUM_HEADING_CHARACTERS or len(candidate.split()) > MAXIMUM_HEADING_WORDS:
@@ -243,8 +284,10 @@ def classify_section_heading(heading_title: str) -> SectionKind | None:
 
 def _open_section_for_heading(heading: RecognizedHeading, previous_section: _OpenSection) -> _OpenSection:
     named_kind = classify_section_heading(heading.title)
-    if heading.is_appendix_lettered and previous_section.top_level_kind in (SectionKind.APPENDIX,
-                                                                              SectionKind.REFERENCES):
+    if heading.is_appendix_lettered and previous_section.top_level_kind in (
+        SectionKind.APPENDIX,
+        SectionKind.REFERENCES,
+    ):
         named_kind = SectionKind.APPENDIX  # lettered sections after the references are appendices
     if heading.numbering_depth >= 2:  # a subsection: its own keyword, else its parent's kind
         section_kind = named_kind or previous_section.top_level_kind
@@ -253,24 +296,30 @@ def _open_section_for_heading(heading: RecognizedHeading, previous_section: _Ope
     return _OpenSection(heading.title, section_kind, section_kind)
 
 
-def _merge_and_split_paragraphs(raw_paragraphs: list[tuple[int | None, _OpenSection, str]],
-                                passage_max_characters: int, passage_min_characters: int,
-                                ) -> list[tuple[int | None, _OpenSection, str]]:
+def _merge_and_split_paragraphs(
+    raw_paragraphs: list[tuple[int | None, _OpenSection, str]],
+    passage_max_characters: int,
+    passage_min_characters: int,
+) -> list[tuple[int | None, _OpenSection, str]]:
     """Merge short paragraphs into the next one on the same page and section; split long ones at sentences."""
     merged: list[tuple[int | None, _OpenSection, str]] = []
     for page_number, section, paragraph_text in raw_paragraphs:
         if merged:
             previous_page, previous_section, previous_text = merged[-1]
-            if previous_page == page_number and previous_section is section and \
-                    len(previous_text) < passage_min_characters and \
-                    len(previous_text) + 1 + len(paragraph_text) <= passage_max_characters:
+            if (
+                previous_page == page_number
+                and previous_section is section
+                and len(previous_text) < passage_min_characters
+                and len(previous_text) + 1 + len(paragraph_text) <= passage_max_characters
+            ):
                 merged[-1] = (page_number, section, f"{previous_text} {paragraph_text}")
                 continue
         merged.append((page_number, section, paragraph_text))
     bounded: list[tuple[int | None, _OpenSection, str]] = []
     for page_number, section, paragraph_text in merged:
-        bounded.extend((page_number, section, piece) for piece in
-                       split_text_at_sentences(paragraph_text, passage_max_characters))
+        bounded.extend(
+            (page_number, section, piece) for piece in split_text_at_sentences(paragraph_text, passage_max_characters)
+        )
     return bounded
 
 
@@ -314,6 +363,7 @@ def join_extracted_lines(lines: list[str]) -> str:
 def clean_passage_text(text: str) -> str:
     """NFKC (ligatures such as 'ﬁ' become 'fi'), soft hyphens and control characters removed, whitespace collapsed."""
     normalized_text = unicodedata.normalize("NFKC", text).replace("­", "")
-    printable_text = "".join(character if character.isprintable() or character.isspace() else " "
-                             for character in normalized_text)
+    printable_text = "".join(
+        character if character.isprintable() or character.isspace() else " " for character in normalized_text
+    )
     return " ".join(printable_text.split())

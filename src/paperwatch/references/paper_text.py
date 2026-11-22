@@ -16,8 +16,9 @@ from paperwatch.readings import select_reading_input
 from paperwatch.review_inputs import TEXT_KIND_EXTRACTED_TEXT
 
 
-def load_extracted_text_passages(connection: sqlite3.Connection, app_config: AppConfig,
-                                 paper_id: str) -> tuple[Passage, ...] | None:
+def load_extracted_text_passages(
+    connection: sqlite3.Connection, app_config: AppConfig, paper_id: str
+) -> tuple[Passage, ...] | None:
     reading_input = select_reading_input(connection, paper_id)
     if reading_input is None or reading_input.text_kind != TEXT_KIND_EXTRACTED_TEXT:
         return None
@@ -25,9 +26,11 @@ def load_extracted_text_passages(connection: sqlite3.Connection, app_config: App
         extracted_text = load_verified_extracted_text(app_config, reading_input)
     except ExtractedTextUnavailable:
         return None
-    return segment_extracted_text(extracted_text,
-                                  passage_max_characters=app_config.reading.passage_max_characters,
-                                  passage_min_characters=app_config.reading.passage_min_characters)
+    return segment_extracted_text(
+        extracted_text,
+        passage_max_characters=app_config.reading.passage_max_characters,
+        passage_min_characters=app_config.reading.passage_min_characters,
+    )
 
 
 def bibliography_passages(passages: tuple[Passage, ...]) -> list[Passage]:
@@ -36,5 +39,8 @@ def bibliography_passages(passages: tuple[Passage, ...]) -> list[Passage]:
 
 def body_passages(passages: tuple[Passage, ...]) -> list[Passage]:
     """Passages that can cite something: everything but the bibliography and acknowledgments."""
-    return [passage for passage in passages
-            if passage.section_kind not in (SectionKind.REFERENCES, SectionKind.ACKNOWLEDGMENTS)]
+    return [
+        passage
+        for passage in passages
+        if passage.section_kind not in (SectionKind.REFERENCES, SectionKind.ACKNOWLEDGMENTS)
+    ]

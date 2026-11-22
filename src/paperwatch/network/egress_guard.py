@@ -35,8 +35,9 @@ LOOPBACK_HOST_NAMES = frozenset({"localhost", "localhost.localdomain", "ip6-loca
 
 # Audit events that start another program. "subprocess.Popen" carries the executable and is checked against the
 # policy; the others are always refused while a policy is armed.
-PROGRAM_LAUNCH_EVENTS_ALWAYS_REFUSED = frozenset({"os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork",
-                                                  "os.forkpty", "pty.spawn"})
+PROGRAM_LAUNCH_EVENTS_ALWAYS_REFUSED = frozenset(
+    {"os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork", "os.forkpty", "pty.spawn"}
+)
 
 
 class EgressBlocked(PermissionError):
@@ -80,8 +81,9 @@ class EgressPolicy:
 
     def refusal_reason_for_program(self, executable: object) -> str | None:
         executable_text = os.fsdecode(executable) if isinstance(executable, (str, bytes, os.PathLike)) else ""
-        if executable_text and (executable_text in self.allowed_executables or
-                                os.path.basename(executable_text) in self.allowed_executables):
+        if executable_text and (
+            executable_text in self.allowed_executables or os.path.basename(executable_text) in self.allowed_executables
+        ):
             return None
         return f"{self.component_label} may not start program {executable_text or executable!r}"
 
@@ -96,9 +98,15 @@ def is_public_internet_address(ip_address: ipaddress.IPv4Address | ipaddress.IPv
         ip_address = parsed_address
     if isinstance(ip_address, ipaddress.IPv6Address) and ip_address.ipv4_mapped is not None:
         ip_address = ip_address.ipv4_mapped
-    return (ip_address.is_global and not ip_address.is_private and not ip_address.is_loopback
-            and not ip_address.is_link_local and not ip_address.is_reserved and not ip_address.is_multicast
-            and not ip_address.is_unspecified)
+    return (
+        ip_address.is_global
+        and not ip_address.is_private
+        and not ip_address.is_loopback
+        and not ip_address.is_link_local
+        and not ip_address.is_reserved
+        and not ip_address.is_multicast
+        and not ip_address.is_unspecified
+    )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -120,8 +128,11 @@ def build_local_model_policy(model_base_url: str, component_label: str) -> Egres
     if model_host in LOOPBACK_HOST_NAMES or (model_ip_address is not None and model_ip_address.is_loopback):
         return EgressPolicy(component_label=component_label, allowed_loopback_ports=frozenset({model_port}))
     resolved_endpoints = frozenset((resolved_ip, model_port) for resolved_ip in _resolve_now(model_host, model_port))
-    return EgressPolicy(component_label=component_label, resolvable_host_names=frozenset({model_host}),
-                        allowed_non_loopback_endpoints=resolved_endpoints)
+    return EgressPolicy(
+        component_label=component_label,
+        resolvable_host_names=frozenset({model_host}),
+        allowed_non_loopback_endpoints=resolved_endpoints,
+    )
 
 
 def build_monitor_policy(systemctl_path: str = "/usr/bin/systemctl") -> EgressPolicy:
@@ -131,8 +142,12 @@ def build_monitor_policy(systemctl_path: str = "/usr/bin/systemctl") -> EgressPo
 
 
 def build_collector_policy(permitted_provider_hosts: frozenset[str], container_runtime: str) -> EgressPolicy:
-    return EgressPolicy(component_label="collector", resolvable_host_names=permitted_provider_hosts,
-                        allow_public_internet_https=True, allowed_executables=frozenset({container_runtime}))
+    return EgressPolicy(
+        component_label="collector",
+        resolvable_host_names=permitted_provider_hosts,
+        allow_public_internet_https=True,
+        allowed_executables=frozenset({container_runtime}),
+    )
 
 
 # --------------------------------------------------------------------------------------------------------------------

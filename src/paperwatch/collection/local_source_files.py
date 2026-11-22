@@ -35,8 +35,11 @@ class LocalSourceFolder:
         self._regular_file_by_lowercase_name: dict[str, Path] = {}
         if folder_path.is_dir():
             for child_path in folder_path.iterdir():
-                if child_path.suffix.lower() in CONTENT_TYPE_BY_LOCAL_SUFFIX and not child_path.is_symlink() and \
-                        child_path.is_file():
+                if (
+                    child_path.suffix.lower() in CONTENT_TYPE_BY_LOCAL_SUFFIX
+                    and not child_path.is_symlink()
+                    and child_path.is_file()
+                ):
                     self._regular_file_by_lowercase_name[child_path.name.lower()] = child_path
 
     @property
@@ -84,7 +87,8 @@ def read_local_source_bytes(local_source_file: LocalSourceFile, maximum_bytes: i
         raise ValueError(f"is larger than {maximum_bytes} bytes")
     if local_source_file.content_type == "application/pdf" and not file_bytes.startswith(PDF_MAGIC_BYTES):
         raise ValueError("does not start like a PDF file")
-    if local_source_file.content_type == "application/xml" and \
-            not file_bytes.removeprefix(UTF8_BYTE_ORDER_MARK).lstrip().startswith(b"<"):
+    if local_source_file.content_type == "application/xml" and not file_bytes.removeprefix(
+        UTF8_BYTE_ORDER_MARK
+    ).lstrip().startswith(b"<"):
         raise ValueError("does not start like an XML file")
     return file_bytes

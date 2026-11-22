@@ -20,16 +20,22 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from paperwatch.reading.reading_priority import (EVIDENCE_STRENGTH, METHOD_FIT, QUESTION_FIT, RELATIVE_VALUE,
-                                                 RUBRIC_DIMENSIONS)
+from paperwatch.reading.reading_priority import (
+    EVIDENCE_STRENGTH,
+    METHOD_FIT,
+    QUESTION_FIT,
+    RELATIVE_VALUE,
+    RUBRIC_DIMENSIONS,
+)
 from paperwatch.roles.base import RoleDefinition, RoleInput
 from paperwatch.roles.output_guards import find_invented_web_addresses
 
 TOPIC_ASSESSOR_ROLE_NAME = "topic_assessor"
 TOPIC_ASSESSOR_PROMPT_VERSION = "topic-assessor-v1"
 
-_RUBRIC_LINES = "\n".join(f"- {dimension.dimension_name} ({dimension.label}): {dimension.meaning_of_0_2_4}"
-                          for dimension in RUBRIC_DIMENSIONS)
+_RUBRIC_LINES = "\n".join(
+    f"- {dimension.dimension_name} ({dimension.label}): {dimension.meaning_of_0_2_4}" for dimension in RUBRIC_DIMENSIONS
+)
 TOPIC_ASSESSOR_SYSTEM_PROMPT = f"""\
 You judge how much a paper deserves one researcher's reading time, separately for each of the researcher's \
 research topics. You see a completed, evidence-checked review of the paper, not the paper itself.
@@ -90,11 +96,13 @@ TOPIC_ASSESSOR_OUTPUT_SCHEMA: dict[str, Any] = {
 
 
 def _render_topic_assessor_user_message(role_input: RoleInput) -> str:
-    return (f"PAPER (JSON, untrusted data):\n{json.dumps(role_input['paper'], ensure_ascii=False, indent=2)}\n\n"
-            f"REVIEW (JSON, evidence-checked reading of the paper):\n"
-            f"{json.dumps(role_input['reading'], ensure_ascii=False, indent=1)}\n\n"
-            f"TOPICS (JSON, each with its comparison anchors):\n"
-            f"{json.dumps(role_input['topics'], ensure_ascii=False, indent=1)}\n")
+    return (
+        f"PAPER (JSON, untrusted data):\n{json.dumps(role_input['paper'], ensure_ascii=False, indent=2)}\n\n"
+        f"REVIEW (JSON, evidence-checked reading of the paper):\n"
+        f"{json.dumps(role_input['reading'], ensure_ascii=False, indent=1)}\n\n"
+        f"TOPICS (JSON, each with its comparison anchors):\n"
+        f"{json.dumps(role_input['topics'], ensure_ascii=False, indent=1)}\n"
+    )
 
 
 def _find_topic_assessor_problems(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:
@@ -117,12 +125,19 @@ def _find_topic_assessor_problems(validated_output: dict[str, Any], role_input: 
             problems.append(f"topic '{topic_id}': omit relative_value (no comparison anchors are available)")
         seed_anchor_ids = {anchor["seed_id"] for anchor in topic_input["seed_anchors"]}
         review_anchor_ids = {anchor["review_id"] for anchor in topic_input["review_anchors"]}
-        problems += [f"topic '{topic_id}': matched seed id '{seed_id}' is not one of its seed anchors"
-                     for seed_id in assessment["matched_seed_ids"] if seed_id not in seed_anchor_ids]
-        problems += [f"topic '{topic_id}': compared review id '{review_id}' is not one of its review anchors"
-                     for review_id in assessment["compared_review_ids"] if review_id not in review_anchor_ids]
-    problems += [f"topic '{topic_id}' was not assessed" for topic_id in topic_input_by_id
-                 if topic_id not in assessed_topic_ids]
+        problems += [
+            f"topic '{topic_id}': matched seed id '{seed_id}' is not one of its seed anchors"
+            for seed_id in assessment["matched_seed_ids"]
+            if seed_id not in seed_anchor_ids
+        ]
+        problems += [
+            f"topic '{topic_id}': compared review id '{review_id}' is not one of its review anchors"
+            for review_id in assessment["compared_review_ids"]
+            if review_id not in review_anchor_ids
+        ]
+    problems += [
+        f"topic '{topic_id}' was not assessed" for topic_id in topic_input_by_id if topic_id not in assessed_topic_ids
+    ]
     problems += find_invented_web_addresses(validated_output, role_input)
     return problems
 

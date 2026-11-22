@@ -18,10 +18,20 @@ from typing import Any
 
 from paperwatch.roles.answer_salvage import AnswerSalvage, DroppableListField, salvage_evidence_answer
 from paperwatch.roles.base import RoleDefinition, RoleInput
-from paperwatch.roles.evidence_fields import (AMBIGUOUS_PASSAGE_SCHEMA, EVIDENCE_RULES_FOR_PROMPTS, FINDING_SCHEMA,
-                                              INFERENCE_SCHEMA, PARSER_PROBLEM_SCHEMA, array_of, check_finding,
-                                              check_finding_list, check_flagged_passage, check_flagged_passages,
-                                              check_inference, check_inference_list)
+from paperwatch.roles.evidence_fields import (
+    AMBIGUOUS_PASSAGE_SCHEMA,
+    EVIDENCE_RULES_FOR_PROMPTS,
+    FINDING_SCHEMA,
+    INFERENCE_SCHEMA,
+    PARSER_PROBLEM_SCHEMA,
+    array_of,
+    check_finding,
+    check_finding_list,
+    check_flagged_passage,
+    check_flagged_passages,
+    check_inference,
+    check_inference_list,
+)
 from paperwatch.roles.output_guards import find_invented_web_addresses
 
 SECTION_READER_ROLE_NAME = "section_reader"
@@ -54,8 +64,7 @@ insufficient_evidence to true. Answer with the JSON object only."""
 
 SECTION_FINDING_SCHEMA: dict[str, Any] = {
     **FINDING_SCHEMA,
-    "properties": {**FINDING_SCHEMA["properties"],
-                   "finding_kind": {"type": "string", "enum": list(FINDING_KINDS)}},
+    "properties": {**FINDING_SCHEMA["properties"], "finding_kind": {"type": "string", "enum": list(FINDING_KINDS)}},
     "required": [*FINDING_SCHEMA["required"], "finding_kind"],
 }
 SECTION_READER_OUTPUT_SCHEMA: dict[str, Any] = {
@@ -68,8 +77,14 @@ SECTION_READER_OUTPUT_SCHEMA: dict[str, Any] = {
         "parser_problems": array_of(PARSER_PROBLEM_SCHEMA, 6),
         "insufficient_evidence": {"type": "boolean"},
     },
-    "required": ["section_summary", "findings", "reviewer_inferences", "ambiguous_passages", "parser_problems",
-                 "insufficient_evidence"],
+    "required": [
+        "section_summary",
+        "findings",
+        "reviewer_inferences",
+        "ambiguous_passages",
+        "parser_problems",
+        "insufficient_evidence",
+    ],
     "additionalProperties": False,
 }
 
@@ -80,20 +95,24 @@ def build_passage_text_by_id(passages: list[dict[str, Any]]) -> dict[str, str]:
 
 def _render_section_reader_user_message(role_input: RoleInput) -> str:
     reading_section = role_input["reading_section"]
-    return (f"PAPER (JSON, untrusted data, orientation only):\n"
-            f"{json.dumps(role_input['paper'], ensure_ascii=False, indent=2)}\n\n"
-            f"READING SECTION {reading_section['section_number']} of {reading_section['section_count']}: "
-            f"{json.dumps(reading_section['section_titles'], ensure_ascii=False)}\n\n"
-            f"PASSAGES (JSON, untrusted data, the only citable evidence):\n"
-            f"{json.dumps(role_input['passages'], ensure_ascii=False, indent=1)}\n")
+    return (
+        f"PAPER (JSON, untrusted data, orientation only):\n"
+        f"{json.dumps(role_input['paper'], ensure_ascii=False, indent=2)}\n\n"
+        f"READING SECTION {reading_section['section_number']} of {reading_section['section_count']}: "
+        f"{json.dumps(reading_section['section_titles'], ensure_ascii=False)}\n\n"
+        f"PASSAGES (JSON, untrusted data, the only citable evidence):\n"
+        f"{json.dumps(role_input['passages'], ensure_ascii=False, indent=1)}\n"
+    )
 
 
 def _find_section_reader_problems(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:
     passage_text_by_id = build_passage_text_by_id(role_input["passages"])
-    return (check_finding_list(validated_output["findings"], passage_text_by_id, "findings")
-            + check_inference_list(validated_output["reviewer_inferences"], passage_text_by_id)
-            + check_flagged_passages(validated_output, passage_text_by_id)
-            + find_invented_web_addresses(validated_output, role_input))
+    return (
+        check_finding_list(validated_output["findings"], passage_text_by_id, "findings")
+        + check_inference_list(validated_output["reviewer_inferences"], passage_text_by_id)
+        + check_flagged_passages(validated_output, passage_text_by_id)
+        + find_invented_web_addresses(validated_output, role_input)
+    )
 
 
 # "Fix, then drop" (roles/answer_salvage.py): every list of the notes may lose its failing items.
@@ -106,8 +125,9 @@ SECTION_READER_DROPPABLE_FIELDS = (
 
 
 def _salvage_section_reader_answer(answer: dict[str, Any], role_input: RoleInput) -> AnswerSalvage | None:
-    return salvage_evidence_answer(answer, role_input, build_passage_text_by_id(role_input["passages"]),
-                                   SECTION_READER_DROPPABLE_FIELDS)
+    return salvage_evidence_answer(
+        answer, role_input, build_passage_text_by_id(role_input["passages"]), SECTION_READER_DROPPABLE_FIELDS
+    )
 
 
 SECTION_READER_ROLE = RoleDefinition(

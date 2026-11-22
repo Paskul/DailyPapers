@@ -22,8 +22,9 @@ class AppContext:
     def load(cls, home_dir: Path, *, model_client: ModelClient | None = None) -> AppContext:
         app_config = load_app_config(home_dir)
         connection = open_initialized_database(app_config.database_path)
-        return cls(config=app_config, connection=connection,
-                   model_client=model_client or build_model_client(app_config.model))
+        return cls(
+            config=app_config, connection=connection, model_client=model_client or build_model_client(app_config.model)
+        )
 
     def close(self) -> None:
         self.connection.close()

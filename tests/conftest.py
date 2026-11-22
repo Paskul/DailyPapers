@@ -53,16 +53,21 @@ class PaperwatchHome:
     def cli_command(self, *cli_arguments: str) -> list[str]:
         return [sys.executable, "-m", "paperwatch", "--home", str(self.home_dir), *cli_arguments]
 
-    def start_cli(self, *cli_arguments: str, environment_overrides: dict[str, str] | None = None
-                  ) -> subprocess.Popen:
+    def start_cli(self, *cli_arguments: str, environment_overrides: dict[str, str] | None = None) -> subprocess.Popen:
         """Start the CLI without waiting, e.g. a worker the test will kill or race."""
-        return subprocess.Popen(self.cli_command(*cli_arguments), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, env={**os.environ, **(environment_overrides or {})})
+        return subprocess.Popen(
+            self.cli_command(*cli_arguments),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={**os.environ, **(environment_overrides or {})},
+        )
 
     def use_short_leases(self, lease_seconds: int = 2, renewal_interval_seconds: int = 1) -> None:
         self.replace_in_config("lease_seconds = 300", f"lease_seconds = {lease_seconds}")
-        self.replace_in_config("lease_renewal_interval_seconds = 60",
-                               f"lease_renewal_interval_seconds = {renewal_interval_seconds}")
+        self.replace_in_config(
+            "lease_renewal_interval_seconds = 60", f"lease_renewal_interval_seconds = {renewal_interval_seconds}"
+        )
 
     def replace_in_config(self, old_text: str, new_text: str) -> None:
         config_path = self.home_dir / "config.toml"
@@ -107,9 +112,15 @@ class PaperwatchHome:
             connection.close()
 
 
-def build_in_process_app(home_dir: Path, *, topics_toml: str = EXAMPLE_TOPIC_TOML,
-                         config_replacements: dict[str, str] | None = None, model_client=None,
-                         use_configured_model_backend: bool = False, use_onnx_embedder: bool = False):
+def build_in_process_app(
+    home_dir: Path,
+    *,
+    topics_toml: str = EXAMPLE_TOPIC_TOML,
+    config_replacements: dict[str, str] | None = None,
+    model_client=None,
+    use_configured_model_backend: bool = False,
+    use_onnx_embedder: bool = False,
+):
     """Init a home in this process, write topics and config edits, and load an AppContext.
 
     The model is a FakeModelClient unless `model_client` is given, or `use_configured_model_backend` asks for the

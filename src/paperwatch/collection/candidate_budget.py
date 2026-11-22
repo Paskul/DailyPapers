@@ -50,15 +50,19 @@ class CandidateAdmissionBudget:
     category_daily_targets: dict[str, int] | None = None
 
     @classmethod
-    def load_for_day(cls, connection: sqlite3.Connection, collection_settings: CollectionSettings,
-                     moment: datetime) -> CandidateAdmissionBudget:
+    def load_for_day(
+        cls, connection: sqlite3.Connection, collection_settings: CollectionSettings, moment: datetime
+    ) -> CandidateAdmissionBudget:
         day_start_timestamp = format_utc_timestamp(moment.replace(hour=0, minute=0, second=0, microsecond=0))
-        budget = cls(daily_limit=collection_settings.daily_new_candidate_budget,
-                     reserved_for_current_releases=collection_settings.current_release_reserved_candidates,
-                     category_feed_limit=collection_settings.category_feed_candidate_limit,
-                     historical_reserve=collection_settings.historical_reserved_candidates)
-        for paper_row in connection.execute("SELECT origin_route FROM papers WHERE discovered_at >= ?",
-                                            (day_start_timestamp,)):
+        budget = cls(
+            daily_limit=collection_settings.daily_new_candidate_budget,
+            reserved_for_current_releases=collection_settings.current_release_reserved_candidates,
+            category_feed_limit=collection_settings.category_feed_candidate_limit,
+            historical_reserve=collection_settings.historical_reserved_candidates,
+        )
+        for paper_row in connection.execute(
+            "SELECT origin_route FROM papers WHERE discovered_at >= ?", (day_start_timestamp,)
+        ):
             budget.record_route_admissions(paper_row["origin_route"], 1)
         return budget
 
@@ -76,8 +80,9 @@ class CandidateAdmissionBudget:
         self.record_admissions(classify_discovery_route(discovery_route), admitted_count)
         arxiv_category = arxiv_category_of_route(discovery_route)
         if arxiv_category is not None:
-            self.admitted_today_by_category[arxiv_category] = \
+            self.admitted_today_by_category[arxiv_category] = (
                 self.admitted_today_by_category.get(arxiv_category, 0) + admitted_count
+            )
 
     def record_admissions(self, route_kind: RouteKind, admitted_count: int) -> None:
         if route_kind == RouteKind.CURRENT_RELEASE:
@@ -109,8 +114,10 @@ class CandidateAdmissionBudget:
         """How many new papers `discovery_route` may still admit today."""
         arxiv_category = arxiv_category_of_route(discovery_route)
         if arxiv_category is not None:
-            return min(max(0, self.remaining_today - self.unused_historical_reserve),
-                       self.remaining_share_of_category(arxiv_category))
+            return min(
+                max(0, self.remaining_today - self.unused_historical_reserve),
+                self.remaining_share_of_category(arxiv_category),
+            )
         return self.remaining_for(classify_discovery_route(discovery_route))
 
     def remaining_for(self, route_kind: RouteKind) -> int:
@@ -118,8 +125,9 @@ class CandidateAdmissionBudget:
         if route_kind == RouteKind.CURRENT_RELEASE:
             return max(0, self.remaining_today - self.unused_category_feed_reserve - self.unused_historical_reserve)
         if route_kind == RouteKind.HISTORICAL_SEARCH:
-            unused_current_reserve = max(0, self.reserved_for_current_releases
-                                         - self.admitted_today_by_current_releases)
+            unused_current_reserve = max(
+                0, self.reserved_for_current_releases - self.admitted_today_by_current_releases
+            )
             beyond_its_reserve = self.remaining_today - max(unused_current_reserve, self.unused_category_feed_reserve)
             return max(0, min(self.remaining_today, self.unused_historical_reserve), beyond_its_reserve)
         return UNLIMITED_ADMISSIONS  # seeds and fixtures are not provider candidates
@@ -127,28 +135,41 @@ class CandidateAdmissionBudget:
     def remaining_share_of_category(self, arxiv_category: str) -> int:
         if self.category_daily_targets is None:
             return self.unused_category_feed_reserve
-        return max(0, min(self.category_daily_targets.get(arxiv_category, 0)
-                          - self.admitted_today_by_category.get(arxiv_category, 0),
-                          self.unused_category_feed_reserve))
+        return max(
+            0,
+            min(
+                self.category_daily_targets.get(arxiv_category, 0)
+                - self.admitted_today_by_category.get(arxiv_category, 0),
+                self.unused_category_feed_reserve,
+            ),
+        )
 
     def plan_category_feed_shares(self, new_records_waiting_by_category: Mapping[str, int | None]) -> None:
         """Split the category-feed limit fairly for today. A category's demand is what it already admitted today
         plus the new records waiting for it now (None = unknown, e.g. an open recovery search: it takes whatever
         share it gets)."""
-        demands = {arxiv_category: None if waiting is None
-                   else self.admitted_today_by_category.get(arxiv_category, 0) + waiting
-                   for arxiv_category, waiting in new_records_waiting_by_category.items()}
+        demands = {
+            arxiv_category: None
+            if waiting is None
+            else self.admitted_today_by_category.get(arxiv_category, 0) + waiting
+            for arxiv_category, waiting in new_records_waiting_by_category.items()
+        }
         self.category_daily_targets = water_fill(self.effective_category_feed_limit, demands)
 
     def describe(self) -> str:
-        description = (f"{self.admitted_today} of {self.daily_limit} new candidate(s) admitted today (UTC): "
-                       f"{self.admitted_today_by_current_releases} current, {self.admitted_today_by_historical_search} "
-                       "historical")
+        description = (
+            f"{self.admitted_today} of {self.daily_limit} new candidate(s) admitted today (UTC): "
+            f"{self.admitted_today_by_current_releases} current, {self.admitted_today_by_historical_search} "
+            "historical"
+        )
         if self.category_feed_limit < UNLIMITED_ADMISSIONS:
-            per_category = ", ".join(f"{arxiv_category} {count}" for arxiv_category, count
-                                     in sorted(self.admitted_today_by_category.items()))
-            description += (f"; arXiv category feeds {self.admitted_today_by_category_feeds} of "
-                            f"{self.category_feed_limit}" + (f" ({per_category})" if per_category else ""))
+            per_category = ", ".join(
+                f"{arxiv_category} {count}" for arxiv_category, count in sorted(self.admitted_today_by_category.items())
+            )
+            description += (
+                f"; arXiv category feeds {self.admitted_today_by_category_feeds} of "
+                f"{self.category_feed_limit}" + (f" ({per_category})" if per_category else "")
+            )
         return description
 
 

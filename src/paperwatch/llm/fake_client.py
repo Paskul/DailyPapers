@@ -28,10 +28,16 @@ FAKE_CONTEXT_TOKENS_PER_SLOT = 262144
 
 
 class FakeModelClient:
-    def __init__(self, canned_final_answers_by_role: dict[str, ScriptedAnswer] | None = None, *,
-                 response_delay_seconds: float = 0.0) -> None:
-        self._canned_final_answers_by_role = {role_name: (list(answer) if isinstance(answer, list) else answer)
-                                              for role_name, answer in (canned_final_answers_by_role or {}).items()}
+    def __init__(
+        self,
+        canned_final_answers_by_role: dict[str, ScriptedAnswer] | None = None,
+        *,
+        response_delay_seconds: float = 0.0,
+    ) -> None:
+        self._canned_final_answers_by_role = {
+            role_name: (list(answer) if isinstance(answer, list) else answer)
+            for role_name, answer in (canned_final_answers_by_role or {}).items()
+        }
         self._response_delay_seconds = response_delay_seconds  # simulates a slow model in crash/lease tests
         self.received_requests: list[StructuredChatRequest] = []  # lets tests count inference calls
 
@@ -40,10 +46,15 @@ class FakeModelClient:
 
     def describe_server(self) -> ModelServerDescription:
         return ModelServerDescription(
-            served_model_names=("qwen-local",), server_build=FAKE_SERVER_BUILD, model_file_name="fake.gguf",
-            context_tokens_per_slot=FAKE_CONTEXT_TOKENS_PER_SLOT, parallel_slots=1,
-            supported_reasoning_effort_levels=("low", "medium", "xhigh"), mcp_proxy_enabled=False,
-            server_tools_enabled=False)
+            served_model_names=("qwen-local",),
+            server_build=FAKE_SERVER_BUILD,
+            model_file_name="fake.gguf",
+            context_tokens_per_slot=FAKE_CONTEXT_TOKENS_PER_SLOT,
+            parallel_slots=1,
+            supported_reasoning_effort_levels=("low", "medium", "xhigh"),
+            mcp_proxy_enabled=False,
+            server_tools_enabled=False,
+        )
 
     def request_structured_completion(self, request: StructuredChatRequest) -> StructuredChatResponse:
         self.received_requests.append(request)
@@ -51,10 +62,15 @@ class FakeModelClient:
             time.sleep(self._response_delay_seconds)
         final_answer_text = self._next_final_answer(request)
         return StructuredChatResponse(
-            final_answer_text=final_answer_text, reasoning_text="(fake reasoning)", finish_reason="stop",
-            model_identity=FAKE_MODEL_IDENTITY, server_build=FAKE_SERVER_BUILD,
-            prompt_tokens=0, completion_tokens=0, duration_seconds=0.0)
-
+            final_answer_text=final_answer_text,
+            reasoning_text="(fake reasoning)",
+            finish_reason="stop",
+            model_identity=FAKE_MODEL_IDENTITY,
+            server_build=FAKE_SERVER_BUILD,
+            prompt_tokens=0,
+            completion_tokens=0,
+            duration_seconds=0.0,
+        )
 
     def requests_for_role(self, role_name: str) -> list[StructuredChatRequest]:
         return [request for request in self.received_requests if request.role_name == role_name]
@@ -81,14 +97,15 @@ def build_minimal_instance_for_schema(schema: dict[str, Any]) -> Any:
         return schema["enum"][0]
     schema_type = schema.get("type")
     if schema_type == "object":
-        return {property_name: build_minimal_instance_for_schema(schema["properties"][property_name])
-                for property_name in schema.get("required", [])}
+        return {
+            property_name: build_minimal_instance_for_schema(schema["properties"][property_name])
+            for property_name in schema.get("required", [])
+        }
     if schema_type == "array":
-        return [build_minimal_instance_for_schema(schema.get("items", {}))
-                for _ in range(schema.get("minItems", 0))]
+        return [build_minimal_instance_for_schema(schema.get("items", {})) for _ in range(schema.get("minItems", 0))]
     if schema_type == "string":
         minimum_length = schema.get("minLength", 0)
-        return ("fake text " * (1 + minimum_length // 10))[:max(minimum_length, 9)]
+        return ("fake text " * (1 + minimum_length // 10))[: max(minimum_length, 9)]
     if schema_type == "integer":
         return schema.get("minimum", 0)
     if schema_type == "number":

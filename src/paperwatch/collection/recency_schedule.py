@@ -48,9 +48,12 @@ class RecencyScheduleSettings:
     citation_ordering_min_age_years: float = 5.0
 
     def to_parameters(self) -> dict[str, Any]:
-        return {"earliest_year": self.earliest_year, "half_life_years": self.half_life_years,
-                "window_count": self.window_count,
-                "citation_ordering_min_age_years": self.citation_ordering_min_age_years}
+        return {
+            "earliest_year": self.earliest_year,
+            "half_life_years": self.half_life_years,
+            "window_count": self.window_count,
+            "citation_ordering_min_age_years": self.citation_ordering_min_age_years,
+        }
 
 
 @dataclass(frozen=True)
@@ -72,20 +75,30 @@ class HistoricalWindow:
         return provider_name != "arxiv" or self.last_date >= ARXIV_FIRST_ANNOUNCEMENT_DATE
 
     def to_parameters(self) -> dict[str, Any]:
-        return {"first_date": self.first_date.isoformat(), "last_date": self.last_date.isoformat(),
-                "weight": round(self.weight, 9), "result_order": str(self.result_order)}
+        return {
+            "first_date": self.first_date.isoformat(),
+            "last_date": self.last_date.isoformat(),
+            "weight": round(self.weight, 9),
+            "result_order": str(self.result_order),
+        }
 
     @classmethod
     def from_parameters(cls, parameters: dict[str, Any]) -> HistoricalWindow:
-        return cls(date.fromisoformat(parameters["first_date"]), date.fromisoformat(parameters["last_date"]),
-                   float(parameters["weight"]), SearchResultOrder(parameters["result_order"]))
+        return cls(
+            date.fromisoformat(parameters["first_date"]),
+            date.fromisoformat(parameters["last_date"]),
+            float(parameters["weight"]),
+            SearchResultOrder(parameters["result_order"]),
+        )
 
 
 def exponential_boundary_ages(span_years: float, half_life_years: float, window_count: int) -> list[float]:
     """Ages (in years) that cut the truncated exponential over [0, span] into `window_count` equal-mass parts."""
     tail_weight = 2.0 ** (-span_years / half_life_years)
-    boundary_ages = [-half_life_years * math.log2(1.0 - (index / window_count) * (1.0 - tail_weight))
-                     for index in range(window_count)]
+    boundary_ages = [
+        -half_life_years * math.log2(1.0 - (index / window_count) * (1.0 - tail_weight))
+        for index in range(window_count)
+    ]
     return boundary_ages + [span_years]  # the last boundary is exactly the floor (avoids rounding drift)
 
 
@@ -95,9 +108,10 @@ def build_recency_weighted_windows(plan_date: date, settings: RecencyScheduleSet
     span_years = (plan_date - earliest_date).days / DAYS_PER_YEAR
     if span_years <= 0:
         return [HistoricalWindow(plan_date, plan_date, 1.0, SearchResultOrder.RELEVANCE)]
-    boundary_dates = [plan_date - timedelta(days=round(age * DAYS_PER_YEAR))
-                      for age in exponential_boundary_ages(span_years, settings.half_life_years,
-                                                           settings.window_count)]
+    boundary_dates = [
+        plan_date - timedelta(days=round(age * DAYS_PER_YEAR))
+        for age in exponential_boundary_ages(span_years, settings.half_life_years, settings.window_count)
+    ]
     boundary_dates[-1] = earliest_date
 
     windows: list[HistoricalWindow] = []
@@ -108,11 +122,15 @@ def build_recency_weighted_windows(plan_date: date, settings: RecencyScheduleSet
         if first_date > last_date:  # thinner than a day (only with extreme settings): fold into the previous one
             if windows:
                 previous = windows[-1]
-                windows[-1] = HistoricalWindow(previous.first_date, previous.last_date,
-                                               previous.weight + equal_share, previous.result_order)
+                windows[-1] = HistoricalWindow(
+                    previous.first_date, previous.last_date, previous.weight + equal_share, previous.result_order
+                )
             continue
         newest_age_years = (plan_date - last_date).days / DAYS_PER_YEAR
-        result_order = SearchResultOrder.MOST_CITED if newest_age_years >= settings.citation_ordering_min_age_years \
+        result_order = (
+            SearchResultOrder.MOST_CITED
+            if newest_age_years >= settings.citation_ordering_min_age_years
             else SearchResultOrder.RELEVANCE
+        )
         windows.append(HistoricalWindow(first_date, last_date, equal_share, result_order))
     return windows

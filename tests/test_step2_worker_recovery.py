@@ -62,7 +62,8 @@ def test_paper_imported_by_two_routes_is_one_canonical_paper_with_one_review(ini
     assert "1 possible duplicate(s) flagged" in openalex_result.stdout
 
     linked_papers = initialized_home.query(
-        "SELECT DISTINCT paper_id FROM paper_aliases WHERE provider_paper_id IN ('2411.01234', 'W4400000001')")
+        "SELECT DISTINCT paper_id FROM paper_aliases WHERE provider_paper_id IN ('2411.01234', 'W4400000001')"
+    )
     assert len(linked_papers) == 1
     linked_paper_id = linked_papers[0]["paper_id"]
     assert len(initialized_home.query("SELECT * FROM paper_discoveries WHERE paper_id = ?", (linked_paper_id,))) == 2
@@ -102,6 +103,7 @@ def test_worker_killed_after_claim_is_reclaimed_and_completes_once(initialized_h
 
 def test_worker_killed_right_after_commit_leaves_exactly_one_review(tmp_path, monkeypatch):
     from test_step2_identity_and_readings import BASE_RECORD, collect, load_test_app
+
     fake_model = FakeModelClient()
     app = load_test_app(tmp_path, fake_model)
     collect(app, BASE_RECORD)
@@ -128,6 +130,7 @@ def test_worker_killed_right_after_commit_leaves_exactly_one_review(tmp_path, mo
 
 def test_stale_worker_cannot_overwrite_the_reclaiming_workers_result(tmp_path):
     from test_step2_identity_and_readings import BASE_RECORD, collect, load_test_app
+
     stale_app = load_test_app(tmp_path, FakeModelClient())
     collect(stale_app, BASE_RECORD)
     stale_claim = claim_next_due_job(stale_app.connection, lease_duration_seconds=1)
@@ -150,9 +153,12 @@ def test_two_concurrent_workers_share_the_queue_without_duplicate_reviews(initia
     slow_model = {FAKE_MODEL_DELAY_ENVIRONMENT_VARIABLE: "1"}
     workers = [initialized_home.start_cli("work", environment_overrides=slow_model) for _ in range(2)]
     try:
-        wait_until(lambda: len(initialized_home.query(
-            "SELECT * FROM jobs WHERE status = 'done' AND kind = 'review_paper'")) == 3,
-                   description="both workers drained the queue")
+        wait_until(
+            lambda: (
+                len(initialized_home.query("SELECT * FROM jobs WHERE status = 'done' AND kind = 'review_paper'")) == 3
+            ),
+            description="both workers drained the queue",
+        )
     finally:
         for worker in workers:
             worker.send_signal(signal.SIGTERM)
@@ -162,8 +168,9 @@ def test_two_concurrent_workers_share_the_queue_without_duplicate_reviews(initia
     assert len(initialized_home.query("SELECT * FROM reviews")) == 3
     assert len(initialized_home.query("SELECT DISTINCT paper_id FROM reviews")) == 3
     # Reading jobs only: part 8 may also queue comparisons of the finished reviews.
-    assert [row["attempts"] for row in initialized_home.query(
-        "SELECT attempts FROM jobs WHERE kind = 'review_paper'")] == [1, 1, 1]
+    assert [
+        row["attempts"] for row in initialized_home.query("SELECT attempts FROM jobs WHERE kind = 'review_paper'")
+    ] == [1, 1, 1]
     assert all("lease" not in stderr for _stdout, stderr in worker_outputs)
 
 

@@ -24,13 +24,22 @@ class CollectionContext:
     _gateway: ProviderGateway | None = field(default=None, repr=False)
 
     @classmethod
-    def start(cls, connection: sqlite3.Connection, app_config: AppConfig, build_gateway: Callable[[], ProviderGateway],
-              active_seed_paper_ids: frozenset[str] = frozenset()) -> CollectionContext:
+    def start(
+        cls,
+        connection: sqlite3.Connection,
+        app_config: AppConfig,
+        build_gateway: Callable[[], ProviderGateway],
+        active_seed_paper_ids: frozenset[str] = frozenset(),
+    ) -> CollectionContext:
         started_at = clock.utc_now()
-        return cls(connection=connection, app_config=app_config, build_gateway=build_gateway, started_at=started_at,
-                   candidate_budget=CandidateAdmissionBudget.load_for_day(connection, app_config.collection,
-                                                                          started_at),
-                   active_seed_paper_ids=active_seed_paper_ids)
+        return cls(
+            connection=connection,
+            app_config=app_config,
+            build_gateway=build_gateway,
+            started_at=started_at,
+            candidate_budget=CandidateAdmissionBudget.load_for_day(connection, app_config.collection, started_at),
+            active_seed_paper_ids=active_seed_paper_ids,
+        )
 
     @property
     def gateway(self) -> ProviderGateway:
