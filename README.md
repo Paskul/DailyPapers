@@ -1,6 +1,11 @@
 # DailyPapers (`paperwatch`)
 # This is a total WIP and completely vibe coded. This is traditionally for my own use. I do not take any responsibility for anything bad happening in a world where you use this.
 
+[![CI](https://github.com/Paskul/DailyPapers/actions/workflows/ci.yml/badge.svg)](https://github.com/Paskul/DailyPapers/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Paskul/DailyPapers/actions/workflows/codeql.yml/badge.svg)](https://github.com/Paskul/DailyPapers/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)
+
 **A private, local research assistant that answers one question every morning: _which papers are worth my time
 today, and why?_**
 
@@ -80,7 +85,7 @@ All state lives in one SQLite database (`state/`). Generated notes and reports g
 Everything is set up from **one settings file**, `settings/paperwatch.toml`, by **one script**, `./setup.sh`:
 
 ```bash
-git clone <this repository> DailyPapers && cd DailyPapers
+git clone https://github.com/Paskul/DailyPapers.git && cd DailyPapers
 
 ./setup.sh                       # 1. first run: creates settings/paperwatch.toml from the example, then stops
 $EDITOR settings/paperwatch.toml # 2. set [setup] home and mode, and describe your [[topics]]
@@ -227,6 +232,8 @@ The [hardened deployment](#hardened-deployment) adds OS-level enforcement: separ
 nftables egress rules. A test in the suite plays a whole day with a hostile paper and a hostile model and checks that
 none of the above can be bypassed.
 
+To report a vulnerability, please use GitHub's private reporting rather than an issue: see [SECURITY.md](SECURITY.md).
+
 ## Hardened deployment
 
 `mode = "hardened"` (the default) installs `paperwatch` read-only under `/opt/paperwatch` with the home in
@@ -290,13 +297,17 @@ src/paperwatch/
 setup.sh          one-step install / update from settings/paperwatch.toml
 deploy/           the steps setup.sh runs: installation, accounts, firewall, extractor image, trial run
 settings/         your private settings file and keys (gitignored) and examples
-tests/            offline test suite
+tests/            offline test suite, one file per feature
+docs/             performance measurements
+.github/          CI, CodeQL, Dependabot, and the release workflow
 ```
 
 ## Development
 
 ```bash
-uv run pytest      # offline: uses a fake model and a lightweight test embedder
+uv sync                      # the package plus the development tools
+uv run pre-commit install    # checks each commit: ruff, Biome, ShellCheck, mypy, secrets, the commit message
+uv run pytest                # offline: a fake model, fake paper providers, and a lightweight test embedder
 ```
 
 Optional tests against real components:
@@ -306,6 +317,10 @@ PAPERWATCH_LIVE_MODEL=1 uv run pytest -m live_model                             
 PAPERWATCH_TEST_EXTRACTOR_IMAGE=<image id> uv run pytest -k real_podman                   # real extractor sandbox
 PAPERWATCH_TEST_EMBEDDING_MODEL_DIR=<home>/models/bge-base-en-v1.5 uv run pytest -k real_onnx   # real screening model
 ```
+
+CI runs every check, the tests on Python 3.12 to 3.14, and the real-Podman sandbox test on each push and pull
+request. [CONTRIBUTING.md](CONTRIBUTING.md) describes the checks, the commit messages (Conventional Commits), the
+coding standards and security rules, and how releases are made; [CHANGELOG.md](CHANGELOG.md) lists the changes.
 
 ## License
 

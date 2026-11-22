@@ -1,0 +1,54 @@
+name: Bug report
+description: paperwatch does something wrong, fails, or crashes.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. **A security problem?** Please report it privately instead ([SECURITY.md](https://github.com/Paskul/DailyPapers/blob/main/SECURITY.md)).
+
+        **Please don't paste** API keys, your private research questions, or the text of papers. Describe them instead, and look through any output you paste for them.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: "What you did, what paperwatch did, and the exact error (`paperwatch: FAILED [<component>] ...`)."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: The commands, and the relevant (redacted) settings. A recorded fixture or a synthetic paper is ideal.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`paperwatch --version`, or the commit: `git rev-parse --short HEAD`"
+    validations:
+      required: true
+  - type: dropdown
+    id: setup-mode
+    attributes:
+      label: Setup mode
+      options:
+        - local
+        - hardened
+        - other / not using setup.sh
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `paperwatch --home <home> doctor`
+      description: It shows the configuration, database, screening model, and model server checks. Check it for anything private first.
+      render: text
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Linux distribution, Python version, llama.cpp build, and the model you serve.

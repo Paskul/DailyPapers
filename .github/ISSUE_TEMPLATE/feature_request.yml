@@ -1,0 +1,23 @@
+name: Idea or feature request
+description: Something paperwatch could do, or do better.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        paperwatch keeps the model away from the network and from every decision about requests, files, and programs (README, "Security and privacy"). Ideas that need the model to act on its own are unlikely to fit, but tell us the problem anyway: there may be a way that does.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
