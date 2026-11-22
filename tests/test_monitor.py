@@ -7,9 +7,11 @@ import argparse
 import http.client
 import json
 import os
+import re
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -386,3 +388,28 @@ def test_monitor_json_command_runs_against_a_home(initialized_home):
     result = initialized_home.run_cli("monitor", "--json", "--history-hours", "6")
     assert result.exit_code == 0, result.stderr
     assert json.loads(result.stdout)["meta"]["schema_version"] == 10
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# The page's own rules: untrusted text never becomes HTML, and there is no inline code for the CSP to allow
+# --------------------------------------------------------------------------------------------------------------------
+
+MONITOR_STATIC_FILES = resources.files("paperwatch.monitor") / "static"
+# Every DOM API that turns a string into markup or code. Paper titles and error texts are untrusted.
+HTML_OR_CODE_FROM_STRING = re.compile(
+    r"\.(innerHTML|outerHTML)\b|\binsertAdjacentHTML\b|\bdocument\.write(ln)?\b|\bcreateContextualFragment\b"
+    r"|\bDOMParser\b|\bsrcdoc\b|\beval\s*\(|\bnew\s+Function\b|\bset(Timeout|Interval)\s*\(\s*[\"'`]"
+)
+
+
+def test_the_page_script_inserts_untrusted_text_only_as_text():
+    script = (MONITOR_STATIC_FILES / "monitor.js").read_text()
+    assert HTML_OR_CODE_FROM_STRING.findall(script) == []
+    assert "textContent" in script  # how the page does insert text
+
+
+def test_the_page_has_no_inline_code_for_the_content_security_policy_to_allow():
+    page = (MONITOR_STATIC_FILES / "index.html").read_text()
+    assert re.findall(r"<script\b(?![^>]*\bsrc=)[^>]*>", page) == []  # every script is a file from this server
+    assert "<style" not in page and " style=" not in page
+    assert re.findall(r"\son[a-z]+\s*=", page) == []  # no inline event handlers
