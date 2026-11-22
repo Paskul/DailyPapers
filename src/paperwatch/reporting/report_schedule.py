@@ -1,4 +1,4 @@
-"""When a report is due and which reviews it may contain (plan part 9).
+"""When a report is due and which reviews it may contain.
 
 Each reporting date D (a calendar date in report.timezone) has one SCHEDULED CUTOFF: report.publish_time on D in that
 timezone, converted to UTC. zoneinfo applies the daylight-saving offset of that very day, so 07:00 stays 07:00 local
@@ -7,7 +7,7 @@ report, however long the publication itself takes.
 
 Which date `report` publishes:
   * no --date: the latest due date (today if the cutoff has passed, else yesterday). After a long shutdown this is
-    the latest due report, and its opening shows the gap since the previous one (plan part 10).
+    the latest due report, and its opening shows the gap since the previous one.
   * --date D whose cutoff has passed: D, with its scheduled cutoff (a catch-up of a missed date).
   * --date D whose cutoff is still ahead: refused (ReportNotDueYet), unless the operator adds --early for TODAY's
     date. An early report uses "now" as its eligibility cutoff and says so in its opening; reviews completed after

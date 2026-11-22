@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run `paperwatch access-check` as each service account (plan part 3: test the rules from the actual accounts).
+# Run `paperwatch access-check` as each service account (test the rules from the actual accounts).
 #
 # Usage: sudo deploy/check_access_as_service_accounts.sh <paperwatch home>
 # Exit status 0 only if both accounts pass every required check.

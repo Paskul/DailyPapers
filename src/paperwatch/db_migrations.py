@@ -158,7 +158,7 @@ CREATE INDEX report_items_by_paper ON report_items(paper_id);
 """
 
 # --------------------------------------------------------------------------------------------------------------------
-# Migration 2 (plan part 2): paper identity, editions, reading identity, topic assessments, references and
+# Migration 2: paper identity, editions, reading identity, topic assessments, references and
 # comparisons, seed membership, and source checkpoints.
 # In paper_aliases, `provider` now means the identifier scheme (doi, arxiv, openalex, or a provider name) and
 # `provider_paper_id` its NORMALIZED, version-free value.
@@ -198,7 +198,7 @@ CREATE TABLE paper_possible_matches (                          -- similar record
     CHECK (first_paper_id < second_paper_id)
 );
 
-CREATE TABLE paper_seed_memberships (                          -- filled by the Zotero / CSL JSON seed import (part 4)
+CREATE TABLE paper_seed_memberships (                          -- filled by the Zotero / CSL JSON seed import
     paper_id            TEXT NOT NULL REFERENCES papers(paper_id),
     seed_source         TEXT NOT NULL,                         -- 'zotero' | 'csl_json'
     seed_item_key       TEXT NOT NULL,                         -- Zotero item key or export id
@@ -219,7 +219,7 @@ CREATE TABLE review_topic_assessments (                        -- separate from 
     topic_id             TEXT NOT NULL,
     topic_profile_sha256 TEXT NOT NULL,                        -- '' when migrated from schema v1 (not recorded)
     topic_score          INTEGER NOT NULL,
-    score_scale          TEXT NOT NULL,                        -- 'rating_0_to_4' now; part 7: 'priority_0_to_100'
+    score_scale          TEXT NOT NULL,                        -- 'rating_0_to_4' (legacy) or 'priority_0_to_100'
     assessment_json      TEXT NOT NULL,                        -- ratings, rationale, matched seed ids
     role_name            TEXT NOT NULL,
     prompt_version       TEXT NOT NULL,
@@ -369,7 +369,7 @@ def _backfill_schema_v1_rows_for_identity_and_editions(connection: sqlite3.Conne
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# Migration 3 (plan part 3): what the collector sent to the internet, and how much of each provider's budget it used.
+# Migration 3: what the collector sent to the internet, and how much of each provider's budget it used.
 # --------------------------------------------------------------------------------------------------------------------
 MIGRATION_0003_OUTBOUND_REQUEST_LEDGER = """
 CREATE TABLE outbound_requests (                               -- one row per HTTPS hop the collector attempted
@@ -401,7 +401,7 @@ CREATE TABLE provider_request_budgets (                        -- daily request 
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# Migration 4 (plan part 4): the seed cache. Each seed's last successfully synced metadata, independent of the catalog
+# Migration 4: the seed cache. Each seed's last successfully synced metadata, independent of the catalog
 # paper it maps to (the catalog never rewrites a title; a seed follows the library). Collection membership stays in
 # paper_seed_memberships (migration 2); a sync cursor per seed source lives in source_checkpoints.
 # --------------------------------------------------------------------------------------------------------------------
@@ -430,7 +430,7 @@ CREATE INDEX paper_seed_memberships_by_collection
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# Migration 5 (plan part 5): what each route reported, withdrawals and retractions, and acquired source text.
+# Migration 5: what each route reported, withdrawals and retractions, and acquired source text.
 # Search cursors, coverage, and gaps keep using source_checkpoints (migration 2): a missed-release recovery search is
 # its own checkpoint row, so an open gap is simply a recovery checkpoint that is not yet exhausted.
 # --------------------------------------------------------------------------------------------------------------------
@@ -446,10 +446,10 @@ CREATE TABLE paper_withdrawals (                               -- a provider rep
     reported_by_route        TEXT NOT NULL,
     evidence                 TEXT,                             -- short provider text that carried the notice
     detected_at              TEXT NOT NULL,
-    correction_report_date   TEXT                              -- report that announced the correction (part 9)
+    correction_report_date   TEXT                              -- report that announced the correction
 );
 
-CREATE TABLE edition_source_texts (                            -- full text acquired for one edition (plan part 5)
+CREATE TABLE edition_source_texts (                            -- full text acquired for one edition
     edition_id               TEXT PRIMARY KEY REFERENCES paper_editions(edition_id),
     paper_id                 TEXT NOT NULL REFERENCES papers(paper_id),
     acquisition_status       TEXT NOT NULL CHECK (acquisition_status IN ('acquired', 'unavailable', 'failed')),
@@ -475,7 +475,7 @@ CREATE INDEX edition_source_texts_by_acquisition ON edition_source_texts(acquire
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# Migration 6 (plan part 6): cheap CPU screening and ordered dispatch.
+# Migration 6: cheap CPU screening and ordered dispatch.
 #   text_embeddings         cache of sentence embeddings, keyed by the pinned model's identity and the text's hash
 #   candidate_topic_scores  the screening score of one candidate for one topic, with its component signals; rows of
 #                           unpromoted candidates are rescored whenever the topic profile or the paper's text changes
@@ -532,11 +532,11 @@ CREATE INDEX paper_promotions_by_time ON paper_promotions(promoted_at);
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# Migration 7 (plan part 7): evidence-backed reading.
+# Migration 7: evidence-backed reading.
 #   review_stage_results      validated result of each step of a reading (one per reading section, then the
 #                             synthesis), so a timeout resumes instead of restarting a long paper
 #   review_evidence_passages  the passages a review cites, copied out of the source cache, so the evidence survives
-#                             when replaceable downloads are pruned (plan part 10)
+#                             when replaceable downloads are pruned
 #   reviews.reading_record_json        sections read and not read, why the coverage is partial, parser recovery
 #   edition_source_texts.normalized_text_sha256 / extracted_text_characters: the full-text reading identity and
 #                             whether the text is long enough to read (backfilled from the cache when readable)
@@ -601,7 +601,7 @@ def _backfill_full_text_reading_identity(connection: sqlite3.Connection) -> None
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# Migration 8 (plan part 8): important references and comparisons.
+# Migration 8: important references and comparisons.
 #   paper_promotions          rebuilt so promotion_reason may be 'reference' (a cited work the research role chose;
 #                             it does not count against screening's daily limit; SQLite cannot alter a CHECK)
 #   reference_fetches         the collector fetched one reviewed paper's outgoing references (once per paper)
@@ -718,7 +718,7 @@ CREATE INDEX research_branches_by_request_time ON research_branches(requested_at
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# Migration 9 (plan part 9): one coherent daily report.
+# Migration 9: one coherent daily report.
 #   reports                 rebuilt (SQLite cannot alter a CHECK): a report is first `writing` (snapshot and
 #                           selection frozen, no bytes yet), then `pending` (exact bytes saved), then `published`.
 #                           It keeps the scheduled cutoff and the eligibility cutoff apart (they differ only for an
@@ -760,7 +760,7 @@ CREATE TABLE report_items_v9 (
     paper_id               TEXT NOT NULL REFERENCES papers(paper_id),
     review_id              TEXT NOT NULL REFERENCES reviews(review_id),
     entry_label            TEXT NOT NULL DEFAULT 'legacy',     -- new_release | older | reference | update |
-                                                               -- undated | legacy (reported before part 9)
+                                                               -- undated | legacy (reported by an earlier version)
     reading_priority       INTEGER,                            -- frozen best score (0-100) at the snapshot
     best_topic_id          TEXT,
     previous_review_id     TEXT REFERENCES reviews(review_id), -- update: the review an earlier report used
@@ -811,35 +811,33 @@ CREATE INDEX activity_log_by_parent ON activity_log(parent_activity_id);
 
 
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
-    SchemaMigration("initial schema (plan part 1)", MIGRATION_0001_INITIAL_SCHEMA),
+    SchemaMigration("initial schema", MIGRATION_0001_INITIAL_SCHEMA),
     SchemaMigration(
-        "paper identity, editions, reading identity and part-2 records",
+        "paper identity, editions, reading identity, and their records",
         MIGRATION_0002_IDENTITY_EDITIONS_AND_RECORDS,
         _backfill_schema_v1_rows_for_identity_and_editions,
     ),
+    SchemaMigration("outbound request log and provider request budgets", MIGRATION_0003_OUTBOUND_REQUEST_LEDGER),
+    SchemaMigration("seed cache for Zotero and CSL JSON seeds", MIGRATION_0004_SEED_CACHE),
     SchemaMigration(
-        "outbound request log and provider request budgets (plan part 3)", MIGRATION_0003_OUTBOUND_REQUEST_LEDGER
-    ),
-    SchemaMigration("seed cache for Zotero and CSL JSON seeds (plan part 4)", MIGRATION_0004_SEED_CACHE),
-    SchemaMigration(
-        "route reports, withdrawals, and acquired source text (plan part 5)",
+        "route reports, withdrawals, and acquired source text",
         MIGRATION_0005_COLLECTION_ROUTES_WITHDRAWALS_AND_SOURCE_TEXT,
     ),
     SchemaMigration(
-        "screening scores, embedding cache, promotions, and dispatch order (plan part 6)",
+        "screening scores, embedding cache, promotions, and dispatch order",
         MIGRATION_0006_SCREENING_AND_DISPATCH_ORDER,
     ),
     SchemaMigration(
-        "evidence-backed reading: stage results, cited passages, reading records (plan part 7)",
+        "evidence-backed reading: stage results, cited passages, reading records",
         MIGRATION_0007_EVIDENCE_BACKED_READING,
         _backfill_full_text_reading_identity,
     ),
     SchemaMigration(
-        "important references, research branches, and comparisons (plan part 8)",
+        "important references, research branches, and comparisons",
         MIGRATION_0008_REFERENCES_AND_COMPARISONS,
     ),
     SchemaMigration(
-        "daily report: report states, frozen snapshot, entry labels, inference reservation (plan part 9)",
+        "daily report: report states, frozen snapshot, entry labels, inference reservation",
         MIGRATION_0009_DAILY_REPORT,
     ),
     SchemaMigration("activity log for the monitor", MIGRATION_0010_ACTIVITY_LOG),

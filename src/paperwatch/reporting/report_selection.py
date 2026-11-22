@@ -1,8 +1,8 @@
-"""Choose the papers of one daily report from completed reviews (plan part 9). Pure reads; no model call.
+"""Choose the papers of one daily report from completed reviews. Pure reads; no model call.
 
 Eligible: the LATEST review per canonical paper among those completed at or before the cutoff, whose best topic score
 (as assessed by the cutoff) reaches report.minimum_reading_priority, except
-  * withdrawn or retracted papers (plan part 5),
+  * withdrawn or retracted papers,
   * papers in the user's active seed library (they stay comparison anchors, never recommendations),
   * papers an earlier report already recommended, UNLESS the newer review is an update that changes a result,
     assumption, or conclusion (reporting/revision_changes.py); then it is labelled "update" and both reviews are
@@ -201,7 +201,7 @@ def _revision_changes_since_reported(
         "SELECT * FROM reviews WHERE review_id = ?", (previous_item["review_id"],)
     ).fetchone()
     reported_priority = previous_item["reading_priority"]
-    if reported_priority is None:  # reported before part 9 froze scores: use its assessments as of now
+    if reported_priority is None:  # reported before scores were frozen: use its assessments as of now
         reported_best = best_topic_assessment(
             load_latest_topic_assessments(
                 connection, reported_review_row["review_id"], assessed_no_later_than=cutoff_at

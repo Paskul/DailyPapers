@@ -1,4 +1,4 @@
-"""Follow the important references of completed reviews (plan part 8).
+"""Follow the important references of completed reviews.
 
     reference_fetch.py           collector stage: a reviewed paper's OpenAlex reference list, plus identifiers from
                                  its own bibliography confirmed by a provider record; cited works enter the catalog

@@ -1,4 +1,4 @@
-"""Queue comparisons of two completed reviews on the same question (plan part 8).
+"""Queue comparisons of two completed reviews on the same question.
 
 "Queue one comparison when two completed reviews address the same question and have comparable assumptions,
 guarantees, or evaluation settings. Prefer the closest reviewed neighbor and cap new comparison jobs at five per day."

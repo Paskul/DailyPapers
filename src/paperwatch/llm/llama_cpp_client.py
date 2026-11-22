@@ -25,7 +25,7 @@ from paperwatch.llm.types import ModelServerDescription, StructuredChatRequest, 
 
 METADATA_REQUEST_TIMEOUT_SECONDS = 10.0
 # Request fields that would give the model tools or let it call functions. paperwatch never sends them: the model
-# receives plain data and has zero tools (plan part 3). build_chat_completion_payload asserts their absence.
+# receives plain data and has zero tools. build_chat_completion_payload asserts their absence.
 TOOL_REQUEST_FIELDS = frozenset({"tools", "tool_choice", "functions", "function_call", "parallel_tool_calls"})
 MAX_ERROR_BODY_CHARACTERS = 300
 UNKNOWN_VALUE = "unknown"

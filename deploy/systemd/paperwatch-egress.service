@@ -1,4 +1,4 @@
-# Load the paperwatch egress rules at boot (plan part 3). Installed and enabled by deploy/apply_egress_rules.sh.
+# Load the paperwatch egress rules at boot. Installed and enabled by deploy/apply_egress_rules.sh.
 #
 # Loads ONLY /etc/paperwatch/nftables/*.nft. Each file replaces its own table (inet paperwatch_egress, and
 # optionally inet paperwatch_model_egress), so this never flushes other rule sets such as UFW or Docker.

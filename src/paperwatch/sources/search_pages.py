@@ -1,4 +1,4 @@
-"""Fetch and parse one page of an approved search, whatever the provider (plan part 5).
+"""Fetch and parse one page of an approved search, whatever the provider.
 
 The caller names an approved catalog query id, a cursor, an optional publication window, and the discovery route to
 stamp on the records; the gateway builds and checks the request, and the provider's parser turns the bytes into

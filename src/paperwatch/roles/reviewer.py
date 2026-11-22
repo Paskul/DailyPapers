@@ -1,5 +1,4 @@
-"""Reviewer role: the evidence-backed reading of one paper (plan part 7). Replaces the provisional abstract-only
-reviewer of step 1.
+"""Reviewer role: the evidence-backed reading of one paper.
 
 It sees the paper in one of two modes, chosen by the reading plan (paperwatch.reading.reading_plan):
     passages        the whole input fits one reading section (any abstract-only reading, a short paper): the
@@ -50,7 +49,7 @@ from paperwatch.roles.evidence_fields import (
 from paperwatch.roles.output_guards import find_invented_web_addresses
 
 REVIEWER_ROLE_NAME = "reviewer"
-# v1 (part 7): passage ids, excerpts, separate topic assessment. v2 (2026-11-21): the evidence rules tell the model
+# v1: passage ids, excerpts, separate topic assessment. v2 (2026-11-21): the evidence rules tell the model
 # to cite the passage that holds a quoted number; v1 syntheses are still reused after passing today's checks.
 REVIEWER_PROMPT_VERSION = "reviewer-evidence-v2"
 REVIEWER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("reviewer-evidence-v1",)

@@ -7,9 +7,9 @@ Model checks (in order; later ones are skipped once the server is unreachable):
   4. configured reasoning levels are supported by the chat template,
   5. a short schema-constrained /v1/chat/completions request succeeds, with reasoning returned separately
      from the final answer.
-Screening (plan part 6): the pinned sentence-embedding model's files match their sha256 hashes, it loads on the CPU,
+Screening: the pinned sentence-embedding model's files match their sha256 hashes, it loads on the CPU,
 and it ranks a related sentence above an unrelated one.
-Plan part 3: the server must expose no built-in tools, agent mode, or MCP proxy (checked over HTTP here; the
+The server must expose no built-in tools, agent mode, or MCP proxy (checked over HTTP here; the
 process flags and account are checked by `paperwatch access-check`).
 """
 

@@ -46,7 +46,7 @@ class ModelServerDescription:
     context_tokens_per_slot: int | None
     parallel_slots: int | None
     supported_reasoning_effort_levels: tuple[str, ...]
-    # Plan part 3: llama-server must run without agent mode, built-in tools, MCP servers, or the MCP proxy.
+    # Llama-server must run without agent mode, built-in tools, MCP servers, or the MCP proxy.
     mcp_proxy_enabled: bool | None = None  # /props cors_proxy_enabled; None if the server does not report it
     server_tools_enabled: bool | None = None  # True if /tools lists built-in tools
 

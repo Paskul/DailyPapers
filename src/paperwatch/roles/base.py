@@ -6,8 +6,8 @@ receives plain data and has zero tools.
 
 `run_role_once` is the only place that sends inference requests. It
   1. refuses a prompt that would not leave the role's output limit (reasoning + final answer) free inside
-     model.required_context_tokens (plan part 7: "reserve context space for reasoning and the final answer"),
-  2. waits while another holder (the daily report, plan part 9) has reserved the next inference slot, then takes
+     model.required_context_tokens ("reserve context space for reasoning and the final answer"),
+  2. waits while another holder (the daily report) has reserved the next inference slot, then takes
      the shared inference lock (one request at a time across roles and processes),
   3. sends one fresh-context request with the role's hard time and output limits,
   4. parses the final answer (never the reasoning) as JSON and validates schema + semantics,
@@ -231,7 +231,7 @@ def run_role_once(
     try:
         with interruptible_model_wait():  # a worker stop request aborts the wait and the request (worker_stop.py)
             if not holds_inference_reservation:
-                wait_while_inference_is_reserved(connection)  # plan part 9: the report gets the next slot
+                wait_while_inference_is_reserved(connection)  # The report gets the next slot
             if deadline_monotonic is not None:
                 seconds_left = deadline_monotonic - time.monotonic()
                 if seconds_left <= 0:

@@ -3,7 +3,7 @@
 Identity of a seed:
     seed_source    "zotero" or "csl_json"
     seed_item_key  the Zotero item key (e.g. "X7K2P9QM"), or "<csl file key>#<CSL item id>" for a CSL JSON export
-    seed_id        "<seed_source>:<seed_item_key>", the id a review cites as a matched seed (plan parts 4 and 7)
+    seed_id        "<seed_source>:<seed_item_key>", the id a review cites as a matched seed
 
 Every seed is also catalogued as a paper (so later parts can use it as a comparison anchor and keep it out of the
 recommendations). Its catalog record uses the seed id as its own identifier, plus the DOI / arXiv id the library
@@ -31,7 +31,7 @@ ZOTERO_SEED_ROUTE_PREFIX = "zotero-seed:"
 CSL_JSON_SEED_ROUTE_PREFIX = "csl-seed:"
 SEED_DISCOVERY_ROUTE_PREFIXES = (ZOTERO_SEED_ROUTE_PREFIX, CSL_JSON_SEED_ROUTE_PREFIX)
 
-# What text a seed offers for matching. A title-only seed is a recorded limitation (plan part 4).
+# What text a seed offers for matching. A title-only seed is a recorded limitation.
 MATCHING_TEXT_TITLE_AND_ABSTRACT = "title_and_abstract"
 MATCHING_TEXT_TITLE_ONLY = "title_only"
 

@@ -1,4 +1,4 @@
-"""The sentence-embedding models paperwatch can screen with, each pinned to exact file hashes (plan part 6).
+"""The sentence-embedding models paperwatch can screen with, each pinned to exact file hashes.
 
 config.toml picks a model by NAME only (`screening.embedding_model`); the files, their sha256 hashes, the pooling, and
 the query instruction live here, in the installed package, so a config edit cannot swap in an unverified file. The

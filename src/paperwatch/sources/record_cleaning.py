@@ -1,6 +1,6 @@
 """Shared helpers that turn untrusted provider fields into bounded, clean values for a CollectedPaperRecord.
 
-Provider text (titles, abstracts, author names) is untrusted (plan part 3): it is bounded in length, its whitespace
+Provider text (titles, abstracts, author names) is untrusted: it is bounded in length, its whitespace
 and control characters are collapsed, and it is only ever stored and later escaped, never executed or used to build
 a request. XML is parsed only after refusing document type declarations, so no entity expansion can happen.
 """

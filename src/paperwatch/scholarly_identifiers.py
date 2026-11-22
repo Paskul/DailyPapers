@@ -1,6 +1,6 @@
 """Normalize the public identifiers providers use for scholarly works: DOI, arXiv, OpenAlex, and opaque others.
 
-Rules (plan part 2):
+Rules:
   * DOIs are case-insensitive: strip resolver prefixes ("https://doi.org/", "doi:"), percent-decode, lowercase.
   * arXiv ids lose their "arXiv:" / URL prefixes. The version ("v2") is kept SEPARATELY from the base id, so every
     version of a preprint shares one alias while each version can still be recorded as its own edition.

@@ -1,4 +1,4 @@
-"""The screening formula (plan part 6): pure functions, no database, no model.
+"""The screening formula: pure functions, no database, no model.
 
 For one candidate and one topic, three signals on a 0-1 scale:
     question similarity  normalize(cosine(paper, topic question))
@@ -14,7 +14,7 @@ The same combination runs twice: on the RAW signals (stored as `unnormalized_sco
 and at promotion on each signal's percentile within the topic's pool (signal_normalization.py). Promotion uses the
 second, because raw cosines and the 0/1 phrase signal do not share a scale.
 
-The screening score selects papers for reading only. The report ranks by the evidence-based score of part 7.
+The screening score selects papers for reading only. The report ranks by the evidence-based reading priority.
 """
 
 from __future__ import annotations

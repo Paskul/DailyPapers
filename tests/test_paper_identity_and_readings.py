@@ -1,4 +1,4 @@
-"""Plan part 2: paper identity, editions, and the reading key.
+"""Paper identity, editions, and the reading key.
 
 One canonical paper per work (merged only on identifier links), similar titles flagged but never merged, editions
 kept apart, and a reading repeated only for changed text or an explicit operator reread.
@@ -245,7 +245,7 @@ def test_title_route_topic_and_model_changes_never_trigger_another_reading(tmp_p
     app = AppContext.load(tmp_path, model_client=upgraded_model)
     assert not collect(app, BASE_RECORD)[1]
     assert drain_queue(app) == []  # empty queue: no inference call
-    # One reading = one reviewer call + one topic-assessment call (plan part 7); nothing after the model upgrade.
+    # One reading = one reviewer call + one topic-assessment call; nothing after the model upgrade.
     assert [request.role_name for request in fake_model.received_requests] == ["reviewer", "topic_assessor"]
     assert upgraded_model.received_requests == []
     assert count_rows(app.connection, "reviews") == 1 and count_rows(app.connection, "jobs") == 1
@@ -329,7 +329,7 @@ def test_operator_reread_gets_its_own_generation_and_review(initialized_home):
 
 
 def test_topic_assessments_are_stored_apart_from_the_reading(tmp_path):
-    """Part 7: the topic assessor proposes ratings; the host caps evidence for an abstract-only reading and
+    """The topic assessor proposes ratings; the host caps evidence for an abstract-only reading and
     computes the 0-100 reading priority. No anchors exist, so relative_value is omitted."""
     assessor_answer = {
         "topic_assessments": [
@@ -442,7 +442,7 @@ def test_source_checkpoint_round_trip_and_coverage(tmp_path):
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# Migration from a part-1 database
+# Migration from a schema-v1 database
 # --------------------------------------------------------------------------------------------------------------------
 
 

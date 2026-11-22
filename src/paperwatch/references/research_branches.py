@@ -1,4 +1,4 @@
-"""Gap searches chosen by the research role (plan part 8): "select an unused approved query or year band when reviews
+"""Gap searches chosen by the research role: "select an unused approved query or year band when reviews
 expose a gap. Record the gap, selected branch, parent review, and returned candidates."
 
 A branch is one unit of a topic's historical search plan (paperwatch.collection.historical_search): one APPROVED

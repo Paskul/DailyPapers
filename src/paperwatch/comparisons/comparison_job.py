@@ -1,4 +1,4 @@
-"""The worker's side of a comparison job (plan part 8): build the comparison role's input from the two saved
+"""The worker's side of a comparison job: build the comparison role's input from the two saved
 reviews, and store the validated comparison once.
 
 Nothing is reread: each review contributes its validated fields and the passages it cites (review_evidence_passages,

@@ -21,7 +21,7 @@ Consequences, by design:
   * the normalized score depends on the pool, so it is computed at promotion time and never cached. The RAW signals
     stay stored and cached (candidate_topic_scores), and the promotion row keeps both scores plus the pool size;
   * `minimum_screening_score` therefore reads as a relative position (0.8 = top fifth of the pool). An absolute
-    floor, if part 10 wants one, belongs on the raw signals.
+    floor, if one is ever wanted, belongs on the raw signals.
 """
 
 from __future__ import annotations

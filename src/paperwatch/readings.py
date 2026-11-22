@@ -2,16 +2,16 @@
 
 A reading is identified by (canonical paper, normalized source-text hash, reading generation); see review_inputs.py.
 The job key embeds that identity, so the queue's UNIQUE(job_key) is the final guard against a duplicate reading even
-when two collectors race. Consequences, matching plan part 2:
+when two collectors race. Consequences:
   * a changed title, another discovery route, a topic or scoring change, a restart, or an empty queue never creates
     another reading, because none of them changes the text hash or the generation;
   * a model or prompt upgrade alone never re-enqueues the archive, because neither is part of the key;
   * a new edition with identical text is not read again; a verified text change or newly available full text gets a
-    new reading, if the paper was promoted by screening (plan part 6, paperwatch.screening.review_promotion);
+    new reading, if the paper was promoted by screening (paperwatch.screening.review_promotion);
   * an explicit operator reread gets a fresh generation id: a new logical job and, later, a separate review.
 A job that failed permanently is NOT re-queued automatically for the same input; the operator can request a reread.
 
-Which input a reading uses (plan part 7): the extracted full text of an edition when the sandboxed extractor produced
+Which input a reading uses: the extracted full text of an edition when the sandboxed extractor produced
 usable text, else the abstract of the preferred edition. When better text arrives while a reading is still queued
 (the PDF was extracted after promotion), the new input is queued and the older queued job is retired, so the paper
 is read once, on the better text.
@@ -79,7 +79,7 @@ class ReadingJobInput:
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> ReadingJobInput:
-        """Jobs queued before part 7 have no text_kind: they were abstract readings."""
+        """Jobs queued by earlier versions have no text_kind: they were abstract readings."""
         return cls(
             edition_id=payload["edition_id"],
             reading_generation=payload.get("reading_generation", INITIAL_READING_GENERATION),

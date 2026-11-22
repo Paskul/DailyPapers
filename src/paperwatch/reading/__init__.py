@@ -1,4 +1,4 @@
-"""Plan part 7: read the selected papers and save evidence-backed notes.
+"""Read the selected papers and save evidence-backed notes.
 
 One reading, in the worker:
   review_packet.py       the edition-specific packet: passages with stable ids and pages/sections (passages.py),

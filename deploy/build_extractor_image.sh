@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the pinned text-extractor image and load it into the collector account's rootless image store (plan part 3).
+# Build the pinned text-extractor image and load it into the collector account's rootless image store.
 #
 # Usage: deploy/build_extractor_image.sh [collector account]      (run as your normal user, NOT with sudo)
 #        An empty account ("") keeps the image in your own store only (the `local` setup mode). ./setup.sh runs this.

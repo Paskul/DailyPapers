@@ -1,4 +1,4 @@
-"""The saved comparisons a report shows (plan part 9: "Include completed comparisons that help interpret the selected
+"""The saved comparisons a report shows ("Include completed comparisons that help interpret the selected
 work"). Loaded by id from the frozen snapshot; the writer sees them as data, the renderer links their notes."""
 
 from __future__ import annotations

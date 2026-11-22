@@ -1,6 +1,6 @@
 """Synchronize every configured seed source: Zotero collections (live Web API) and CSL JSON files (offline).
 
-Both kinds follow the same contract (plan part 4):
+Both kinds follow the same contract:
   * read the WHOLE source first, then commit its new seed set and checkpoint in one transaction
     (seed_store.commit_seed_snapshot); an interrupted or failed read changes nothing;
   * a source that cannot be read (no Zotero key, provider outage, missing or invalid file) is marked blocked with its

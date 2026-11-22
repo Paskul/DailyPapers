@@ -1,5 +1,5 @@
 #!/usr/sbin/nft -f
-# paperwatch egress rules (plan part 3). Rendered and loaded by deploy/apply_egress_rules.sh.
+# paperwatch egress rules. Rendered and loaded by deploy/apply_egress_rules.sh.
 #
 # Matches locally generated packets by the UID that owns the socket (meta skuid) in the output hook, so only the
 # paperwatch service accounts are affected; every other account's traffic passes through untouched.

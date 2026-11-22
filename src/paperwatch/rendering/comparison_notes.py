@@ -1,5 +1,5 @@
-"""The permanent note of one comparison: output/comparisons/<comparison id>.md (plan part 8; owner decision
-2026-11-20: comparisons get their own note, and part 9 links to it).
+"""The permanent note of one comparison: output/comparisons/<comparison id>.md, which the daily
+report links to.
 
 Rendered only from the saved comparison and trusted metadata. It links both paper notes relatively
 (../papers/<paper id>/<review id>.md, Obsidian-safe) and their sources (built from identifiers). Every model or paper

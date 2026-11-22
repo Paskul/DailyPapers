@@ -1,6 +1,6 @@
 """One HTTPS GET hop under the collector's access rules. Pure network code: no database, no redirect following.
 
-What one hop guarantees (plan part 3):
+What one hop guarantees:
   * strict TLS: system CA store, hostname verification, TLS 1.2 or newer; certificate failures are refusals;
   * no proxy from the environment, no cookies carried between hops, no automatic redirects (the caller decides
     whether a redirect target is allowed, see `resolve_allowed_redirect`);

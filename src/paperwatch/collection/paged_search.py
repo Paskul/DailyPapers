@@ -1,5 +1,5 @@
 """Page through one checkpointed search: a missed-release recovery, a recent OpenAlex window, or one year band of a
-topic's historical search (plan part 5).
+topic's historical search.
 
 The checkpoint row IS the search's memory: its query and window (query_parameters), cursor, admitted count, coverage,
 and stopping reason. Per page:

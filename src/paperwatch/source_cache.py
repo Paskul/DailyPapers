@@ -1,8 +1,8 @@
 """Where downloaded source bytes live: state/cache/sources/<edition_id>/<sha256 prefix>.<pdf|xml>, and the text the
-sandboxed extractor produced from them: state/cache/sources/<edition_id>/<source sha256 prefix>.txt (plan part 5).
+sandboxed extractor produced from them: state/cache/sources/<edition_id>/<source sha256 prefix>.txt.
 
 File and directory names are built only from internal ids and content hashes, never from titles, provider ids, or
-URLs (plan part 3: untrusted text stays out of filenames). The extractor accepts only paths that pass
+URLs (untrusted text stays out of filenames). The extractor accepts only paths that pass
 `require_cached_source_file`, so it can never be pointed at an arbitrary file.
 """
 
@@ -28,7 +28,7 @@ FILE_SUFFIX_BY_CONTENT_TYPE = {
 }
 SHA256_PREFIX_CHARACTERS = 32
 EXTRACTED_TEXT_SUFFIX = ".txt"
-SOURCE_FILE_MODE = 0o640  # the collector writes; the worker (same group) reads extracted text later (part 7)
+SOURCE_FILE_MODE = 0o640  # the collector writes; the worker (same group) reads the extracted text when reading
 
 
 @dataclass(frozen=True)

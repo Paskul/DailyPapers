@@ -1,4 +1,4 @@
-"""Embeddings cached in SQLite by model identity and the sha256 of the exact model input (plan part 6).
+"""Embeddings cached in SQLite by model identity and the sha256 of the exact model input.
 
 A topic question, a seed, or a paper is embedded once per pinned model. A changed text has a new hash, and a changed
 model has a new identity, so a stale vector is never reused. Embedding runs OUTSIDE any write transaction (it is the

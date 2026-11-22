@@ -1,4 +1,4 @@
-"""Keep keys, signed URLs, private queries, and raw paper or model text out of service logs (plan part 10).
+"""Keep keys, signed URLs, private queries, and raw paper or model text out of service logs.
 
 Under systemd, everything a paperwatch process prints or logs ends up in the journal, which other administrators,
 backups, and crash reports may see. The full details of every failure stay in the database (jobs.last_error,

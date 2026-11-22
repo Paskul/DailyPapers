@@ -1,4 +1,4 @@
-"""Publication dates as providers report them, with their precision kept visible (plan part 5).
+"""Publication dates as providers report them, with their precision kept visible.
 
 A stored publication date is a partial ISO date whose LENGTH is its precision:
     "2018"        year   (e.g. a CSL JSON seed, or a provider that reports only the year)
@@ -22,7 +22,7 @@ PRECISION_MONTH = "month"
 PRECISION_DAY = "day"
 PARTIAL_ISO_DATE_PATTERN = re.compile(r"^(?P<year>\d{4})(?:-(?P<month>\d{2})(?:-(?P<day>\d{2}))?)?$")
 EARLIEST_PLAUSIBLE_PUBLICATION_YEAR = 1600
-NEW_RELEASE_FRESH_WINDOW_DAYS = 7  # plan part 6: "a seven-day fresh window" from the original release date
+NEW_RELEASE_FRESH_WINDOW_DAYS = 7  # a new release for seven days after its original release date
 
 
 class ReleaseClass(StrEnum):

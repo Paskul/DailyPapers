@@ -1,11 +1,11 @@
-"""The research profile: for every topic, what defines its relevance right now (plan part 4).
+"""The research profile: for every topic, what defines its relevance right now.
 
 The question is the unit of relevance. A topic can be defined by
     keywords            a private question and/or approved public phrases,
     seeds               the active seed papers of its Zotero collections and CSL JSON files, or
     keywords and seeds  both.
 A seeds-only topic has no written question: it searches its public arXiv categories and ranks the results against
-its seeds locally (part 6). If a seed source is empty or offline, the topic keeps working from what remains; a
+its seeds locally. If a seed source is empty or offline, the topic keeps working from what remains; a
 topic left with no input at all is reported by `status` with what to add.
 
 The profile hash covers the topic id, the question, and the active seeds' metadata. It is stored with each topic
@@ -129,7 +129,7 @@ def load_active_seed_library_paper_ids(connection: sqlite3.Connection, app_confi
 
 
 def explain_empty_research_profile(profiles: tuple[TopicResearchProfile, ...]) -> str | None:
-    """The overall explanation when neither keywords nor seeds define any topic (plan part 4); else None."""
+    """The overall explanation when neither keywords nor seeds define any topic; else None."""
     if any(profile.input_mode != TopicInputMode.EMPTY for profile in profiles):
         return None
     return (

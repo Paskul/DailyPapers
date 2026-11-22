@@ -1,4 +1,4 @@
-"""Bound the source cache's disk use (plan part 10): "Bound disk growth with a source-cache limit. Keep validated
+"""Bound the source cache's disk use: "Bound disk growth with a source-cache limit. Keep validated
 reviews, cited evidence, and report snapshots when removing replaceable downloads."
 
 What lives in state/cache/sources/<edition id>/ (paperwatch.source_cache):

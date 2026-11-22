@@ -1,4 +1,4 @@
-"""How many papers per day the local model can really read (plan part 10, "Measure capacity").
+"""How many papers per day the local model can really read ("Measure capacity").
 
 Everything comes from what the pipeline already records, so it measures the actual model, reasoning settings, and
 context on this workstation:

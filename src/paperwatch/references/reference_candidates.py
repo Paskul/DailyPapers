@@ -1,4 +1,4 @@
-"""The cited works offered to the research role for one reviewed parent paper (plan part 8).
+"""The cited works offered to the research role for one reviewed parent paper.
 
 A candidate is a work the parent cites (a citation edge resolved to a catalog paper) that is NOT
     the parent itself, an active seed of the user's library, withdrawn, already reviewed, already queued, or already

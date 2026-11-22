@@ -1,4 +1,4 @@
-"""Plan part 9 check: test 0, 6, and 20 qualifying papers, a late completion, a missing note file, and a model outage.
+"""Daily report: test 0, 6, and 20 qualifying papers, a late completion, a missing note file, and a model outage.
 Restore a missing note from its saved review. Kill the publisher between file rename and the database update. A rerun
 must produce the same bytes and no duplicate recommendations.
 
@@ -21,8 +21,8 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from conftest import build_in_process_app
-from test_step5_collection import START_OF_TEST_WEEK, test_clock  # noqa: F401  (pytest fixture)
-from test_step7_evidence_reading import PARAGRAPH_FILLER, drain, install_extracted_text
+from test_collection import START_OF_TEST_WEEK, test_clock  # noqa: F401  (pytest fixture)
+from test_evidence_reading import PARAGRAPH_FILLER, drain, install_extracted_text
 
 from paperwatch.catalog import record_collected_paper
 from paperwatch.clock import utc_now
@@ -174,7 +174,7 @@ def test_six_qualifying_papers_are_published_with_a_grounded_overview(app, test_
         or "[#1 · `A1`" in report_text
     )
     assert "— 82/100 · new release · abstract only" in report_text
-    assert "Comparison `" in report_text  # part 8 compared some of these reviews; the report links those notes
+    assert "Comparison `" in report_text  # some of these reviews were compared; the report links those notes
 
 
 def test_twenty_qualifying_papers_publish_fifteen_and_keep_five_for_the_next_day(app, test_clock):  # noqa: F811

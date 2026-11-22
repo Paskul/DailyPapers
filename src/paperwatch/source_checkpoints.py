@@ -1,4 +1,4 @@
-"""One cursor and candidate budget per search, so collection resumes where it stopped (plan parts 2 and 5).
+"""One cursor and candidate budget per search, so collection resumes where it stopped.
 
 A search is anything the collector pages through: an arXiv category feed, an OpenAlex query for one topic and year
 band, a Zotero collection sync. Its coverage status makes gaps visible:

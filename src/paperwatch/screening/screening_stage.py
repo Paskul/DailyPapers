@@ -1,7 +1,7 @@
 """The screening stage of `collect`: bring every candidate's scores up to date, then promote today's papers.
 
 Runs after collection and before source text acquisition, so the papers it promotes get their text in the same run
-and the worker never has to request a URL (plan part 6). Makes no model call and no network request.
+and the worker never has to request a URL. Makes no model call and no network request.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 The fakes follow the real formats checked against live responses on 2026-11-19: the Atom announcement feed at
 rss.arxiv.org/atom/<category> (with ETag), export.arxiv.org/api/query with opensearch paging and submittedDate
-windows, and api.openalex.org/works with cursor paging and publication-date filters. For plan part 8 it also serves
+windows, and api.openalex.org/works with cursor paging and publication-date filters. For references it also serves
 single works (/works/W123, /works/doi:...) with their `referenced_works`, and id batches (filter=openalex:W1|W2).
 All paper text is synthetic.
 """
@@ -125,7 +125,7 @@ class FakePaperProviders:
         if request.url.path.startswith("/works/"):
             return self._openalex_single_work(request.url.path.removeprefix("/works/"))
         filters = dict(part.split(":", 1) for part in request.url.params.get("filter", "").split(",") if part)
-        if "openalex" in filters:  # a batch of known ids (plan part 8)
+        if "openalex" in filters:  # a batch of known ids
             wanted_ids = filters["openalex"].split("|")
             document: dict[str, Any] = {
                 "meta": {"count": 0, "next_cursor": None, "per_page": len(wanted_ids)},

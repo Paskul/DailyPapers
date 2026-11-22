@@ -1,4 +1,4 @@
-"""`paperwatch access-check --component collector|worker`: verify the plan-part-3 access limits from the account
+"""`paperwatch access-check --component collector|worker`: verify the deployment's access limits from the account
 that actually runs that component (deploy/check_access_as_service_accounts.sh runs it for both).
 
 Unlike every other command, this one arms NO in-process egress guard: it deliberately tries connections the
@@ -346,7 +346,7 @@ def _attempt_tcp_connection(host: str, port: int) -> tuple[bool, str]:
 
 
 def _check_embedding_model_files(app: AppContext) -> list[CheckResult]:
-    """Plan part 6: the collector screens with the pinned embedding model, so it must READ the model files, and must
+    """The collector screens with the pinned embedding model, so it must READ the model files, and must
     not be able to change them (their hashes are checked anyway; `doctor` checks that they match)."""
     if app.config.screening.embedding_backend != EMBEDDING_BACKEND_ONNX:
         return [CheckResult("files", "embedding model", WARN, "screening uses the offline test embedder")]

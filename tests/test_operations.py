@@ -1,4 +1,4 @@
-"""Plan part 10 operations: the source-cache limit, status, capacity measurement, backup with a restore to a fresh
+"""Operations: the source-cache limit, status, capacity measurement, backup with a restore to a fresh
 directory, the ranking-quality label sample, and the egress policy of the new commands."""
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 from conftest import build_in_process_app
-from test_step7_evidence_reading import drain, install_extracted_text
+from test_evidence_reading import drain, install_extracted_text
 
 from paperwatch.catalog import record_collected_paper
 from paperwatch.cli import NO_NETWORK_COMMAND_NAMES, select_egress_policy_for_command

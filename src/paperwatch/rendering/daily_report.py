@@ -1,4 +1,4 @@
-"""Render the daily report (plan part 9) from the frozen snapshot, the saved reviews, and the synthesis.
+"""Render the daily report from the frozen snapshot, the saved reviews, and the synthesis.
 
 | Section                     | Content                                                                              |
 | Opening                     | date, cutoff and timezone, counts found/screened/reviewed, selected, backlog,        |

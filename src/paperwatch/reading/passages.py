@@ -1,4 +1,4 @@
-"""Turn a paper's text into passages with stable ids, page numbers, and section names (plan part 7).
+"""Turn a paper's text into passages with stable ids, page numbers, and section names.
 
 Two kinds of text are read:
   * the abstract (abstract-only reading): one passage per sentence, ids A1, A2, ...; a title-only record gets one

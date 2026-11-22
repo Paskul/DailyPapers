@@ -1,7 +1,7 @@
 """Fixed entrypoint of the paperwatch extractor image. Reads /input/source and writes UTF-8 text to stdout.
 
   PDF  -> poppler `pdftotext` in reading order. Pages are separated by form feeds (\\f), so page numbers survive for
-          the passage ids of plan part 7.
+          the passage ids.
   XML  -> (JATS, TEI, or other) the text of each content block on its own paragraph; headings are prefixed "## ".
           Documents that declare entities are refused (no entity expansion, no external DTDs).
   else -> exit status 2.

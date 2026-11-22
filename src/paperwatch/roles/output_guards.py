@@ -1,9 +1,9 @@
-"""Host-side checks against invented actions and references in model answers (plan part 3).
+"""Host-side checks against invented actions and references in model answers.
 
 The model has zero tools, so an "action" (upload a file, open a link, fetch something) can only show up as data in
 its answer. The host never executes anything from an answer, and:
   * unknown fields such as {"actions": [...]} are rejected by every role's schema (additionalProperties: false);
-  * ids outside the input are rejected by each role's own check (topic ids now, passage ids in part 7);
+  * ids outside the input are rejected by each role's own check (topic, passage, and candidate ids);
   * web addresses that do not occur in the role input are rejected here as invented references.
 A web address that DOES occur in the (untrusted) input may be quoted back; the renderer defangs it so it is never
 a clickable link (rendering/markdown_safety.py).

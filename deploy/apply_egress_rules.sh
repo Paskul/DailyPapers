@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render, check, install, and load the paperwatch nftables egress rules (plan part 3). Run with sudo.
+# Render, check, install, and load the paperwatch nftables egress rules. Run with sudo.
 #
 # Usage: sudo deploy/apply_egress_rules.sh [--model-port 8080] [--with-model-account ACCOUNT]
 #

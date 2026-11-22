@@ -1,4 +1,4 @@
-"""Does a newer review of an already reported paper change a result, an assumption, or a conclusion? (plan part 9)
+"""Does a newer review of an already reported paper change a result, an assumption, or a conclusion?
 
 "Include a previously reported paper again only for a revision that changes a result, assumption, or conclusion."
 The selection is frozen before the writer runs, so this is decided by a deterministic rule, without a model call
@@ -112,7 +112,7 @@ def describe_material_revision_changes(reported: ReviewedVersion, newer: Reviewe
 
 
 def _result_numbers(review_content: dict[str, Any]) -> set[str]:
-    """Numbers stated in the results: part-7 findings (claim, conditions, excerpt) or legacy main-claim strings."""
+    """Numbers stated in the results: evidence-review findings (claim, conditions, excerpt) or legacy main-claim strings."""
     result_texts: list[str] = []
     for finding in review_content.get("results", []):
         if isinstance(finding, dict):

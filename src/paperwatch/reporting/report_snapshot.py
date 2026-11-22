@@ -1,4 +1,4 @@
-"""The frozen snapshot of one daily report (plan part 9): "At the cutoff, take a short database snapshot of completed,
+"""The frozen snapshot of one daily report: "At the cutoff, take a short database snapshot of completed,
 eligible reviews ... Save the snapshot and the final Markdown bytes before publishing."
 
 `freeze_report_snapshot` runs ONE short write transaction that reads everything the report needs and saves it:
@@ -36,7 +36,7 @@ BEGINNING_OF_TIME = "0000"  # sorts before every stored timestamp
 
 @dataclass(frozen=True)
 class ReportCorrection:
-    """A previously reported paper that a provider now reports withdrawn or retracted (plan part 5).
+    """A previously reported paper that a provider now reports withdrawn or retracted.
 
     The historical report file is never altered; the next report carries this correction instead."""
 

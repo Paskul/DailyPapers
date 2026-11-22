@@ -1,4 +1,4 @@
-"""Plan part 5: collect current papers and run a finite historical search.
+"""Collect current papers and run a finite historical search.
 
 Check from the plan: replay a feed, a mid-page failure, a week of downtime, a late-indexed work, a revision, and a
 historical search that reaches its cap. Check the recovered ids, preserved cursors, and date labels.
@@ -253,7 +253,7 @@ def test_a_revision_of_a_known_paper_adds_an_edition_and_keeps_the_first_publica
     assert paper_row["first_published_date"] == "2026-11-16"  # first publication is never moved by a revision
     assert paper_row["latest_revision_date"] == "2026-11-17" and paper_row["source_version"] == "v2"
     assert app.connection.execute("SELECT COUNT(*) FROM papers").fetchone()[0] == 1
-    # The revision's text is identical, so no second reading is queued (plan part 2).
+    # The revision's text is identical, so no second reading is queued.
     assert app.connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == review_jobs_before
 
 
@@ -656,7 +656,7 @@ def test_parsers_report_arxiv_withdrawals_and_openalex_retractions():
 
 
 def test_a_withdrawn_paper_is_never_recommended_and_a_reported_one_gets_a_correction(tmp_path, test_clock):
-    # The fake model's ratings stay below the default floor of 65 (plan part 9), so this test reports at floor 0.
+    # The fake model's ratings stay below the default floor of 65, so this test reports at floor 0.
     app = open_app(tmp_path, minimum_reading_priority=(65, 0))
     collect_fixture_and_review(app)
     test_clock.advance(hours=2)  # past the 07:00 New York cutoff of 2026-11-16

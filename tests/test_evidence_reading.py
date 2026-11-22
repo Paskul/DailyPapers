@@ -1,4 +1,4 @@
-"""Plan part 7 check: run a full paper, a truncated extraction, and an abstract-only paper through the same schema.
+"""Evidence-backed reading: run a full paper, a truncated extraction, and an abstract-only paper through the same schema.
 Reject an invented metric and an unknown passage id. Confirm that an unchanged second run reads none of them again.
 
 Also covered: stable passages with pages and sections, bounded reading sections with saved results (a timeout
@@ -163,7 +163,7 @@ def test_full_truncated_and_abstract_only_papers_share_one_schema_and_are_not_re
     )
     abstract_paper_id = add_paper(app, "2611.00003v1", "Abstract only (synthetic)")
 
-    first_run_outcomes = drain(app)  # three readings, plus any part-8 comparison of them
+    first_run_outcomes = drain(app)  # three readings, plus any comparison of them
     assert set(first_run_outcomes) == {WorkCycleOutcome.JOB_COMPLETED} and len(first_run_outcomes) >= 3
     reviews = {row["paper_id"]: row for row in app.connection.execute("SELECT * FROM reviews")}
     assert {paper_id: reviews[paper_id]["coverage"] for paper_id in reviews} == {

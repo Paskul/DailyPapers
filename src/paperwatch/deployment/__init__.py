@@ -1,1 +1,1 @@
-"""Deployment helpers that render systemd units (plan part 10)."""
+"""Deployment helpers that render systemd units."""

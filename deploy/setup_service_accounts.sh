@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create the paperwatch service accounts and set directory permissions (plan part 3). Idempotent. Run with sudo.
+# Create the paperwatch service accounts and set directory permissions. Idempotent. Run with sudo.
 #
 # Usage: sudo deploy/setup_service_accounts.sh <paperwatch home> [operator account]
 #
@@ -73,7 +73,7 @@ chmod 0750 "$PAPERWATCH_HOME"
 chmod 0640 "$PAPERWATCH_HOME/config.toml" "$PAPERWATCH_HOME/topics.toml"
 
 # state/: both services and the operator read and write SQLite and its -wal/-shm files (setgid keeps the group),
-# and open the lock files (inference.lock; report-publication.lock from plan part 9) for writing.
+# and open the lock files (inference.lock, report-publication.lock) for writing.
 chown "$WORKER_ACCOUNT:$SHARED_GROUP" "$STATE_DIR"
 chmod 2770 "$STATE_DIR"
 find "$STATE_DIR" -maxdepth 1 -type f \( -name '*.sqlite3*' -o -name '*.lock' \) \
@@ -105,7 +105,7 @@ Accounts and permissions are set for $PAPERWATCH_HOME.
 Run the services with a group-writable umask so new SQLite WAL files stay usable by both accounts, e.g.
   sudo -u $COLLECTOR_ACCOUNT sh -c 'umask 0007; exec paperwatch --home $PAPERWATCH_HOME collect'
   sudo -u $WORKER_ACCOUNT    sh -c 'umask 0007; exec paperwatch --home $PAPERWATCH_HOME work'
-(the systemd units of plan part 10 set UMask=0007.)
+(the paperwatch systemd units set UMask=0007.)
 To add provider keys, write them as the collector account:
   sudo -u $COLLECTOR_ACCOUNT sh -c 'umask 0077; \$EDITOR $CREDENTIALS_DIR/collector.toml'
 Next: deploy/build_extractor_image.sh, then sudo deploy/apply_egress_rules.sh,

@@ -1,4 +1,4 @@
-"""Run the pinned PDF/XML text extractor in rootless Podman and return its text (plan part 3).
+"""Run the pinned PDF/XML text extractor in rootless Podman and return its text.
 
 The container gets exactly what the plan allows and nothing more:
   * the digest-pinned image only (`--pull=never`: never downloaded at run time; build it once with
@@ -42,7 +42,7 @@ RUNTIME_ENVIRONMENT_VARIABLES = ("PATH", "HOME", "XDG_RUNTIME_DIR", "XDG_CONFIG_
 @dataclass(frozen=True)
 class ExtractedText:
     text: str
-    extractor_image: str  # the digest-pinned image that produced it (recorded with passages in part 7)
+    extractor_image: str  # the digest-pinned image that produced it (recorded with the passages)
     duration_seconds: float
 
 

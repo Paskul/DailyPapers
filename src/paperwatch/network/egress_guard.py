@@ -1,6 +1,6 @@
 """Process-wide egress guard: a second line of defence behind the OS rules (nftables, service accounts).
 
-Plan part 3 enforces network limits OUTSIDE Python (deploy/nftables). This module adds the same limits INSIDE each
+The hardened deployment enforces network limits OUTSIDE Python (deploy/nftables). This module adds the same limits INSIDE each
 paperwatch process, so a bug or a misleading paper cannot make, for example, the worker open a socket even on a
 machine where the nftables rules are not installed yet. It uses a PEP 578 audit hook, which sees every Python-level
 DNS lookup, socket connection, datagram send, and program launch before it happens, and raises EgressBlocked.

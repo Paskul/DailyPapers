@@ -10,7 +10,7 @@ File format (default path: <home>/credentials/collector.toml, set by collector.c
     [openalex]
     api_key = "..."          # optional for the works API, required for the content (full text) API
 
-Rules (plan part 3):
+Rules:
   * Only the collector command loads this file; the worker, report writer, and model server never do.
   * The file must belong to the running account and grant no group or world access (mode 0600 or 0400),
     otherwise it is refused. A missing file just means "no credentials".

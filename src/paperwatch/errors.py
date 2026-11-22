@@ -4,7 +4,7 @@ Three class attributes drive recovery behaviour in the worker:
   * `is_service_outage`: True means the whole service is down (e.g. the llama.cpp server). The worker pauses
     every job that needs that service, releases the current job without charging it an attempt, and backs off.
   * `ends_job_immediately`: True means retrying the same input cannot help (e.g. the answer was still invalid after
-    its one repair attempt, plan part 7). The job fails now with its reason retained, and the worker moves on.
+    its one repair attempt). The job fails now with its reason retained, and the worker moves on.
   * `model_call_outcome`: the label written to the `model_calls` log when the error happened during a model call.
 """
 
@@ -71,7 +71,7 @@ class ModelOutputInvalid(PaperwatchError):
 
 
 class ModelOutputRejectedAfterRepair(ModelOutputInvalid):
-    """The answer was still invalid after its one repair attempt (plan part 7). The job fails with this reason."""
+    """The answer was still invalid after its one repair attempt. The job fails with this reason."""
 
     ends_job_immediately = True
 
@@ -115,20 +115,20 @@ class InferenceLockTimeout(PaperwatchError):
 
 
 class ModelCallDeadlineExceeded(ModelCallTimedOut):
-    """A caller's overall deadline (e.g. the report writer's, plan part 9) ran out before or during a model call."""
+    """A caller's overall deadline (e.g. the report writer's) ran out before or during a model call."""
 
     model_call_outcome = "deadline_exceeded"
 
 
 class ReportNotDueYet(PaperwatchError):
-    """`report --date D` asked for a report whose scheduled cutoff has not passed (plan part 9)."""
+    """`report --date D` asked for a report whose scheduled cutoff has not passed."""
 
     failed_component = "report"
     process_exit_code = 13
 
 
 class ReportPublicationInProgress(PaperwatchError):
-    """Another `report` process holds the publication lock; one publication process at a time (plan part 9)."""
+    """Another `report` process holds the publication lock; one publication process at a time."""
 
     failed_component = "report"
     process_exit_code = 13
@@ -168,7 +168,7 @@ class ProviderUnavailable(PaperwatchError):
 
 
 class SourceAccessDenied(PaperwatchError):
-    """A request was refused by paperwatch's own access rules (plan part 3), before or during the network call.
+    """A request was refused by paperwatch's own access rules, before or during the network call.
 
     Examples: a host, path, or parameter outside the read-only provider rules; a redirect to an unlisted host; a
     connection target in a private, loopback, link-local, or reserved range; an id that is not a known source record.
@@ -221,7 +221,7 @@ class UnexpectedWorkerError(PaperwatchError):
 
 def describe_failure_for_operator(failure: PaperwatchError, *, message_override: str | None = None) -> str:
     """One consistent line (plus an optional hint line) naming the failed component. Redacted for service logs
-    (plan part 10): no credentials, no long quotes of paper or model text; the full message stays in the database."""
+    : no credentials, no long quotes of paper or model text; the full message stays in the database."""
     from paperwatch.service_log_redaction import redact_service_log_text  # local import: errors.py has no deps
 
     description = (

@@ -205,7 +205,7 @@ def build_get_work_request(identifier: NormalizedIdentifier) -> ProviderRequest:
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# get_works(openalex ids)  (plan part 8: the works a reviewed paper cites)
+# get_works(openalex ids)  (the works a reviewed paper cites)
 # --------------------------------------------------------------------------------------------------------------------
 
 MAXIMUM_OPENALEX_IDS_PER_REQUEST = 100  # OpenAlex: up to 100 values in one OR filter, at most 100 results per page
@@ -255,7 +255,7 @@ def build_get_text_request(edition_identifier: NormalizedIdentifier) -> Provider
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# list_seed_items(collection_key, start)  (Zotero, plan part 4)
+# list_seed_items(collection_key, start)  (Zotero)
 # --------------------------------------------------------------------------------------------------------------------
 
 

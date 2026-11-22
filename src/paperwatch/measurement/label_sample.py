@@ -1,4 +1,4 @@
-"""A fixed sample of candidates for the owner to label by hand (plan part 10, release check "Ranking quality").
+"""A fixed sample of candidates for the owner to label by hand (release check "Ranking quality").
 
 "Label a fixed sample of at least 40 candidates across active topics, including near misses. Mark 'would read' and
 its reason before seeing system scores."

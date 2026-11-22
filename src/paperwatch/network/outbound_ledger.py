@@ -4,7 +4,7 @@
   one short write transaction (shared by every process), and returns how long to wait before sending. The wait
   happens OUTSIDE the transaction.
 * `record_outbound_request` writes one row per attempted hop: provider, operation, host, path, query parameters
-  with credentials redacted, outcome, status, and size. This is how an operator (and the part-4 check) can see
+  with credentials redacted, outcome, status, and size. This is how an operator (and the tests) can see
   exactly which public terms and ids left the machine.
 """
 

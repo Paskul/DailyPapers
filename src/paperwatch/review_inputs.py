@@ -1,13 +1,13 @@
 """The identity of a reading's input: the key that says "this input was already read".
 
-Reading identity (plan part 2): canonical paper + normalized source-text hash + reading generation, with the edition
+Reading identity: canonical paper + normalized source-text hash + reading generation, with the edition
 whose text was read recorded alongside. The review input key therefore depends ONLY on the text the model reads and
 on an explicit operator reread, never on topics, scores, discovery routes, reading limits, the model, or the prompt
 version:
   * an abstract reading's fingerprint covers the abstract (or, for a title-only record, the title), so a changed
     title alone is not a text change;
   * a full-text reading's fingerprint covers the whitespace-normalized text the sandboxed extractor produced, so
-    newly available full text is a new input (plan part 2: "newly available full text can create a new review");
+    newly available full text is a new input ("newly available full text can create a new review");
   * two editions whose texts normalize identically share one reading;
   * an explicit reread carries its own generation id, so it is a new logical input.
 This module is deliberately low-level (schema migrations import it). The packet the reviewer actually reads, with
@@ -25,7 +25,7 @@ from paperwatch.text_normalization import collapse_whitespace
 TEXT_KIND_ABSTRACT = "abstract"
 TEXT_KIND_EXTRACTED_TEXT = "extracted_text"
 COVERAGE_ABSTRACT_ONLY = "abstract_only"
-# Key prefixes. The abstract prefix is the coverage label it always had, so keys stored before part 7 stay valid.
+# Key prefixes. The abstract prefix is the coverage label it always had, so keys stored by earlier versions stay valid.
 REVIEW_INPUT_KEY_PREFIX_BY_TEXT_KIND = {
     TEXT_KIND_ABSTRACT: COVERAGE_ABSTRACT_ONLY,
     TEXT_KIND_EXTRACTED_TEXT: TEXT_KIND_EXTRACTED_TEXT,

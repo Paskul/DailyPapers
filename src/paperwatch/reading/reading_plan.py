@@ -5,7 +5,7 @@ leaves room in the context window for reasoning and the final answer (checked in
 call in roles/base.py). Sections are built in document order; a document section that does not fit into the
 remainder of the current reading section starts a new one, so short sections stay whole.
 
-Which sections are read (plan part 7: "use the title and abstract for orientation, then read methods, results, and
+Which sections are read ("use the title and abstract for orientation, then read methods, results, and
 limitations"): every reading section gets the priority of the most important passage kind it holds,
 
     0 method, results       1 discussion / limitations, conclusion       2 introduction, other

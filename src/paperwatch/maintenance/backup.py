@@ -1,4 +1,4 @@
-"""Back up a paperwatch home, and check that a backup restores (plan part 10).
+"""Back up a paperwatch home, and check that a backup restores.
 
 "Back up SQLite with its online backup API and retain the config and output. Restore to a fresh directory once."
 

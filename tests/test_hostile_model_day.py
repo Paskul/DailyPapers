@@ -1,4 +1,4 @@
-"""Plan part 10 access-limit check: a whole fixture day with ADVERSARIAL paper text and a HOSTILE model.
+"""Access-limit check: a whole fixture day with ADVERSARIAL paper text and a HOSTILE model.
 
 "Observe service-account egress, parser isolation, provider budgets, and output paths with ordinary and adversarial
 fixture text. Confirm that only the collector contacts public providers."
@@ -38,7 +38,7 @@ from typing import Any
 import pytest
 from conftest import build_in_process_app
 from fake_paper_providers import FakeArxivPaper, FakeOpenAlexWork, FakePaperProviders, FeedItem
-from test_step5_collection import collect, test_clock  # noqa: F401  (pytest fixture)
+from test_collection import collect, test_clock  # noqa: F401  (pytest fixture)
 
 from paperwatch.commands.report_command import run_report_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle

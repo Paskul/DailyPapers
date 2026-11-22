@@ -6,11 +6,11 @@ internal keys, never from paper text:
     arxiv-recovery:cs.RO                              dated arXiv API search after a feed gap            (current)
     openalex-recent:<query id>                        OpenAlex search over a recent publication window   (current)
     history:<query id>                                the finite historical search of a topic            (historical)
-    zotero-seed:<collection> / csl-seed:<file key>    the private seed library (plan part 4)             (seed)
+    zotero-seed:<collection> / csl-seed:<file key>    the private seed library             (seed)
     fixture:<file name>                               recorded fixtures for tests and replays            (fixture)
-    research-branch:<query id>                        a gap search the research role chose (part 8)      (historical)
-    reference:<citing paper id>                       a work cited by a reviewed paper (part 8)           (reference)
-    openalex-lookup:<paper id>                        a reviewed paper's own OpenAlex record (part 8)     (reference)
+    research-branch:<query id>                        a gap search the research role chose               (historical)
+    reference:<citing paper id>                       a work cited by a reviewed paper                    (reference)
+    openalex-lookup:<paper id>                        a reviewed paper's own OpenAlex record              (reference)
 The paper's ORIGINAL route (papers.origin_route) is never rewritten, even when a later route raises its priority.
 Only current and historical routes count against the daily budget of new metadata candidates. Reference routes are
 bounded instead by the reference settings (papers fetched per run, ids per paper).

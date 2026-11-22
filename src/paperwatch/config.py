@@ -45,7 +45,7 @@ SUPPORTED_EMBEDDING_BACKENDS = ("onnx", "hashing")
 REASONING_EFFORT_SERVER_DEFAULT = "server-default"
 TOPIC_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 CLOCK_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-# Public search terms are the only topic text that may leave the machine (plan part 3), so their shape is checked.
+# Public search terms are the only topic text that may leave the machine, so their shape is checked.
 MAXIMUM_PUBLIC_QUERY_CHARACTERS = 200
 ARXIV_CATEGORY_PATTERN = re.compile(r"^[a-z][a-z-]*(\.[A-Za-z][A-Za-z-]*)?$")  # cs.RO, math.OC, hep-th, q-bio.NC
 ZOTERO_COLLECTION_KEY_PATTERN = re.compile(r"^[A-Z0-9]{8}$")
@@ -90,14 +90,14 @@ class RoleLimits:
 
 DEFAULT_ROLE_LIMITS: dict[str, RoleLimits] = {
     "healthcheck": RoleLimits(max_output_tokens=2048, timeout_seconds=120, reasoning_effort="low"),
-    # Plan part 7 roles. The owner chose the server's default reasoning (xhigh) for every reading call (2026-11-19).
+    # Reading roles. Without a reasoning_effort they use the server's default; [roles.<name>] can set one.
     "section_reader": RoleLimits(max_output_tokens=16384, timeout_seconds=1800),  # one bounded reading section
     "reviewer": RoleLimits(max_output_tokens=16384, timeout_seconds=1800),  # the evidence-backed review
     "topic_assessor": RoleLimits(max_output_tokens=12288, timeout_seconds=1200),  # rubric ratings per topic
-    # Plan part 8 roles, also at the server's default reasoning (the same choice as the reading roles).
+    # Reference and comparison roles, also at the server's default reasoning unless configured.
     "research": RoleLimits(max_output_tokens=8192, timeout_seconds=1200),  # chooses references and gap searches
     "comparison": RoleLimits(max_output_tokens=12288, timeout_seconds=1200),  # compares two saved reviews
-    # Plan part 9: the report writer runs once per day under report.writer_deadline_minutes. Owner decision
+    # The report writer runs once per day under report.writer_deadline_minutes. Owner decision
     # (2026-11-20): medium reasoning, so the report usually appears 15-30 minutes after the cutoff.
     "writer": RoleLimits(max_output_tokens=8192, timeout_seconds=1500, reasoning_effort="medium"),
 }
@@ -121,9 +121,9 @@ class ReportSettings:
     timezone: str = "America/New_York"
     publish_time: str = "07:00"  # the cutoff: reviews completed later belong to the next report
     max_papers_per_report: int = 15
-    # Plan part 9: only reviews whose best topic score reaches this reading priority (0-100) are recommended.
+    # Only reviews whose best topic score reaches this reading priority (0-100) are recommended.
     minimum_reading_priority: int = 65
-    # Plan part 9: obtaining the inference slot, the writer call, its one repair, and validation must all finish
+    # Obtaining the inference slot, the writer call, its one repair, and validation must all finish
     # within this many minutes of the start of the synthesis, or the report falls back to the saved summaries.
     writer_deadline_minutes: int = 30
 
@@ -135,7 +135,7 @@ class ScheduleSettings:
 
 @dataclass(frozen=True)
 class CollectorSettings:
-    """Settings of the only component that may contact paper providers (plan part 3).
+    """Settings of the only component that may contact paper providers.
 
     Host, path, budget, and response-size rules are NOT here: they live in the read-only provider rules that ship
     with the package (paperwatch/network/provider_rules.toml), so editing config.toml cannot widen network access.
@@ -144,13 +144,13 @@ class CollectorSettings:
     credentials_file: str = "credentials/collector.toml"  # collector-only; mode 0600, never readable by the worker
     user_agent: str = "paperwatch/0.1 (local research monitor)"  # generic: no name, e-mail, or host details
     # Looking up a work by an identifier that is known ONLY from the private seed library (e.g. a seed's DOI) tells
-    # the provider which papers the user collects. Off unless the operator opts in (plan part 4).
+    # the provider which papers the user collects. Off unless the operator opts in.
     allow_lookup_by_seed_identifier: bool = False
 
 
 @dataclass(frozen=True)
 class CollectionSettings:
-    """What one `collect` run may admit and fetch (plan part 5). Starting values; measure them in part 10.
+    """What one `collect` run may admit and fetch. Starting values, to be tuned from measurements.
 
     A "new metadata candidate" is a paper the catalog did not know, found by an arXiv or OpenAlex route. Current
     releases (feeds, missed-release recovery, recent OpenAlex windows) run first; the historical search may use only
@@ -186,14 +186,14 @@ class CollectionSettings:
     # Readings that `collect` queues wait until the same run has acquired their source text (so the worker does not
     # read an abstract seconds before the PDF arrives). If that stage never finishes, they become due after this.
     source_text_hold_minutes: int = 60
-    # Plan part 10: raw downloads (.pdf/.xml) above this total are removed oldest first once their text is extracted
+    # Raw downloads (.pdf/.xml) above this total are removed oldest first once their text is extracted
     # and no reading of the paper is pending; the extracted text, the reviews, and the reports are always kept.
     source_cache_limit_megabytes: int = 4096
 
 
 @dataclass(frozen=True)
 class ReadingSettings:
-    """How a promoted paper is read (plan part 7). Starting values; measure them on the workstation in part 10.
+    """How a promoted paper is read. Starting values; tune them with `paperwatch capacity` on your machine.
 
     A long text is read in bounded reading sections, one model call each, then synthesized; see
     paperwatch.reading.reading_plan for the order (methods and results first) and the full_text / partial_text rule.
@@ -210,7 +210,7 @@ class ReadingSettings:
 
 @dataclass(frozen=True)
 class ScreeningSettings:
-    """Cheap CPU screening of every candidate and the daily promotion of the best ones to a reading (plan part 6).
+    """Cheap CPU screening of every candidate and the daily promotion of the best ones to a reading.
 
     Screening score per topic (0-1) = weighted mean of the AVAILABLE signals (an unavailable one is omitted and the
     weights of the rest are renormalized):
@@ -220,7 +220,7 @@ class ScreeningSettings:
     Before combining, promotion replaces each signal by its percentile within the topic's pool of unpromoted
     candidates (paperwatch.screening.signal_normalization), so signals and topics share one scale. A paper's screening
     score is its best topic's score; `minimum_screening_score` is therefore a relative position (0.8 = top fifth of the
-    topic's pool). Starting values; calibrate in part 10.
+    topic's pool). Starting values; calibrate them from hand labels (`paperwatch label-sample`).
     """
 
     embedding_backend: str = "onnx"
@@ -234,12 +234,12 @@ class ScreeningSettings:
     closest_seed_count: int = 3
     daily_promotion_limit: int = 30  # readings promoted per UTC day, across all topics, near-cutoff picks included
     near_cutoff_promotions: int = 3  # of those, the best candidates just below the cutoff (tests what it misses)
-    minimum_screening_score: float = 0.0  # pool percentile, 0-1; 0 = rank only, until part 10 calibrates it
+    minimum_screening_score: float = 0.0  # pool percentile, 0-1; 0 = rank only (calibrate from hand labels)
 
 
 @dataclass(frozen=True)
 class ReferenceSettings:
-    """Following important references of completed reviews (plan part 8). Starting values; measure in part 10.
+    """Following important references of completed reviews. Starting values, to be tuned from measurements.
 
     After a review, `collect` fetches the paper's outgoing OpenAlex references (and confirms identifiers found in its
     own bibliography with a provider record). The research role then picks up to `references_per_paper` of them that
@@ -264,7 +264,7 @@ class ReferenceSettings:
 
 @dataclass(frozen=True)
 class ComparisonSettings:
-    """Comparisons of two completed reviews that address the same question (plan part 8)."""
+    """Comparisons of two completed reviews that address the same question."""
 
     daily_comparison_jobs: int = 5  # new comparison jobs per UTC day
     minimum_shared_evidence_dimensions: int = 1  # of assumptions / guarantees / evaluation setting
@@ -292,12 +292,12 @@ class AccessSettings:
     collector_account: str = "paperwatch-collector"
     worker_account: str = "paperwatch-worker"  # runs `work` and `report`
     shared_state_group: str = "paperwatch-state"  # group owning state/ (SQLite + WAL files)
-    model_server_account: str = ""  # empty: llama-server still runs as a desktop user (owner decision, part 3)
+    model_server_account: str = ""  # empty: llama-server runs as a desktop user (access-check warns)
 
 
 @dataclass(frozen=True)
 class TopicDefinition:
-    """One research interest (plan part 4). The question is the unit of relevance.
+    """One research interest. The question is the unit of relevance.
 
     Relevance inputs (at least one should be present; `status` explains what is missing):
       question             PRIVATE sentence for the local model; never leaves the machine. Optional in seeds-only mode.
@@ -341,7 +341,7 @@ class TopicDefinition:
 
         `seed_fingerprints` are "<seed id>:<metadata hash>" strings (paperwatch.research_profile builds them). Stored
         with every assessment, so a changed question or seed set is visible as a stale assessment while the reading
-        itself is reused. A topic without seeds keeps the hash it had before seeds existed (plan part 2).
+        itself is reused. A topic without seeds keeps the hash it had before seeds existed.
         """
         profile_fields: dict[str, Any] = {"topic_id": self.topic_id, "question": " ".join(self.question.split())}
         if seed_fingerprints:
@@ -420,7 +420,7 @@ class AppConfig:
 
     @property
     def report_publication_lock_path(self) -> Path:
-        """One publication process at a time (plan part 9); a second `report` refuses instead of racing."""
+        """One publication process at a time; a second `report` refuses instead of racing."""
         return self.state_dir / REPORT_PUBLICATION_LOCK_FILE_NAME
 
     @property
@@ -493,7 +493,7 @@ def _read_toml_file(file_path: Path) -> dict[str, Any]:
         with file_path.open("rb") as toml_file:
             return tomllib.load(toml_file)
     except PermissionError:
-        # Under the service-account layout (plan part 3) only members of the shared state group may read the home.
+        # Under the service-account layout only members of the shared state group may read the home.
         raise ConfigurationError(
             f"{file_path} is not readable by this account",
             operator_hint="run as a paperwatch service account, or as a member of the shared "
@@ -548,7 +548,7 @@ def _build_topics(raw_topics_file: dict[str, Any]) -> tuple[TopicDefinition, ...
             raise ConfigurationError(f"topic id '{topic.topic_id}' must match {TOPIC_ID_PATTERN.pattern}")
         if topic.topic_id in seen_topic_ids:
             raise ConfigurationError(f"duplicate topic id '{topic.topic_id}' in {TOPICS_FILE_NAME}")
-        # An empty question is allowed (seeds-only mode, plan part 4); `status` explains a topic with no input at all.
+        # An empty question is allowed (seeds-only mode); `status` explains a topic with no input at all.
         _validate_public_topic_terms(topic)
         _validate_seed_file_paths(topic)
         seen_topic_ids.add(topic.topic_id)
@@ -768,7 +768,7 @@ def _validate_reading_settings(app_config: AppConfig) -> None:
         raise ConfigurationError(
             "reading.passage_min_characters <= passage_max_characters <= section_max_characters must hold"
         )
-    # Plan part 7: reserve context space for reasoning and the final answer. One reading section plus the prompt
+    # Reserve context space for reasoning and the final answer. One reading section plus the prompt
     # around it plus the section reader's whole output limit must fit the context paperwatch may rely on.
     section_prompt_tokens = READING_PROMPT_OVERHEAD_TOKENS + int(
         reading_settings.section_max_characters / READING_CHARACTERS_PER_TOKEN_ESTIMATE
@@ -786,7 +786,7 @@ def _validate_reading_settings(app_config: AppConfig) -> None:
             )
 
 
-MAXIMUM_REFERENCES_PER_PAPER = 3  # plan part 8: "choose up to three"; the research role's schema allows no more
+MAXIMUM_REFERENCES_PER_PAPER = 3  # at most three per paper; the research role's schema allows no more
 MAXIMUM_REFERENCES_PER_LOOKUP_REQUEST = 100  # OpenAlex: up to 100 ids in one filter, 100 results per page
 
 

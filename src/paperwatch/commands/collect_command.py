@@ -4,25 +4,25 @@ The collector is the only component allowed to contact paper providers (its proc
 policy), and it does so only through paperwatch.network.provider_gateway.ProviderGateway's fixed operations.
 
 Stages of one run:
-  1. Seeds (plan part 4): sync every configured Zotero collection and CSL JSON file (paperwatch.seeds.seed_sync).
+  1. Seeds: sync every configured Zotero collection and CSL JSON file (paperwatch.seeds.seed_sync).
      A source that cannot be read keeps its last successful seed set; collection continues either way.
-  2. Papers (plan part 5, paperwatch.collection): current releases first (arXiv category feeds, recovery of releases
+  2. Papers (paperwatch.collection): current releases first (arXiv category feeds, recovery of releases
      missed during downtime, recent OpenAlex windows), then each topic's finite historical search, all within the
      daily budget of new metadata candidates. `--fixture FILE` replaces these live searches with recorded records
      (a replay); `--skip-searches` skips them.
-  2b. References and gap searches (plan part 8, live runs only): fetch the outgoing references of reviewed papers
+  2b. References and gap searches (live runs only): fetch the outgoing references of reviewed papers
      that address a topic's question (paperwatch.references.reference_fetch), and run the gap searches the research
      role requested (paperwatch.references.research_branches). Cited works and branch results join the catalog and
      are screened in step 3 like every other candidate.
-  3. Screening (plan part 6, paperwatch.screening): score every candidate for every topic on the CPU with the pinned
+  3. Screening (paperwatch.screening): score every candidate for every topic on the CPU with the pinned
      local embedding model plus the phrase signal, then promote up to the daily limit (slots divided across topics
      first) and queue each reading in its priority class. Nothing leaves the machine and no model call is made.
-  3b. Follow-up work (plan part 8, no network): queue the research role's choice of references for each fetched
+  3b. Follow-up work (no network): queue the research role's choice of references for each fetched
      parent, admit choices that waited for the daily reference limit, and queue comparisons the daily comparison
      limit held back for recent reviews.
   4. Source text: for papers queued for review (reference readings included), a local file, else (live runs only) a
      capped download; then text extraction in the sandbox when the extractor image is configured. A paper whose full
-     text was extracted gets its reading switched to the full text (plan part 7). The readings promoted in step 3,
+     text was extracted gets its reading switched to the full text. The readings promoted in step 3,
      and the reference readings chosen since the last run, are held until this stage ends, so the worker does not
      read an abstract seconds before the PDF arrives.
   5. Research profile: print each topic's input mode (keywords, seeds, or both) and anything missing.
@@ -161,7 +161,7 @@ def _run_collect_stages(
 
 
 def _queue_follow_up_work(app: AppContext, collection_context: CollectionContext) -> list[str]:
-    """Plan part 8 queueing that needs no network: reference choices, waiting admissions, comparisons."""
+    """Follow-up queueing that needs no network: reference choices, waiting admissions, comparisons."""
     with write_transaction(app.connection):
         selection_jobs = queue_reference_selection_jobs(
             app.connection, app.config, active_seed_paper_ids=collection_context.active_seed_paper_ids

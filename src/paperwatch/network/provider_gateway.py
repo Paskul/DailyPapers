@@ -1,26 +1,26 @@
-"""ProviderGateway: the collector's only door to the internet (plan part 3).
+"""ProviderGateway: the collector's only door to the internet.
 
 It offers a handful of FIXED operations; callers never supply a URL, host, or free-text query:
 
     search(topic_query_id, cursor)          an approved catalog query (paperwatch.public_query_catalog)
-    poll_category_feed(arxiv_category)      arXiv's announcement feed of a category some topic approved (part 5)
+    poll_category_feed(arxiv_category)      arXiv's announcement feed of a category some topic approved
     get_work(provider_id)                   metadata of a work already known from a source record
-    get_works(openalex_provider_ids)        metadata of up to 100 cited works, each a stored citation edge (part 8)
+    get_works(openalex_provider_ids)        metadata of up to 100 cited works, each a stored citation edge
     get_text(known_edition_id)              the text of one catalogued edition, saved to the source cache
-    list_seed_items(collection_key, start)  items of an approved Zotero collection (plan part 4)
+    list_seed_items(collection_key, start)  items of an approved Zotero collection
 
 For every operation, code:
   1. re-checks the id against source records at dispatch (known alias / citation edge / catalog entry / approved
      collection), so a stale or invented id from a queue never reaches a provider. An identifier known ONLY from the
-     private seed library is refused unless collector.allow_lookup_by_seed_identifier is set (plan part 4);
+     private seed library is refused unless collector.allow_lookup_by_seed_identifier is set;
   2. constructs the request (provider_requests.py) and checks it against the read-only provider rules;
   3. refuses while the provider is paused after an outage, and reserves one request from its budget and spacing;
   4. attaches that provider's credential only for its own host, sends one bounded hop (secure_fetcher.py), and
      follows a redirect only to an allowed host, dropping credentials on any host change;
   5. logs every hop, with credentials redacted, to `outbound_requests`.
 Network calls happen outside write transactions; each budget reservation and log row is its own short write.
-Response parsing belongs to the source modules: Zotero JSON in paperwatch.seeds (part 4), Atom and OpenAlex JSON in
-paperwatch.sources (part 5). A conditional request (Zotero's If-Modified-Since-Version, the feed's If-None-Match) may
+Response parsing belongs to the source modules: Zotero JSON in paperwatch.seeds, Atom and OpenAlex JSON in
+paperwatch.sources. A conditional request (Zotero's If-Modified-Since-Version, the feed's If-None-Match) may
 come back as `was_not_modified`.
 """
 
@@ -245,8 +245,8 @@ class ProviderGateway:
 
     def _is_known_source_identifier(self, identifier: NormalizedIdentifier) -> bool:
         """Known = a provider supplied it (a citation edge or a paper found by a public route), it was found in the
-        bibliography of a paper the collector downloaded and awaits confirmation by exactly this lookup (plan part
-        8), or it is a seed's identifier and the operator explicitly allowed seed lookups (looking it up discloses
+        bibliography of a paper the collector downloaded and awaits confirmation by exactly this lookup,
+        or it is a seed's identifier and the operator explicitly allowed seed lookups (looking it up discloses
         interest in it). An identifier that by definition names a known work (arXiv's own DataCite DOI of a
         catalogued arXiv paper) counts as that work."""
         version_free_identifier = identifier.without_version()

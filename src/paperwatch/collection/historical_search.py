@@ -1,4 +1,4 @@
-"""The finite historical search of each topic (plan part 5: "Older papers").
+"""The finite historical search of each topic ("Older papers").
 
 On first use, or after a MATERIAL change, each topic gets one historical search plan (checkpoint
 `history-plan:<topic id>:<hash>`) with a candidate budget of `historical_candidates_per_topic`. Material means the
@@ -8,7 +8,7 @@ material, because nothing that is sent changes.
 Which queries
   * keyword topics: each public phrase, on arXiv and on OpenAlex;
   * seeds-only topics (no phrases): each arXiv category (category-and-date queries); the results are ranked against
-    the seeds locally in part 6.
+    the seeds locally during screening.
 
 Which publication dates: recency-weighted windows (recency_schedule.py)
 The plan cuts the time from its creation date back to `historical_earliest_year` into equal-mass windows of an

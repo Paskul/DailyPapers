@@ -8,7 +8,7 @@ Job life cycle: queued -> running -> done, with delayed retries (back to queued)
   * Leases are short; a worker renews its lease while a long call runs (paperwatch.lease_keeper), so a crashed
     worker's job is reclaimable within one lease period instead of after the slowest possible call.
   * A service outage releases the job without charging an attempt; a paper-specific failure charges one.
-Claim order (plan part 6, paperwatch.dispatch_order): the effective priority class first (a new release whose fresh
+Claim order (paperwatch.dispatch_order): the effective priority class first (a new release whose fresh
 window has ended counts as class 2), then the two within-class order values (higher first), then queue age. Each
 claim is one bounded job, so a higher-priority arrival runs right after the current job.
 """
@@ -30,7 +30,7 @@ from paperwatch.errors import DatabaseError, PaperwatchError
 from paperwatch.identifiers import JOB_ID_PREFIX, new_internal_id
 
 REVIEW_PAPER_JOB_KIND = "review_paper"  # classes 0-3: a reading of one paper
-COMPARE_REVIEWS_JOB_KIND = "compare_reviews"  # class 4: queued from part 8; the worker gains its handler then
+COMPARE_REVIEWS_JOB_KIND = "compare_reviews"  # class 4: a comparison of two completed reviews
 
 __all__ = ["JobDispatchOrder", "JobPriorityClass"]  # re-exported: callers import the classes from here
 

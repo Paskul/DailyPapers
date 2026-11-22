@@ -1,4 +1,4 @@
-"""The daily budget of new metadata candidates (plan part 5: start with 500 per day, current releases first).
+"""The daily budget of new metadata candidates (start with 500 per day, current releases first).
 
 A candidate is a paper the catalog did not know before, found by an arXiv or OpenAlex route (seeds and fixtures do not
 count). The count is derived from the catalog itself (papers.origin_route and papers.discovered_at for the current

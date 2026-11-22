@@ -1,6 +1,6 @@
 """Which reviewed papers get their references followed, and how far each paper is from a screened paper.
 
-Hop depth (plan part 8: "start with two citation hops"):
+Hop depth ("start with two citation hops"):
     0   a paper promoted by screening (or directly by the operator)
     n   a paper read because the research role chose it from the references of a hop n-1 paper
 A paper's depth is the smallest depth under which it was admitted. References of a paper at depth max_citation_hops

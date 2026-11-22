@@ -91,7 +91,7 @@ class PaperwatchHome:
         self.replace_in_config('"http://127.0.0.1:8080/v1"', f'"http://127.0.0.1:{find_unused_local_port()}/v1"')
 
     def make_todays_report_publishable_early(self) -> str:
-        """Plan part 9 publishes a date only after its cutoff, or early (`--early`) for today's date. A subprocess
+        """`report` publishes a date only after its cutoff, or early (`--early`) for today's date. A subprocess
         test cannot move the clock, so pick a report timezone in which today's 23:59 cutoff is still at least an
         hour ahead, and a floor of 0 (the fake model's ratings stay below 65). Returns today's date there."""
         utc_moment = datetime.now(UTC)

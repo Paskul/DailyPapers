@@ -1,1 +1,1 @@
-"""Plan part 10 maintenance: backups and restore checks."""
+"""Maintenance: backups and restore checks."""

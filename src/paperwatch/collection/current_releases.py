@@ -1,4 +1,4 @@
-"""Current releases: arXiv category feeds, missed-release recovery, and recent OpenAlex windows (plan part 5).
+"""Current releases: arXiv category feeds, missed-release recovery, and recent OpenAlex windows.
 
 arXiv category feeds (checkpoint `arxiv-feed:<category>`)
   * Every approved category is polled once per run with If-None-Match, so an unchanged feed costs one 304.

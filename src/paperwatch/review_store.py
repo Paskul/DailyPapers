@@ -2,9 +2,9 @@
 
 A review row is the immutable reading (what was read, by which model and prompt, with which coverage, and the
 reading record: sections read and not read, why coverage is partial, parser recovery). The passages it cites are
-copied into review_evidence_passages, so the evidence survives when the source cache is pruned (plan part 10).
+copied into review_evidence_passages, so the evidence survives when the source cache is pruned.
 Topic assessments live in their own table, keyed by review, topic, and the topic-profile hash, so a changed question
-or seed set can get a new assessment while the reading itself is reused (plan part 2).
+or seed set can get a new assessment while the reading itself is reused.
 Call the write helpers inside the job's lease-checked finish transaction.
 """
 
@@ -167,8 +167,8 @@ def load_latest_topic_assessments(
 ) -> list[TopicAssessment]:
     """The newest assessment per topic for one review, ordered by topic id (deterministic rendering).
 
-    `assessed_no_later_than` (a stored UTC timestamp) ignores assessments made after a report's cutoff (plan
-    part 9), so a frozen report selection never depends on later re-assessments."""
+    `assessed_no_later_than` (a stored UTC timestamp) ignores assessments made after a report's cutoff,
+    so a frozen report selection never depends on later re-assessments."""
     latest_allowed_time = assessed_no_later_than or "9999"
     assessment_rows = connection.execute(
         """SELECT * FROM review_topic_assessments AS assessment

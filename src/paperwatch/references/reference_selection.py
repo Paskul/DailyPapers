@@ -1,4 +1,4 @@
-"""From fetched references to class-3 readings (plan part 8).
+"""From fetched references to class-3 readings.
 
     collector  queue_reference_selection_jobs: one `select_references` job per reviewed parent whose references were
                fetched and which has at least one candidate. Also admit_waiting_reference_selections, so choices the
@@ -268,7 +268,7 @@ def only_offered_choices(
     """(selections, gaps) whose ids the host itself offered in this job, each id at most once.
 
     The role's own check (roles/research.py) already rejects any other id before this point. This repeats it where
-    the choice is persisted (plan part 10, defence in depth): even if validation were skipped or changed, a model
+    the choice is persisted (defence in depth): even if validation were skipped or changed, a model
     answer can only ever name a catalog paper the parent cites, or an unused branch of an approved search plan."""
     offered_candidate_ids = {candidate.paper_id for candidate in prepared.candidates}
     offered_branch_ids = {branch.branch_id for branch in prepared.branches}

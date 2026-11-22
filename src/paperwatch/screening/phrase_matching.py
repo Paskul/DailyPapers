@@ -6,7 +6,7 @@ exact words in order. Matching is deliberately simple and documented:
     ("Multi-Robot" matches "multi robot");
   * a word longer than three letters loses one trailing "s" (not "ss"), so "monitors" matches "monitor";
   * a phrase matches when its words occur consecutively in the text.
-The signal is the fraction of the topic's phrases that match (plan part 6). A topic without phrases has no phrase
+The signal is the fraction of the topic's phrases that match. A topic without phrases has no phrase
 signal; the scoring formula then leaves it out instead of counting it as zero.
 """
 

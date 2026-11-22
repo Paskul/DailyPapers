@@ -1,4 +1,4 @@
-"""Writer role (plan part 9): explain the day's findings from the frozen, completed reviews.
+"""Writer role: explain the day's findings from the frozen, completed reviews.
 
 "Give the writer the frozen reviews and existing comparisons. Ask it for one short overview of the findings and a
 grounded explanation of what to read first. Require review and passage IDs for its claims. The renderer supplies

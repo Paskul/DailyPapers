@@ -1,4 +1,4 @@
-"""The approved public query catalog: the ONLY search terms the collector may send to providers (plan part 3).
+"""The approved public query catalog: the ONLY search terms the collector may send to providers.
 
 Built deterministically from topics.toml. Each entry has a stable id, for example
     team-safety:arxiv:keywords:3f9a1c0b7d     -> arXiv search for the phrase "multi-robot runtime assurance"
@@ -6,8 +6,8 @@ Built deterministically from topics.toml. Each entry has a stable id, for exampl
     team-safety:arxiv:category:cs.RO          -> the arXiv category cs.RO
 A provider search is requested by catalog id only (`ProviderGateway.search(query_id, cursor)`). The private question,
 private notes, Zotero collection names, and model text therefore can never become an outbound query. The research
-role (part 8) may suggest another search only by naming one of these ids. Changing a phrase changes its id, which
-part 5 treats as a new search.
+role may suggest another search only by naming one of these ids. Changing a phrase changes its id, which the
+collector treats as a new search.
 """
 
 from __future__ import annotations

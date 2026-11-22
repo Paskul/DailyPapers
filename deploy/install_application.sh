@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install paperwatch read-only under /opt/paperwatch (plan part 3). Run with sudo from anywhere in the repository.
+# Install paperwatch read-only under /opt/paperwatch. Run with sudo from anywhere in the repository.
 #
 # Usage: sudo env "PATH=$PATH" deploy/install_application.sh
 #

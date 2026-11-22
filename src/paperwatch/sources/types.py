@@ -6,13 +6,13 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import NamedTuple, Protocol
 
-# How an arXiv announcement presented an edition (plan part 5: "new, cross-listed, or revised").
+# How an arXiv announcement presented an edition ("new, cross-listed, or revised").
 ANNOUNCEMENT_KIND_NEW = "new"
 ANNOUNCEMENT_KIND_CROSS_LIST = "cross_list"
 ANNOUNCEMENT_KIND_REVISION = "revision"
 ANNOUNCEMENT_KINDS = (ANNOUNCEMENT_KIND_NEW, ANNOUNCEMENT_KIND_CROSS_LIST, ANNOUNCEMENT_KIND_REVISION)
 
-# A provider's report that a work should no longer be recommended (plan part 5).
+# A provider's report that a work should no longer be recommended.
 WITHDRAWAL_NOTICE_WITHDRAWN = "withdrawn"  # arXiv: the authors withdrew the paper
 WITHDRAWAL_NOTICE_RETRACTED = "retracted"  # OpenAlex: the publisher retracted the work
 WITHDRAWAL_NOTICES = (WITHDRAWAL_NOTICE_WITHDRAWN, WITHDRAWAL_NOTICE_RETRACTED)
@@ -64,7 +64,7 @@ class PaperSource(Protocol):
 
 @dataclass(frozen=True)
 class ParsedSearchPage:
-    """One parsed page of any provider's search results, plus what is needed to continue paging (plan part 5)."""
+    """One parsed page of any provider's search results, plus what is needed to continue paging."""
 
     records: list[CollectedPaperRecord]
     raw_entry_count: int  # entries the provider returned, including skipped ones

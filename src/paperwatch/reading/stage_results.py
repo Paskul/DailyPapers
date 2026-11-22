@@ -1,4 +1,4 @@
-"""Saved results of the steps of one reading, so a timeout or crash does not restart a long paper (plan part 7).
+"""Saved results of the steps of one reading, so a timeout or crash does not restart a long paper.
 
 A reading is several model calls: one per reading section ("section:003"), then the evidence synthesis
 ("synthesis"). Each validated result is saved as soon as it exists, in its own short transaction, keyed by

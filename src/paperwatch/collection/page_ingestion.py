@@ -1,4 +1,4 @@
-"""Store one page of collected records and its checkpoint(s) in ONE write transaction (plan parts 2 and 5).
+"""Store one page of collected records and its checkpoint(s) in ONE write transaction.
 
 So a crash, a kill, or a failure mid-search leaves either the page AND its cursor, or neither: the next run resumes
 at the first page that was not stored, and no page is skipped. Records are normalized before the transaction; a
@@ -9,7 +9,7 @@ historical budget). Records of papers already in the catalog are always stored: 
 revisions, and cost no candidate budget. When the limit stops a page part-way, the caller keeps the page's cursor, so
 the page is fetched again later and its remaining new papers are admitted then.
 
-Ingestion never decides relevance: a new paper waits for the screening stage of part 6 (paperwatch.screening). Only a
+Ingestion never decides relevance: a new paper waits for the screening stage (paperwatch.screening). Only a
 paper screening already promoted gets a reading queued here, when this page brings it new text.
 """
 

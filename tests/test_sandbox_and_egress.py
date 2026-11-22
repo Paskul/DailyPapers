@@ -1,4 +1,4 @@
-"""Plan part 3: the per-process egress guard, the sandboxed extractor (including a separate parser timeout), the
+"""The per-process egress guard, the sandboxed extractor (including a separate parser timeout), the
 worker's dispatch-time recheck, stricter topic validation, and `paperwatch access-check`.
 
 The real-Podman test runs only when podman is installed and PAPERWATCH_TEST_EXTRACTOR_IMAGE names a built image.

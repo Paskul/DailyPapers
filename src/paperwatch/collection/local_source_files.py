@@ -1,4 +1,4 @@
-"""Find a full-text file the user placed in the local sources folder (plan part 5: "a local permitted file").
+"""Find a full-text file the user placed in the local sources folder ("a local permitted file").
 
 The folder (`collection.local_sources_dir`, default <home>/local_sources) holds PDFs or JATS/TEI XML named by the
 work's identifier, so no download is needed:

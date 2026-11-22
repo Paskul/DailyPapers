@@ -1,4 +1,4 @@
-"""Score every candidate for every topic, cheaply, on the CPU (plan part 6).
+"""Score every candidate for every topic, cheaply, on the CPU.
 
 A CANDIDATE is a catalog paper that screening has not promoted and that has no job yet, excluding the user's active
 seeds (comparison anchors, never recommendations) and withdrawn or retracted works. It is scored on the text of the
@@ -291,7 +291,7 @@ def _store_topic_scores(
 
 
 def load_topic_score_components(connection: sqlite3.Connection, paper_id: str) -> list[sqlite3.Row]:
-    """Every stored topic score of one paper, highest raw score first (for notes and part 7's matched seeds)."""
+    """Every stored topic score of one paper, highest raw score first (for notes and the reviewer's matched seeds)."""
     return connection.execute(
         """SELECT * FROM candidate_topic_scores WHERE paper_id = ?
            ORDER BY unnormalized_score DESC, topic_id""",

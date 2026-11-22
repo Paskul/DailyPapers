@@ -1,6 +1,6 @@
 """The paper catalog: one canonical paper per work, its trusted identifiers, its editions, and how it was found.
 
-Identity rules (plan part 2):
+Identity rules:
   * Every identifier is normalized first (paperwatch.scholarly_identifiers). An alias (scheme, value) maps to
     exactly one paper (PRIMARY KEY), so the same work found by two routes lands on one paper.
   * A record joins an existing paper ONLY through an identifier: its own id, or a link its provider states
@@ -15,12 +15,12 @@ Identity rules (plan part 2):
 First publication, latest revision, and local discovery time are stored independently. A coarse first-publication
 date ("2018-06") may later be sharpened by a finer one that agrees with it ("2018-06-15"), never contradicted.
 Each discovery route also keeps what it reported (announcement kind, publication date), and a provider's withdrawal
-or retraction notice is recorded in paper_withdrawals (plan part 5).
+or retraction notice is recorded in paper_withdrawals.
 
 Two entry points:
   * record_collected_paper(connection, record): one record in its own transaction (fixtures, seeds).
   * prepare_catalog_record(record) outside any transaction, then record_prepared_paper_in_transaction(...) inside
-    the caller's transaction, so a whole search page and its checkpoint commit together (plan part 5).
+    the caller's transaction, so a whole search page and its checkpoint commit together.
 """
 
 from __future__ import annotations
@@ -415,7 +415,7 @@ def _advance_paper_from_new_sighting(
 def _record_withdrawal_notice(
     connection: sqlite3.Connection, paper_id: str, collected_record: CollectedPaperRecord, now_timestamp: str
 ) -> None:
-    """Keep the FIRST report of a withdrawal or retraction; later sightings never erase it (plan part 5)."""
+    """Keep the FIRST report of a withdrawal or retraction; later sightings never erase it."""
     evidence_text = (collected_record.withdrawal_evidence or "")[:MAXIMUM_WITHDRAWAL_EVIDENCE_CHARACTERS] or None
     connection.execute(
         """INSERT OR IGNORE INTO paper_withdrawals (paper_id, notice_kind, reported_by_route, evidence, detected_at)

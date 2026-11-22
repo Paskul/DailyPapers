@@ -1,4 +1,4 @@
-"""Plan part 1 check: run the recorded fixture through the CLI in a temporary directory, then repeat it with the
+"""End-to-end CLI check: run the recorded fixture through the CLI in a temporary directory, then repeat it with the
 model endpoint unavailable. The CLI must report which component failed and preserve the input."""
 
 from __future__ import annotations

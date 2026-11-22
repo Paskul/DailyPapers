@@ -1,4 +1,4 @@
-"""Plan part 4: the research profile from Zotero, CSL JSON, topics, or both.
+"""The research profile from Zotero, CSL JSON, topics, or both.
 
 Check from the plan: run all three input modes (keywords alone, seeds alone, both), including a missing Zotero key and
 a title-only seed. Inspect the recorded outgoing query parameters: only approved public terms, categories, and
@@ -247,7 +247,7 @@ def test_three_input_modes_send_only_approved_terms_and_permitted_ids(app, capsy
     assert "Topic seeds-only: seeds; 3 active seed(s)" in printed
     assert "Topic keywords-only: keywords; 0 active seed(s)" in printed
 
-    # Now run every search the profiles approve, as part 5 will, and inspect everything that left the machine.
+    # Now run every search the profiles approve, as `collect` does, and inspect everything that left the machine.
     search_transport_requests: list[httpx.Request] = []
 
     def answer_search(request: httpx.Request) -> httpx.Response:

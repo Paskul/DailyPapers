@@ -20,7 +20,7 @@ from paperwatch.seeds.seed_items import build_seed_id
 def load_selected_review(
     connection: sqlite3.Connection, review_id: str, *, rank: int = 0, assessed_no_later_than: str | None = None
 ) -> SelectedReview:
-    """`assessed_no_later_than` (a report's cutoff) ignores topic re-assessments made after it (plan part 9)."""
+    """`assessed_no_later_than` (a report's cutoff) ignores topic re-assessments made after it."""
     review_row = connection.execute("SELECT * FROM reviews WHERE review_id = ?", (review_id,)).fetchone()
     topic_assessments = load_latest_topic_assessments(
         connection, review_id, assessed_no_later_than=assessed_no_later_than

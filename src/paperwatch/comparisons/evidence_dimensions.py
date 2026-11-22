@@ -1,6 +1,6 @@
 """Which evidence dimensions two reviews share, decided by plain word overlap (no model call, no embedding).
 
-Plan part 8: queue a comparison when two reviews "have comparable assumptions, guarantees, or evaluation settings".
+Queue a comparison when two reviews "have comparable assumptions, guarantees, or evaluation settings".
 For each dimension the content words of both reviews are compared:
     assumptions          the supported assumption statements
     guarantees           the authors' result claims (what is shown or guaranteed)
@@ -138,7 +138,7 @@ def _supported_statement(statement: Any) -> str:
 
 
 def evidence_dimension_words(review_content: dict[str, Any]) -> dict[str, set[str]]:
-    """Content words per dimension of one validated part-7 review (a legacy review yields empty sets)."""
+    """Content words per dimension of one validated evidence review (a legacy review yields empty sets)."""
     results = [finding for finding in review_content.get("results", []) if isinstance(finding, dict)]
     return {
         DIMENSION_ASSUMPTIONS: content_words(

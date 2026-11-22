@@ -1,4 +1,4 @@
-"""Comparisons of two completed reviews that address the same question (plan part 8).
+"""Comparisons of two completed reviews that address the same question.
 
     evidence_dimensions.py  which evidence dimensions two reviews share (assumptions, guarantees, setting)
     comparison_queue.py     queue at most one comparison per new review: its closest comparable neighbour on a

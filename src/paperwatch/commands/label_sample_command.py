@@ -1,4 +1,4 @@
-"""`paperwatch label-sample OUTPUT.csv [--size 40] [--seed N]` (plan part 10, ranking quality): write a fixed,
+"""`paperwatch label-sample OUTPUT.csv [--size 40] [--seed N]` (ranking quality): write a fixed,
 shuffled sample of screened candidates WITHOUT scores for the owner to mark "would read" and why. Read-only on the
 database; never overwrites an existing file."""
 

@@ -1,8 +1,8 @@
-"""What each topic is screened against, built from the research profile of part 4.
+"""What each topic is screened against, built from the research profile (paperwatch.research_profile).
 
 Per topic:
     question text   the private question; for a keyword topic without one, its approved phrases joined; a seeds-only
-                    topic has none (the question signal is omitted, plan part 6). Stays on this machine.
+                    topic has none (the question signal is omitted). Stays on this machine.
     seeds           the topic's active seeds, embedded from title + abstract (title only for a title-only seed)
     phrases         the topic's approved public phrases, for the lexical signal
     fingerprint     a hash of everything above plus the scoring settings and the embedder identity. It is stored

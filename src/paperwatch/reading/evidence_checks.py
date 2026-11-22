@@ -1,4 +1,4 @@
-"""Host-side evidence checks for the reviewer roles (plan part 7). Run before any review is committed.
+"""Host-side evidence checks for the reviewer roles. Run before any review is committed.
 
 Every rule returns readable problems (an empty list means the answer passes):
   * a cited passage id must be one of the passages the model was given (ids outside the packet are rejected);

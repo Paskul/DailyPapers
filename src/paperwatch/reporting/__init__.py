@@ -1,4 +1,4 @@
-"""Plan part 9: one coherent daily Markdown report.
+"""One coherent daily Markdown report.
 
     report_schedule      the scheduled cutoff per reporting date, which date is due, early publication
     report_selection     eligible reviews: floor, seeds and withdrawals excluded, updates, labels, order

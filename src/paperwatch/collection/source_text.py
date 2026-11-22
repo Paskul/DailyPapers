@@ -1,6 +1,6 @@
-"""Acquire full text for papers queued for review, then extract it in the sandbox (plan part 5: "Source text").
+"""Acquire full text for papers queued for review, then extract it in the sandbox ("Source text").
 
-Shortlisted work = papers with a queued review job, i.e. those screening promoted (plan part 6). For each, in
+Shortlisted work = papers with a queued review job, i.e. those screening promoted. For each, in
 queue order (priority class, then queue age), the first route that works wins:
   1. local file: a PDF/XML the user placed in the local sources folder (local_source_files.py). Free; no network.
   2. a VERSIONED arXiv PDF through arXiv's programmatic host (export.arxiv.org), for an arXiv edition.
@@ -14,8 +14,8 @@ or a used-up request budget is temporary: nothing is recorded, and the next run 
 Extraction runs the pinned extractor in rootless Podman (paperwatch.sandboxed_extractor) on the CACHED copy and
 stores the text next to it (state/cache/sources/<edition id>/<source hash>.txt). Without a configured image the row
 says `not_configured`, and extraction happens on the first run after the image is set. After a successful extraction
-the text's normalized fingerprint is stored and a promoted paper's queued reading switches to the full text (plan
-part 7 turns the text into passages); the worker never downloads anything itself.
+the text's normalized fingerprint is stored and a promoted paper's queued reading switches to the full text (the
+reading turns the text into passages); the worker never downloads anything itself.
 """
 
 from __future__ import annotations
@@ -296,7 +296,7 @@ def _extract_pending_texts(context: CollectionContext, run_counts: SourceTextRun
 
 
 def _switch_reading_to_full_text(context: CollectionContext, paper_id: str) -> bool:
-    """Queue the full-text reading of a promoted paper (its queued abstract reading is retired). Plan part 2: newly
+    """Queue the full-text reading of a promoted paper (its queued abstract reading is retired): newly
     available full text is a new input. Returns True if a job was added."""
     with write_transaction(context.connection):
         return queue_new_reading_for_promoted_paper_in_transaction(

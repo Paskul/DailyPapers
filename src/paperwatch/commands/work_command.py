@@ -6,9 +6,9 @@ After a successful commit the handler's file output (the permanent reading or co
 write fails, `report` restores the note from the saved review or comparison.
 
 Job kinds:
-    review_paper       read one paper (plan part 7); its commit also queues its comparison (plan part 8)
-    select_references  the research role chooses which cited works of a reviewed paper to read (plan part 8)
-    compare_reviews    the comparison role compares two saved reviews on the same question (plan part 8)
+    review_paper       read one paper; its commit also queues its comparison
+    select_references  the research role chooses which cited works of a reviewed paper to read
+    compare_reviews    the comparison role compares two saved reviews on the same question
 Only a review_paper job changes its paper's status; the other kinds have no paper of their own.
 While the handler runs, a JobLeaseKeeper thread renews the job's short lease, so a crashed worker's job is
 reclaimable quickly while a live worker keeps its job however long the model takes.
@@ -143,7 +143,7 @@ class WorkCycleReport:
 
 
 def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHandlerResult:
-    """Read one paper (plan part 7): rebuild its packet from the saved edition, run the evidence-backed reading,
+    """Read one paper: rebuild its packet from the saved edition, run the evidence-backed reading,
     and commit the review, its cited passages, and its topic assessments together with `job done`."""
     paper_id = claimed_job.required_paper_id()
     reading_job_input = ReadingJobInput.from_payload(claimed_job.input_payload)
@@ -175,7 +175,7 @@ def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHand
             )
         )
         set_paper_status(connection, paper_id, "complete")
-        # Plan part 8: compare the new review with its closest comparable neighbour (within the daily limit).
+        # Compare the new review with its closest comparable neighbour (within the daily limit).
         queue_comparison_for_review(connection, app.config, committed_review_ids[0], utc_now())
 
     def write_permanent_note() -> None:
@@ -246,7 +246,7 @@ def _fall_back_from_unusable_text(
 
 
 def load_edition_checked_against_catalog(app: AppContext, claimed_job: ClaimedJob, edition_id: str) -> sqlite3.Row:
-    """Re-check a queued id against the source records at dispatch (plan part 3): the edition must still exist and
+    """Re-check a queued id against the source records at dispatch: the edition must still exist and
     belong to the job's paper. A mismatch is never "repaired" by reading something else."""
     try:
         edition_row = load_edition_row(app.connection, edition_id)
@@ -263,7 +263,7 @@ def load_edition_checked_against_catalog(app: AppContext, claimed_job: ClaimedJo
 
 
 def handle_select_references_job(app: AppContext, claimed_job: ClaimedJob) -> JobHandlerResult:
-    """Plan part 8: the research role chooses up to three cited works the parent's argument depends on (and maybe one
+    """The research role chooses up to three cited works the parent's argument depends on (and maybe one
     gap search); the host admits the choices as class-3 readings within the daily limit."""
     job_input = ReferenceSelectionJobInput.from_payload(claimed_job.input_payload)
     active_seed_paper_ids = load_active_seed_library_paper_ids(app.connection, app.config)
@@ -309,7 +309,7 @@ def handle_select_references_job(app: AppContext, claimed_job: ClaimedJob) -> Jo
 
 
 def handle_compare_reviews_job(app: AppContext, claimed_job: ClaimedJob) -> JobHandlerResult:
-    """Plan part 8: compare two saved reviews on the same question; store the comparison once, then write its note."""
+    """Compare two saved reviews on the same question; store the comparison once, then write its note."""
     prepared = prepare_comparison(
         app.connection, app.config, ComparisonJobInput.from_payload(claimed_job.input_payload)
     )

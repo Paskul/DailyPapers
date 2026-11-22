@@ -1,4 +1,4 @@
-"""Recency-weighted time windows for the historical search (plan part 5, owner decision 2026-11-19).
+"""Recency-weighted time windows for the historical search (owner decision 2026-11-19).
 
 The goal: spend the topic's historical candidate budget so that the density of candidates per publication year
 DECAYS EXPONENTIALLY with age, down to an absolute floor year (default 1940), while every era keeps a guaranteed

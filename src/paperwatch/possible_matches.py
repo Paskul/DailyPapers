@@ -1,7 +1,7 @@
 """Flag records that LOOK like the same work but share no identifier. Flag only; never merge.
 
-Plan part 2: "Treat similar titles and author names as possible matches. Do not silently merge papers on that
-evidence alone." A flagged pair is stored once (sorted ids) in paper_possible_matches with its evidence, for the
+Similar titles and author names make a possible match; papers are never merged on that evidence alone.
+A flagged pair is stored once (sorted ids) in paper_possible_matches with its evidence, for the
 operator (or a later trusted identifier link) to resolve. Call these helpers inside the catalog's write transaction.
 """
 

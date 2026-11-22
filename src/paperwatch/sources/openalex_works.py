@@ -1,4 +1,4 @@
-"""Parse OpenAlex works JSON (api.openalex.org/works) into CollectedPaperRecords (plan part 5).
+"""Parse OpenAlex works JSON (api.openalex.org/works) into CollectedPaperRecords.
 
 Fields used (the request selects only these, see provider_requests.OPENALEX_SELECTED_FIELDS):
     id, display_name/title, authorships[].author.display_name, abstract_inverted_index, publication_date,
@@ -7,7 +7,7 @@ Identifier links: OpenAlex groups the versions of one work (preprint, journal ar
 as locations. The work's DOI and its arXiv location (an arxiv.org/abs/... landing page, or arXiv's DataCite DOI
 10.48550/arxiv.<id>) are clear identifier links stated by the provider, so the catalog may merge on them. Other
 locations' DOIs (e.g. another preprint server) are not used for merging.
-A single work (GET /works/<id>, plan part 8) also carries `referenced_works`: the OpenAlex ids of the works it cites.
+A single work (GET /works/<id>) also carries `referenced_works`: the OpenAlex ids of the works it cites.
 Dates: publication_date is a day; without it, publication_year is kept as a year. `is_retracted` is recorded as a
 retraction notice. Notices, errata, and similar non-papers are skipped.
 """

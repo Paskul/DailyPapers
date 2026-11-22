@@ -1,7 +1,7 @@
 """`paperwatch reread PAPER_ID [--reason TEXT]`: an explicit operator request for a fresh reading of one paper.
 
 The reread gets its own generation id, so it is a new logical job and produces a separate review; the earlier
-review stays untouched. This is the only way to read unchanged text again (plan part 2).
+review stays untouched. This is the only way to read unchanged text again.
 """
 
 from __future__ import annotations

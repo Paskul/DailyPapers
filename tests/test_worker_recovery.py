@@ -1,4 +1,4 @@
-"""Plan part 2 check: import one paper by two routes; kill a worker after claim and again after commit; start two
+"""Crash safety: import one paper by two routes; kill a worker after claim and again after commit; start two
 workers on the same fixture. Require one canonical paper, one accepted review for that input, and no stale worker
 overwriting the result.
 
@@ -101,7 +101,7 @@ def test_worker_killed_after_claim_is_reclaimed_and_completes_once(initialized_h
 
 
 def test_worker_killed_right_after_commit_leaves_exactly_one_review(tmp_path, monkeypatch):
-    from test_step2_identity_and_readings import BASE_RECORD, collect, load_test_app
+    from test_paper_identity_and_readings import BASE_RECORD, collect, load_test_app
 
     fake_model = FakeModelClient()
     app = load_test_app(tmp_path, fake_model)
@@ -128,7 +128,7 @@ def test_worker_killed_right_after_commit_leaves_exactly_one_review(tmp_path, mo
 
 
 def test_stale_worker_cannot_overwrite_the_reclaiming_workers_result(tmp_path):
-    from test_step2_identity_and_readings import BASE_RECORD, collect, load_test_app
+    from test_paper_identity_and_readings import BASE_RECORD, collect, load_test_app
 
     stale_app = load_test_app(tmp_path, FakeModelClient())
     collect(stale_app, BASE_RECORD)
@@ -167,7 +167,7 @@ def test_two_concurrent_workers_share_the_queue_without_duplicate_reviews(initia
 
     assert len(initialized_home.query("SELECT * FROM reviews")) == 3
     assert len(initialized_home.query("SELECT DISTINCT paper_id FROM reviews")) == 3
-    # Reading jobs only: part 8 may also queue comparisons of the finished reviews.
+    # Reading jobs only: comparisons of the finished reviews may be queued too.
     assert [
         row["attempts"] for row in initialized_home.query("SELECT attempts FROM jobs WHERE kind = 'review_paper'")
     ] == [1, 1, 1]

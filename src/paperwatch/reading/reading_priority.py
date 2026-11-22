@@ -1,4 +1,4 @@
-"""The reading-priority rubric of plan part 7. The model proposes an integer rating 0-4 per dimension and explains
+"""The reading-priority rubric. The model proposes an integer rating 0-4 per dimension and explains
 it; this module validates nothing about the model and computes the score itself.
 
 | Dimension          | Weight | 0 / 2 / 4                                                                          |

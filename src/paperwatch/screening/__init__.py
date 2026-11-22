@@ -1,4 +1,4 @@
-"""Plan part 6: score every candidate cheaply on the CPU, then promote the best ones to a reading, in order.
+"""Score every candidate cheaply on the CPU, then promote the best ones to a reading, in order.
 
 Modules, in the order one `collect` run uses them (screening_stage.py drives them):
     embedding_model_registry  the pinned sentence-embedding models: files, sha256 hashes, pooling, query instruction

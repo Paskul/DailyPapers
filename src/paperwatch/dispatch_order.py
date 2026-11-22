@@ -1,4 +1,4 @@
-"""Where a job sits in the worker's queue: its priority class and its order within that class (plan part 6).
+"""Where a job sits in the worker's queue: its priority class and its order within that class.
 
 | Class | Job                                              | Order within the class (higher first, then queue age) |
 | ----- | ------------------------------------------------ | ------------------------------------------------------ |
@@ -15,7 +15,7 @@ no longer jumps ahead of older work.
 
 A paper that qualifies for several classes is assigned to the highest applicable one (lowest number):
 paperwatch.jobs.upgrade_queued_job_dispatch_order_if_higher moves a queued job up, never down.
-Part 8 queues class 3 and 4 work: a research-role selection over a reviewed paper's references (class 3, ahead of
+References and comparisons queue class 3 and 4 work: a research-role selection over a reviewed paper's references (class 3, ahead of
 the reference readings it may create, because it is one short call that decides them), the chosen reference
 readings (class 3), and comparisons of two reviews (class 4).
 """
@@ -37,7 +37,7 @@ from paperwatch.publication_dates import (
 
 
 class JobPriorityClass(IntEnum):
-    """Worker priority classes from plan part 6 (lower number = claimed first)."""
+    """Worker priority classes (lower number = claimed first)."""
 
     OPERATOR_REQUEST = 0  # explicit operator reread; not in the plan's table, so it goes ahead of every class
     NEW_RELEASE = 1
@@ -110,7 +110,7 @@ def dispatch_order_for_older_paper(topic_score: float) -> JobDispatchOrder:
 def dispatch_order_for_important_reference(
     importance_to_parent_argument: float, topic_score: float
 ) -> JobDispatchOrder:
-    """Part 8: a reference chosen from a completed review. `importance_to_parent_argument` is the research role's
+    """A reference chosen from a completed review. `importance_to_parent_argument` is the research role's
     validated rating (higher = the parent's argument depends on it more)."""
     return JobDispatchOrder(
         JobPriorityClass.IMPORTANT_REFERENCE,
@@ -124,7 +124,7 @@ REFERENCE_SELECTION_ORDER_ABOVE_ALL_IMPORTANCE_RATINGS = 5.0
 
 
 def dispatch_order_for_reference_selection(parent_topic_score: float) -> JobDispatchOrder:
-    """Part 8: the research role chooses which references of a completed review to read. Parents with a higher
+    """The research role chooses which references of a completed review to read. Parents with a higher
     reading priority (0-1) are decided first."""
     return JobDispatchOrder(
         JobPriorityClass.IMPORTANT_REFERENCE,
@@ -134,7 +134,7 @@ def dispatch_order_for_reference_selection(parent_topic_score: float) -> JobDisp
 
 
 def dispatch_order_for_comparison(shared_evidence_dimension_count: int) -> JobDispatchOrder:
-    """Part 8: a comparison of two completed reviews; pairs sharing more evidence dimensions go first."""
+    """A comparison of two completed reviews; pairs sharing more evidence dimensions go first."""
     return JobDispatchOrder(
         JobPriorityClass.COMPARISON, within_class_order_primary=float(shared_evidence_dimension_count)
     )

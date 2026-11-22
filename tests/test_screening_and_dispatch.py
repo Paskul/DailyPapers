@@ -1,4 +1,4 @@
-"""Plan part 6: score every candidate cheaply and dispatch work in order.
+"""Score every candidate cheaply and dispatch work in order.
 
 Check from the plan: feed in 500 candidates with known nearest seeds, inspect scores and promotions; put all four job
 types in the queue and verify claim order; drain the queue and check that the model request count stays constant.
@@ -178,7 +178,7 @@ def candidate_record(
         first_published_date=first_published_date,
         latest_revision_date=None,
         source_version=None,
-        discovery_route="fixture:step6",
+        discovery_route="fixture:screening-test",
     )
 
 
@@ -696,7 +696,7 @@ def test_new_text_of_a_promoted_paper_is_queued_without_spending_a_slot(tmp_path
             first_published_date="2024-01-02",
             latest_revision_date=None,
             source_version=None,
-            discovery_route="fixture:step6",
+            discovery_route="fixture:screening-test",
         )
 
     app = build_in_process_app(tmp_path / "home")

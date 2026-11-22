@@ -1,5 +1,5 @@
-"""`paperwatch capacity [--hours 24]`: measured model time per role and per review, and the daily capacity estimate
-(plan part 10). Read-only; makes no model call and no network request."""
+"""`paperwatch capacity [--hours 24]`: measured model time per role and per review, and the daily capacity estimate.
+Read-only; makes no model call and no network request."""
 
 from __future__ import annotations
 

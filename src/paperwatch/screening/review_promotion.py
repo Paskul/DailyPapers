@@ -1,6 +1,6 @@
-"""Promote screened candidates to a reading, within the daily limit, in their priority class (plan part 6).
+"""Promote screened candidates to a reading, within the daily limit, in their priority class.
 
-Replaces the part-5 placeholder that queued every collected paper. Now:
+How papers reach the reading queue:
   * page ingestion only catalogs records; a NEW paper waits for screening (status `waiting_input`);
   * after collection, screening scores every candidate. `promote_screened_candidates` ranks each raw signal within
     its topic's pool of still-unpromoted candidates (signal_normalization.py), so signals and topics share one scale,
@@ -46,7 +46,7 @@ from paperwatch.screening.screening_score import SignalWeights, combine_screenin
 from paperwatch.screening.signal_normalization import compute_pool_normalized_scores
 
 PROMOTION_REASON_DIRECT = "direct"  # an operator tool or a test queued the paper without screening
-# Part 8: the research role chose the paper from a reviewed paper's references. Not counted against the daily
+# The research role chose the paper from a reviewed paper's references. Not counted against the daily
 # promotion limit (it has its own: references.daily_reference_readings); its readings stay in class 3.
 PROMOTION_REASON_REFERENCE = "reference"
 SCREENING_PROMOTION_REASONS = tuple(reason.value for reason in PromotionReason)
@@ -220,7 +220,7 @@ def queue_new_reading_for_promoted_paper_in_transaction(
 def dispatch_order_of_reference_reading(
     connection: sqlite3.Connection, paper_id: str, topic_score: float | None
 ) -> JobDispatchOrder:
-    """Class 3, by the highest importance any admitting parent gave the paper, then its topic score (plan part 6)."""
+    """Class 3, by the highest importance any admitting parent gave the paper, then its topic score."""
     importance_row = connection.execute(
         """SELECT MAX(importance) AS importance FROM reference_selections
            WHERE cited_paper_id = ? AND admission_status = 'admitted'""",
@@ -240,7 +240,7 @@ def record_reference_promotion_and_queue_reading(
     hold_until: datetime | None,
     moment: datetime,
 ) -> bool:
-    """Part 8: record a 'reference' promotion and queue the reading in class 3, held until `collect` has tried to
+    """Record a 'reference' promotion and queue the reading in class 3, held until `collect` has tried to
     fetch the full text (owner decision 2026-11-20). Call inside a write transaction. Returns True if queued."""
     _record_promotion(
         connection,

@@ -1,4 +1,4 @@
-"""Comparison role (plan part 8): compare two completed reviews that address the same research question, without
+"""Comparison role: compare two completed reviews that address the same research question, without
 reading either paper again. "Ask what agrees, what differs, and what the evidence permits the reader to conclude.
 Cite both review IDs and their passages."
 
@@ -7,7 +7,7 @@ evidence is exactly what the reviews were checked against). Every piece of evide
 excerpt}; the host checks that the review id is one of the two, the passage belongs to that review, the excerpt is a
 contiguous quotation of it, and every number in a statement occurs in a passage the statement cites.
 
-Incompatible conditions (plan part 8 check): results obtained under different assumptions, guarantees, or settings
+Incompatible conditions: results obtained under different assumptions, guarantees, or settings
 must not be ranked without explaining the difference. A `result_ranking` is therefore rejected unless the conditions
 are marked comparable, or at least one condition difference is stated with evidence AND the ranking carries a
 conditions_caveat. Example: a theorem for exact robot positions and a simulation with noisy positions may address the

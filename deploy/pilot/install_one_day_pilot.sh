@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the ONE-DAY pilot of plan part 10: collections today and tonight, the worker until the report cutoff, one
+# Start the ONE-DAY pilot: collections today and tonight, the worker until the report cutoff, one
 # report tomorrow morning, then the pilot removes itself. Nothing of it can run a second time (see
 # src/paperwatch/deployment/one_day_pilot.py for the layers that guarantee this). Run with sudo, keeping PATH so uv
 # is found:

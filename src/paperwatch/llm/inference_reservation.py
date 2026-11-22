@@ -1,4 +1,4 @@
-"""Reserve the next inference slot for a holder that must not wait behind the queue (plan part 9: the report).
+"""Reserve the next inference slot for a holder that must not wait behind the queue (the report).
 
 The inference lock (inference_lock.py) gives one request at a time, but it is not fair: a worker that releases the
 lock after one call could take it again for its next call before the report writer's retry notices. So the report

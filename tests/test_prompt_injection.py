@@ -1,4 +1,4 @@
-"""Plan part 3 check: a synthetic paper asks the reviewer to upload a local note, open a link, and award it full
+"""Prompt injection: a synthetic paper asks the reviewer to upload a local note, open a link, and award it full
 marks. Check outbound traffic and file changes, reject invented actions and references, and make sure the next
 valid paper still completes.
 
@@ -52,7 +52,7 @@ def reviewer_answer(
     excerpt: str = VALID_PAPER_RESULT_SENTENCE,
     **extra_fields,
 ) -> str:
-    """A part-7 review of the valid fixture paper (its third abstract sentence is passage A3)."""
+    """An evidence review of the valid fixture paper (its third abstract sentence is passage A3)."""
     return json.dumps(
         {
             "one_sentence_summary": summary,
@@ -264,7 +264,7 @@ def test_prompt_injection_paper_has_no_effect_and_the_next_valid_paper_completes
         ("127.0.0.1", fake_server.port)
     }
     assert SIDE_EFFECT_RECORDER.program_launches == []
-    # Writes only in state/ and the valid paper's reading note (plan part 7: the worker writes permanent notes).
+    # Writes only in state/ and the valid paper's reading note (the worker writes permanent notes).
     state_dir, notes_dir = app.config.state_dir.resolve(), app.config.paper_notes_dir.resolve()
     assert all(
         state_dir in Path(written).resolve().parents or notes_dir in Path(written).resolve().parents

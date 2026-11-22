@@ -1,4 +1,4 @@
-"""Plan part 10: "Redact keys, signed URLs, private queries, and raw paper text from service logs."
+"""Service logs never contain keys, signed URLs, private queries, or raw paper text.
 
 Service logs are the journal lines of the systemd units: everything paperwatch prints or logs. Full details stay in
 the database; the journal gets the redacted line.

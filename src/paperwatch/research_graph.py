@@ -1,4 +1,4 @@
-"""Citation edges and paper comparisons: the uniqueness rules from plan part 2, used by part 8.
+"""Citation edges and paper comparisons, and the rules that keep each one unique.
 
   * A citation edge is directed (citing paper -> cited work) and carries its provenance (which provider or check
     supplied it). The cited work is stored by normalized identifier, so an edge can exist before the cited paper is

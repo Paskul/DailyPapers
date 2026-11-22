@@ -1,11 +1,11 @@
-"""Build the edition-specific packet the reviewer reads (plan part 7), from a ReadingInputIdentity.
+"""Build the edition-specific packet the reviewer reads, from a ReadingInputIdentity.
 
     abstract input        passages A1.. (or T1 for a title-only record), one reading section, coverage abstract_only
     extracted-text input  the cached text file is read and verified against the stored normalized fingerprint, cut
                           into passages P1.., and planned into bounded reading sections (full_text or partial_text)
 
-The worker never downloads anything: the collector stored the text in state/cache/sources/<edition id>/ (plan part
-6, "schedule source acquisition during collection"). If that file is missing or no longer matches its fingerprint,
+The worker never downloads anything: the collector stored the text in state/cache/sources/<edition id>/
+during collection. If that file is missing or no longer matches its fingerprint,
 ExtractedTextUnavailable is raised; the worker then marks the text failed and queues the abstract reading instead.
 """
 

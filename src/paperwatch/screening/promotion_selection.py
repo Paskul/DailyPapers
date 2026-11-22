@@ -1,4 +1,4 @@
-"""Which screened candidates get today's review slots: a pure function of scores and remaining slots (plan part 6).
+"""Which screened candidates get today's review slots: a pure function of scores and remaining slots.
 
 Every topic is active and none is primary (owner decision), so slots are divided across topics BEFORE score decides:
   1. Topic shares. The day's regular slots (daily limit minus the near-cutoff picks) are split evenly across the
@@ -8,7 +8,7 @@ Every topic is active and none is primary (owner decision), so slots are divided
   2. Spare slots. Regular slots a share could not use (too few qualifying candidates, or the remainder of the even
      split) are filled by the best remaining candidates by their best-topic score, again above the minimum.
   3. Near the cutoff. Up to `near_cutoff_slots` more go to the best candidates that were NOT selected, whatever the
-     minimum: they sit just below the cutoff and show what the filter misses (part 10 calibrates with them).
+     minimum: they sit just below the cutoff and show what the filter misses (they calibrate the minimum).
 Ties are broken by paper id, so the same inputs always give the same selection.
 """
 

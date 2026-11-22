@@ -1,4 +1,4 @@
-"""Comparison anchors for a topic assessment (plan part 7): "for each matched topic, attach the closest seed records
+"""Comparison anchors for a topic assessment: "for each matched topic, attach the closest seed records
 and available saved reviews". Their ids (seed ids, review ids) are distinct from the candidate's passage ids.
 
     seed anchors    the topic's active seeds closest to this paper: first the closest seed ids screening stored
@@ -177,7 +177,7 @@ def rank_comparable_reviews(
     topic_id: str,
 ) -> list[sqlite3.Row]:
     """The latest reviews of OTHER papers whose newest assessment for `topic_id` rated question_fit >= 2, nearest to
-    `paper_vector` first (by cached embeddings), then by topic score. Also used by part-8 comparisons."""
+    `paper_vector` first (by cached embeddings), then by topic score. Also used to pick comparisons."""
     candidate_rows = connection.execute(
         """SELECT review.review_id, review.review_json, paper.title, paper.first_published_date,
                   edition.title AS edition_title, edition.abstract AS edition_abstract,
@@ -232,7 +232,7 @@ def _normalized_topic_score(assessment_row: sqlite3.Row) -> float:
 def _review_anchor(review_row: sqlite3.Row) -> dict[str, Any]:
     review_content = json.loads(review_row["review_json"])
     method = review_content.get("method", "")
-    if isinstance(method, dict):  # part-7 review; a legacy review stores plain strings
+    if isinstance(method, dict):  # an evidence review; a legacy review stores plain strings
         method = method.get("statement", "")
     results = [finding["claim"] for finding in review_content.get("results", [])] or list(
         review_content.get("authors_main_claims", [])

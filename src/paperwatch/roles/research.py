@@ -1,4 +1,4 @@
-"""Research role (plan part 8): choose the cited works a reviewed paper's argument depends on, and optionally one
+"""Research role: choose the cited works a reviewed paper's argument depends on, and optionally one
 unused approved search branch that would fill a gap the review exposes.
 
 It never composes a request. It answers with ids from its input only: candidate ids (catalog papers the parent

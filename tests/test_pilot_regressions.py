@@ -19,8 +19,8 @@ import time
 
 import pytest
 from conftest import RECORDED_PAPER_FIXTURE, PaperwatchHome, build_in_process_app
+from test_evidence_reading import add_paper
 from test_model_contract import REVIEWER_ROLE_INPUT, VALID_REVIEWER_ANSWER, _load_app_with_one_queued_paper
-from test_step7_evidence_reading import add_paper
 
 from paperwatch.collection.candidate_budget import CandidateAdmissionBudget, water_fill
 from paperwatch.collection.topic_word_ranking import rank_records_by_topic_words

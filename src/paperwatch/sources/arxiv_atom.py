@@ -1,4 +1,4 @@
-"""Parse arXiv's two Atom formats into CollectedPaperRecords (plan part 5).
+"""Parse arXiv's two Atom formats into CollectedPaperRecords.
 
 1. The category announcement feed (rss.arxiv.org/atom/<category>): one entry per announced item, with
    <arxiv:announce_type> "new" | "cross" | "replace" | "replace-cross" and the announcement date in <published>.

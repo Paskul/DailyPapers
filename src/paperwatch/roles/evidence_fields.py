@@ -1,4 +1,4 @@
-"""Schema fragments and host checks shared by the evidence-reading roles (section reader and reviewer, plan part 7).
+"""Schema fragments and host checks shared by the evidence-reading roles (section reader and reviewer).
 
 Field shapes (every object rejects unknown fields):
     finding     {claim, conditions, passage_id, excerpt}    an AUTHORS' claim, quoted from one passage

@@ -1,4 +1,4 @@
-"""Where the parent paper's text cites a given work: the "citation contexts" the research role reads (plan part 8).
+"""Where the parent paper's text cites a given work: the "citation contexts" the research role reads.
 
 OpenAlex supplies reference ids but no contexts, so they come from the parent's own extracted text:
   1. find the cited work's bibliography entry: a bibliography passage holding one of the work's identifiers, else the

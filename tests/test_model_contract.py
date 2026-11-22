@@ -121,7 +121,7 @@ def _load_app_with_one_queued_paper(home_dir: Path, model_client) -> AppContext:
 
 
 def test_invalid_model_output_gets_one_repair_then_fails_the_job_with_its_reason(tmp_path):
-    """Plan part 7: one bounded repair attempt; on repeated failure retain a reason and move on."""
+    """One bounded repair attempt; on repeated failure retain a reason and move on."""
     fake_model = FakeModelClient({"reviewer": json.dumps({"wrong": "shape"})})
     app = _load_app_with_one_queued_paper(tmp_path, fake_model)
 

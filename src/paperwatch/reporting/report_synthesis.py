@@ -1,4 +1,4 @@
-"""The report's synthesis: the writer role at the cutoff, or the labelled fallback (plan part 9).
+"""The report's synthesis: the writer role at the cutoff, or the labelled fallback.
 
 "Reserve the next inference slot for the report at cutoff. Set a short deadline for obtaining the slot and
 validating the synthesis. If Qwen is unavailable or misses the deadline, render the same selections from saved
@@ -170,7 +170,7 @@ def _describe_paper_without_passages(selected_review: SelectedReview, entry: Rep
         ),
         "",
     )
-    if not selected_review.is_evidence_review:  # reviews saved before part 7: a simpler layout, no passages
+    if not selected_review.is_evidence_review:  # legacy reviews: a simpler layout, no passages
         return {
             "review_id": entry.review_id,
             "entry_label": entry.entry_label,

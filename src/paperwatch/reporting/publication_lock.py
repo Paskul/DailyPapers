@@ -1,4 +1,4 @@
-"""One publication process at a time (plan part 9: "Enforce one date key and one publication process per date").
+"""One publication process at a time ("Enforce one date key and one publication process per date").
 
 The date key is the reports table's primary key. The process limit is an exclusive, non-blocking flock on
 state/report-publication.lock: a second `report` (two timer launches, or an operator run during the timer's) refuses

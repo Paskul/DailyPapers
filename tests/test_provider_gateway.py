@@ -1,4 +1,4 @@
-"""Plan part 3: the collector's fixed operations, the read-only provider rules, and the secure HTTPS hop.
+"""The collector's fixed operations, the read-only provider rules, and the secure HTTPS hop.
 
 No real network: every test injects httpx.MockTransport and a fake DNS resolver. The checks cover the approved query
 catalog, request rebuilding from validated ids only, blocked and allowed redirects (credentials dropped on a host

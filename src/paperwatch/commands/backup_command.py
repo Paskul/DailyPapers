@@ -1,4 +1,4 @@
-"""`paperwatch backup DESTINATION` / `paperwatch backup --check-restore BACKUP_DIR` (plan part 10).
+"""`paperwatch backup DESTINATION` / `paperwatch backup --check-restore BACKUP_DIR`.
 
 The first writes a consistent backup of the home (SQLite online backup API, settings, extracted text, output) into
 DESTINATION/paperwatch-backup-<UTC time>/. The second checks a backup that was copied to a fresh directory: it loads

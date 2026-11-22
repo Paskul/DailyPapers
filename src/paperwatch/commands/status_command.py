@@ -159,7 +159,7 @@ def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
 
 
 def _print_queue_by_priority_class(app: AppContext) -> None:
-    """Plan part 6: count and age per worker class, so sustained new arrivals delaying older work are visible."""
+    """Count and age per worker class, so sustained new arrivals delaying older work are visible."""
     now = utc_now()
     class_summaries = summarize_queued_jobs_by_class(app.connection, now)
     if not class_summaries:
@@ -180,7 +180,7 @@ def _describe_age(age: timedelta) -> str:
 
 
 def _print_screening_summary(app: AppContext) -> None:
-    """Plan part 6: the embedding model, how many candidates are scored, and today's promotions per reason and topic."""
+    """The embedding model, how many candidates are scored, and today's promotions per reason and topic."""
     connection, screening_settings = app.connection, app.config.screening
     model_description = screening_settings.embedding_backend
     if screening_settings.embedding_backend == EMBEDDING_BACKEND_HASHING:
@@ -227,7 +227,7 @@ def _print_screening_summary(app: AppContext) -> None:
 
 
 def _print_research_profile(app: AppContext) -> None:
-    """Topics with their input mode and anything missing, then each seed source's sync state (plan part 4)."""
+    """Topics with their input mode and anything missing, then each seed source's sync state."""
     if not app.config.topics:
         print(
             f"Topics: none configured. Add [[topics]] entries to {app.config.home_dir / TOPICS_FILE_NAME}: a "
@@ -285,7 +285,7 @@ def _print_provider_access_summary(app: AppContext) -> None:
             "Outbound requests today: "
             + ", ".join(f"{row['provider_name']} {row['outcome']} {row['request_count']}" for row in outbound_rows)
         )
-    # Plan part 10: the last successful fetch per source, so a silent outage is visible even on a quiet day.
+    # The last successful fetch per source, so a silent outage is visible even on a quiet day.
     for last_fetch_row in app.connection.execute(
         """SELECT provider_name, MAX(started_at) AS last_success,
                       (SELECT MAX(failure.started_at) FROM outbound_requests AS failure
@@ -319,7 +319,7 @@ def _print_provider_access_summary(app: AppContext) -> None:
 
 
 def _print_reading_progress(app: AppContext) -> None:
-    """Plan part 7: saved steps of readings not finished yet (they resume, not restart) and the reading priorities."""
+    """Saved steps of readings not finished yet (they resume, not restart) and the reading priorities."""
     saved_stage_count = count_saved_stages_of_unfinished_readings(app.connection)
     if saved_stage_count:
         print(f"  {saved_stage_count} saved reading step(s) of unfinished readings (a retry resumes from them)")
@@ -336,7 +336,7 @@ def _print_reading_progress(app: AppContext) -> None:
 
 
 def _print_references_and_comparisons(app: AppContext) -> None:
-    """Plan part 8: reference fetches, the research role's choices and today's admissions against the limit, gap
+    """Reference fetches, the research role's choices and today's admissions against the limit, gap
     searches, unresolved bibliography references, and comparisons with today's jobs against their limit."""
     connection, moment = app.connection, utc_now()
     fetch_counts = {
@@ -389,7 +389,7 @@ def _print_references_and_comparisons(app: AppContext) -> None:
 
 
 def _print_collection_coverage(app: AppContext) -> None:
-    """Plan part 5: what each search covered, where it stopped and why, open gaps, budgets, and source text."""
+    """What each search covered, where it stopped and why, open gaps, budgets, and source text."""
     connection, collection_settings = app.connection, app.config.collection
     candidate_budget = CandidateAdmissionBudget.load_for_day(connection, collection_settings, utc_now())
     print(f"Collection: {candidate_budget.describe()}")

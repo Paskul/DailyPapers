@@ -1,4 +1,4 @@
-# paperwatch text extractor (plan part 3). Built by deploy/build_extractor_image.sh with BASE_IMAGE pinned by digest.
+# paperwatch text extractor. Built by deploy/build_extractor_image.sh with BASE_IMAGE pinned by digest.
 #
 # Run ONLY through paperwatch/sandboxed_extractor.py, which adds --network=none, --read-only, --cap-drop=all,
 # no-new-privileges, memory/CPU/process/tmpfs limits, a timeout, and exactly one read-only input at /input/source.

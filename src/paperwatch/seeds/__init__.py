@@ -1,4 +1,4 @@
-"""Seed papers from the user's own library (plan part 4).
+"""Seed papers from the user's own library.
 
 A seed is one bibliographic record from a topic's Zotero collection (live Web API) or CSL JSON export (offline file).
 Both sources have equal standing: same record type, same tables, same role in relevance.

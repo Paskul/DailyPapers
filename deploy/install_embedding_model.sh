@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the pinned sentence-embedding model used for screening (plan part 6) into a paperwatch home.
+# Install the pinned sentence-embedding model used for screening into a paperwatch home.
 # Run as YOURSELF, not with sudo: the download happens as you, and sudo is used only to place the files when the home
 # belongs to root (the service-account layout).
 #

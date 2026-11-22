@@ -1,6 +1,6 @@
-"""Topic assessor role: rate one completed reading against every research topic with the plan-part-7 rubric.
+"""Topic assessor role: rate one completed reading against every research topic with the reading-priority rubric.
 
-Separate from the reading on purpose (plan part 2): a changed question or seed set needs a new assessment, never a
+Separate from the reading on purpose: a changed question or seed set needs a new assessment, never a
 new reading. The model proposes an integer rating 0-4 per rubric dimension and explains each; the host validates the
 ids and computes the 0-100 reading priority (paperwatch.reading.reading_priority).
 

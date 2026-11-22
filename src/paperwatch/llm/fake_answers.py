@@ -109,7 +109,7 @@ def build_fake_topic_assessments(role_input: Mapping[str, Any]) -> dict[str, Any
 
 
 def build_fake_reference_selection(role_input: Mapping[str, Any]) -> dict[str, Any]:
-    """Part 8 research role: choose the first candidate as a method source (citing its first context), no gap."""
+    """Research role: choose the first candidate as a method source (citing its first context), no gap."""
     selections = []
     for candidate in role_input["candidates"][:1]:
         selections.append(
@@ -125,7 +125,7 @@ def build_fake_reference_selection(role_input: Mapping[str, Any]) -> dict[str, A
 
 
 def build_fake_comparison(role_input: Mapping[str, Any]) -> dict[str, Any]:
-    """Part 8 comparison role: quote the first passage of each review; conditions only partially comparable, so it
+    """Comparison role: quote the first passage of each review; conditions only partially comparable, so it
     names a condition difference and ranks nothing."""
     evidence = []
     for review in role_input["reviews"]:
@@ -158,7 +158,7 @@ def build_fake_comparison(role_input: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def build_fake_report_synthesis(role_input: Mapping[str, Any]) -> dict[str, Any]:
-    """Part 9 writer: quote the first passage of each paper; one connected finding over the first two papers."""
+    """Report writer: quote the first passage of each paper; one connected finding over the first two papers."""
     evidence_by_review_id: dict[str, list[dict[str, str]]] = {}
     for paper in role_input["papers"]:
         quotable = _first_quotable_passage(paper["passages"])

@@ -1,4 +1,4 @@
-"""Collector stage: fetch the outgoing references of reviewed papers (plan part 8). Runs inside `collect` only.
+"""Collector stage: fetch the outgoing references of reviewed papers. Runs inside `collect` only.
 
 For each reviewed paper worth following (citation_hops.find_reviewed_papers_to_follow), at most
 references.reference_fetches_per_run per run:

@@ -110,7 +110,7 @@ def seed_sources_of_all_topics(topics: Iterable[TopicDefinition]) -> tuple[SeedS
 
 @dataclass(frozen=True)
 class StoredSeed:
-    """An active seed as later parts use it: matching text for screening (part 6), anchors for review (part 7)."""
+    """An active seed as the pipeline uses it: matching text for screening, anchors for reviews."""
 
     seed_id: str
     seed_source: str

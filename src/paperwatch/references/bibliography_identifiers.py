@@ -1,7 +1,7 @@
 """Identifiers in a paper's own bibliography, and the check that a provider record matches the cited entry.
 
-Plan part 8: "When the graph is incomplete, accept an identifier found in the paper's bibliography only after a
-provider record confirms the match." The bibliography text is untrusted, so:
+When the citation graph is incomplete, an identifier found in the paper's bibliography is accepted only after a
+provider record confirms the match. The bibliography text is untrusted, so:
   * only well-formed DOIs and arXiv ids are taken (normalized; anything else is ignored);
   * an identifier becomes a citation edge only if the provider's record for it has a title whose words appear in
     the bibliography entry around the identifier (TITLE_WORD_SHARE_FOR_MATCH of them);

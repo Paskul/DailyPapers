@@ -1,14 +1,14 @@
 """Render the permanent per-paper reading note from validated, saved data (the daily report: daily_report.py).
 
 Notes live at output/papers/<paper_id>/<review_id>.md: a stable, revision-specific file named only by internal ids.
-A part-7 note shows (plan part 7: "render the permanent note from validated fields and trusted metadata"):
+An evidence review's note shows ("render the permanent note from validated fields and trusted metadata"):
   * trusted metadata: source links built from identifiers, version, coverage, review date, model and prompt;
   * the review's fields, each with evidence pointers (passage id, page, section) and the quoted excerpt;
   * the scoring breakdown per topic: each rating with its weight and explanation, "comparison unavailable" when the
     value dimension was omitted, the evidence cap for abstract-only reviews, matched seeds, compared reviews;
   * the reading coverage: sections read and not read, why the coverage is partial, table/equation recovery;
   * the cited passages themselves, from the saved review (not the cache), so the note can always be rebuilt.
-All paper and model text is escaped (rendering/markdown_safety.py). Reviews saved before part 7 keep their older,
+All paper and model text is escaped (rendering/markdown_safety.py). Reviews saved by earlier versions keep their older,
 simpler layout.
 """
 
@@ -63,7 +63,7 @@ class SelectedReview:
 
     @property
     def is_evidence_review(self) -> bool:
-        """Part-7 review (statements with passage ids), as opposed to the provisional step-1 layout."""
+        """An evidence review (statements with passage ids), as opposed to the legacy abstract-only layout."""
         return isinstance(self.review_content.get("method"), dict)
 
     @property
@@ -323,7 +323,7 @@ def _shorten(text: str) -> str:
 
 
 def _render_legacy_paper_note(selected_review: SelectedReview) -> str:
-    """Notes of reviews saved by the provisional step-1 reviewer (before part 7)."""
+    """Notes of reviews saved by the earlier abstract-only reviewer (legacy layout)."""
     review_content = selected_review.review_content
     note_lines = [
         f"# {escape_untrusted_inline_text(selected_review.paper_row['title'])}",
@@ -397,5 +397,5 @@ def _render_source_links(paper_aliases: list[tuple[str, str]]) -> str:
 
 
 def render_source_links(paper_aliases: list[tuple[str, str]]) -> str:
-    """Links built from trusted identifiers only (shared with the comparison notes of part 8)."""
+    """Links built from trusted identifiers only (shared with the comparison notes)."""
     return _render_source_links(paper_aliases)

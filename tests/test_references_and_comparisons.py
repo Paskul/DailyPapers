@@ -1,4 +1,4 @@
-"""Plan part 8 check: use a citation graph in which two papers cite each other and share a third reference. Verify
+"""References and comparisons: use a citation graph in which two papers cite each other and share a third reference. Verify
 that the search ends, the third paper has one review, and the same comparison is written once. Reject a comparison
 that ranks two results obtained under incompatible conditions without explaining the difference.
 
@@ -17,7 +17,7 @@ from datetime import date, timedelta
 import pytest
 from conftest import build_in_process_app
 from fake_paper_providers import PUBLIC_ADDRESS, FakeOpenAlexWork, FakePaperProviders
-from test_step7_evidence_reading import install_extracted_text
+from test_evidence_reading import install_extracted_text
 
 from paperwatch.catalog import record_collected_paper
 from paperwatch.clock import utc_now

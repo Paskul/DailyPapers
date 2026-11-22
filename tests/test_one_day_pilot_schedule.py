@@ -1,4 +1,4 @@
-"""Plan part 10, owner decision 2026-11-20: the pilot's timers run ONCE (one day), never again.
+"""The one-day pilot: its timers run ONCE (one day), never again (owner decision 2026-11-20).
 
 The rendered unit files are checked for every layer that makes a second run impossible: absolute calendar times
 only (and systemd itself computes no second elapse), no relative or boot triggers, no service enabled for boot, an

@@ -1,4 +1,4 @@
-"""Run one evidence-backed reading of a packet (plan part 7). Called by the worker OUTSIDE any write transaction;
+"""Run one evidence-backed reading of a packet. Called by the worker OUTSIDE any write transaction;
 the worker commits the result together with `job done` under its lease check.
 
     1. section notes   only when the plan has several reading sections: one section_reader call per section, each
