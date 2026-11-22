@@ -17,6 +17,7 @@ passage ids and the reading plan, is built from this identity by paperwatch.read
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from dataclasses import dataclass
 
 from paperwatch.text_normalization import collapse_whitespace
@@ -75,7 +76,7 @@ def build_review_input_key(key_prefix: str, source_text_sha256: str, reading_gen
 
 
 def build_abstract_reading_identity(
-    edition_row, reading_generation: str = INITIAL_READING_GENERATION
+    edition_row: sqlite3.Row, reading_generation: str = INITIAL_READING_GENERATION
 ) -> ReadingInputIdentity:
     """The abstract (or title-only) input of one edition. Edition rows are immutable text snapshots."""
     return ReadingInputIdentity(

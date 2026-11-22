@@ -92,7 +92,7 @@ def collect(app, providers: FakePaperProviders) -> None:
 
 
 def drain(app) -> list[WorkCycleOutcome]:
-    outcomes = []
+    outcomes: list[WorkCycleOutcome] = []
     while (outcome := run_single_work_cycle(app, probe_paused_model_now=True).outcome) != WorkCycleOutcome.NO_JOB_DUE:
         assert outcome == WorkCycleOutcome.JOB_COMPLETED, outcome
         outcomes.append(outcome)

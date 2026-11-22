@@ -86,7 +86,8 @@ def _convert_zotero_item(raw_item: Any) -> tuple[SeedItem | None, str]:
         return None, SKIP_REASON_NO_TITLE
 
     item_version = raw_item.get("version", item_data.get("version"))
-    item_metadata = raw_item.get("meta") if isinstance(raw_item.get("meta"), dict) else {}
+    raw_metadata = raw_item.get("meta")
+    item_metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
     # The Extra field is free text; only its structured "DOI: ..." / "arXiv: ..." lines are used, nothing else.
     extra_field_text = item_data.get("extra")
     return SeedItem(

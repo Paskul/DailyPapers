@@ -357,6 +357,12 @@ def parse_and_validate_role_output(
             rejected_answer_text=answer_text,
             problems=(readable_violations,),
         )
+    if not isinstance(parsed_answer, dict):  # every role schema requires an object; this keeps it a guarantee
+        raise ModelOutputInvalid(
+            f"role '{role_name}' answer is not a JSON object",
+            rejected_answer_text=answer_text,
+            problems=("not a JSON object",),
+        )
 
     semantic_problems = role_definition.find_semantic_problems(parsed_answer, role_input)
     if semantic_problems:

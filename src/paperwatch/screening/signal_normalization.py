@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from dataclasses import replace
+from typing import Any
 
 from paperwatch.screening.screening_score import ScreeningSignals, SignalWeights, combine_screening_signals
 
@@ -63,7 +64,8 @@ def normalize_topic_signals_within_pool(
             [getattr(signals_by_paper_id[paper_id], field_name) for paper_id in papers_with_signal]
         )
         for paper_id, percentile in zip(papers_with_signal, percentiles):
-            normalized[paper_id] = replace(normalized[paper_id], **{field_name: percentile})
+            signal_update: dict[str, Any] = {field_name: percentile}
+            normalized[paper_id] = replace(normalized[paper_id], **signal_update)
     return normalized
 
 

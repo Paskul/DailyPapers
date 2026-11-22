@@ -70,7 +70,7 @@ def collect(app: AppContext, collected_record: CollectedPaperRecord) -> tuple[st
 
 
 def drain_queue(app: AppContext) -> list[WorkCycleOutcome]:
-    outcomes = []
+    outcomes: list[WorkCycleOutcome] = []
     while (outcome := run_single_work_cycle(app, probe_paused_model_now=False).outcome) != WorkCycleOutcome.NO_JOB_DUE:
         outcomes.append(outcome)
     return outcomes
@@ -259,7 +259,7 @@ def test_changed_text_gets_a_new_reading_and_identical_text_does_not(tmp_path):
     collect(app, BASE_RECORD)
     drain_queue(app)
     whitespace_only_change = replace(
-        BASE_RECORD, provider_paper_id="2411.05555v2", abstract=BASE_RECORD.abstract.replace(" ", "   ")
+        BASE_RECORD, provider_paper_id="2411.05555v2", abstract=str(BASE_RECORD.abstract).replace(" ", "   ")
     )
     assert not collect(app, whitespace_only_change)[1]
 
@@ -267,7 +267,7 @@ def test_changed_text_gets_a_new_reading_and_identical_text_does_not(tmp_path):
         BASE_RECORD,
         provider_paper_id="2411.05555v3",
         latest_revision_date="2026-11-15",
-        abstract=BASE_RECORD.abstract + " Version 3 adds a hardware experiment.",
+        abstract=f"{BASE_RECORD.abstract} Version 3 adds a hardware experiment.",
     )
     assert collect(app, revised_text)[1]
     assert drain_queue(app) == [WorkCycleOutcome.JOB_COMPLETED]

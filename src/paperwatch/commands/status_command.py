@@ -4,6 +4,7 @@ per priority class), screening and today's promotions, model health, provider ac
 from __future__ import annotations
 
 import argparse
+import sqlite3
 from datetime import timedelta
 
 from paperwatch.app_context import AppContext
@@ -120,9 +121,9 @@ def run_status_command(app: AppContext, arguments: argparse.Namespace) -> int:
     _print_references_and_comparisons(app)
 
     model_health = read_service_health_state(connection, MODEL_SERVICE_NAME)
-    if model_health.is_paused_at(utc_now()):
+    if (model_paused_until := model_health.pause_end_at(utc_now())) is not None:
         print(
-            f"Model server: PAUSED until {format_utc_timestamp(model_health.paused_until)} after "
+            f"Model server: PAUSED until {format_utc_timestamp(model_paused_until)} after "
             f"{model_health.consecutive_failures} failure(s); last error: {model_health.last_error}"
         )
     else:
@@ -310,10 +311,10 @@ def _print_provider_access_summary(app: AppContext) -> None:
         (PROVIDER_SERVICE_NAME_PREFIX,),
     ):
         provider_health = read_service_health_state(app.connection, paused_row["service"])
-        if provider_health.is_paused_at(utc_now()):
+        if (provider_paused_until := provider_health.pause_end_at(utc_now())) is not None:
             print(
                 f"Provider {paused_row['service'].removeprefix(PROVIDER_SERVICE_NAME_PREFIX)}: PAUSED until "
-                f"{format_utc_timestamp(provider_health.paused_until)}; last error: {provider_health.last_error}"
+                f"{format_utc_timestamp(provider_paused_until)}; last error: {provider_health.last_error}"
             )
 
 
@@ -481,7 +482,7 @@ def _describe_coverage(checkpoint: SourceCheckpoint) -> str:
     return f"{checkpoint.coverage_status}" + (f" ({checkpoint.stop_reason})" if checkpoint.stop_reason else "")
 
 
-def _print_admitted_by_window(connection, topic_id: str, plan_checkpoint: SourceCheckpoint) -> None:
+def _print_admitted_by_window(connection: sqlite3.Connection, topic_id: str, plan_checkpoint: SourceCheckpoint) -> None:
     """How the topic's historical candidates spread over its recency-weighted windows (newest first)."""
     admitted_by_window = []
     for window in plan_windows(plan_checkpoint):

@@ -56,7 +56,9 @@ def load_seed_titles(connection: sqlite3.Connection, seed_ids: set[str]) -> dict
 
 def paper_note_path(paper_notes_dir: Path, selected_review: SelectedReview) -> Path:
     """output/papers/<paper id>/<review id>.md: internal ids only, never paper text."""
-    return paper_notes_dir / selected_review.paper_row["paper_id"] / f"{selected_review.review_row['review_id']}.md"
+    return (
+        paper_notes_dir / str(selected_review.paper_row["paper_id"]) / f"{selected_review.review_row['review_id']}.md"
+    )
 
 
 def write_paper_note_if_missing(paper_notes_dir: Path, selected_review: SelectedReview) -> bool:

@@ -82,9 +82,11 @@ class ComparisonJobInput:
 
 def count_comparison_jobs_created_today(connection: sqlite3.Connection, moment: datetime) -> int:
     day_start = format_utc_timestamp(moment.replace(hour=0, minute=0, second=0, microsecond=0))
-    return connection.execute(
-        "SELECT COUNT(*) FROM jobs WHERE kind = ? AND created_at >= ?", (COMPARE_REVIEWS_JOB_KIND, day_start)
-    ).fetchone()[0]
+    return int(
+        connection.execute(
+            "SELECT COUNT(*) FROM jobs WHERE kind = ? AND created_at >= ?", (COMPARE_REVIEWS_JOB_KIND, day_start)
+        ).fetchone()[0]
+    )
 
 
 def review_has_comparison_job(connection: sqlite3.Connection, review_id: str) -> bool:

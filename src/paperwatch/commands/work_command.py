@@ -145,9 +145,10 @@ class WorkCycleReport:
 def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHandlerResult:
     """Read one paper (plan part 7): rebuild its packet from the saved edition, run the evidence-backed reading,
     and commit the review, its cited passages, and its topic assessments together with `job done`."""
+    paper_id = claimed_job.required_paper_id()
     reading_job_input = ReadingJobInput.from_payload(claimed_job.input_payload)
     load_edition_checked_against_catalog(app, claimed_job, reading_job_input.edition_id)
-    current_input = select_reading_input(app.connection, claimed_job.paper_id, reading_job_input.reading_generation)
+    current_input = select_reading_input(app.connection, paper_id, reading_job_input.reading_generation)
     if current_input is None or current_input.review_input_key != claimed_job.input_version:
         # Newer text arrived after this job was queued (full text was extracted, or an abstract appeared). Queue
         # the reading of the current input in this job's place; this job ends without a model call.
@@ -155,7 +156,7 @@ def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHand
             app, claimed_job, reading_job_input, "input superseded by newer text; no model call made"
         )
     try:
-        review_packet = build_review_packet(app.connection, app.config, claimed_job.paper_id, current_input)
+        review_packet = build_review_packet(app.connection, app.config, paper_id, current_input)
     except ExtractedTextUnavailable as unavailable_text:
         return _fall_back_from_unusable_text(
             app, claimed_job, reading_job_input, current_input.edition_id, unavailable_text
@@ -168,12 +169,12 @@ def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHand
         committed_review_ids.append(
             insert_completed_reading(
                 connection,
-                paper_id=claimed_job.paper_id,
+                paper_id=paper_id,
                 job_id=claimed_job.job_id,
                 completed_reading=completed_reading,
             )
         )
-        set_paper_status(connection, claimed_job.paper_id, "complete")
+        set_paper_status(connection, paper_id, "complete")
         # Plan part 8: compare the new review with its closest comparable neighbour (within the daily limit).
         queue_comparison_for_review(connection, app.config, committed_review_ids[0], utc_now())
 
@@ -187,7 +188,7 @@ def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHand
     )
     return JobHandlerResult(
         write_review_and_mark_paper_complete,
-        f"review saved for paper {claimed_job.paper_id} ({review_packet.coverage}, "
+        f"review saved for paper {paper_id} ({review_packet.coverage}, "
         f"{len(review_packet.reading_plan.sections_to_read)} reading section(s), best reading priority "
         f"{'not rated' if best_score is None else f'{best_score}/100'})",
         after_commit=write_permanent_note,
@@ -197,12 +198,13 @@ def handle_review_paper_job(app: AppContext, claimed_job: ClaimedJob) -> JobHand
 def _supersede_with_current_input(
     app: AppContext, claimed_job: ClaimedJob, reading_job_input: ReadingJobInput, completion_note: str
 ) -> JobHandlerResult:
+    paper_id = claimed_job.required_paper_id()
     job_row = app.connection.execute("SELECT * FROM jobs WHERE job_id = ?", (claimed_job.job_id,)).fetchone()
 
     def queue_current_input(connection: sqlite3.Connection) -> None:
         enqueue_outcome, _reading_input = enqueue_reading_if_needed(
             connection,
-            claimed_job.paper_id,
+            paper_id,
             dispatch_order=dispatch_order_of_job_row(job_row),
             max_attempts=claimed_job.max_attempts,
             reading_generation=reading_job_input.reading_generation,
@@ -212,10 +214,10 @@ def _supersede_with_current_input(
             LOGGER.info(
                 "superseded job %s: current input of %s is %s",
                 claimed_job.job_id,
-                claimed_job.paper_id,
+                paper_id,
                 enqueue_outcome,
             )
-        refresh_paper_status_from_work(connection, claimed_job.paper_id)
+        refresh_paper_status_from_work(connection, paper_id)
 
     return JobHandlerResult(queue_current_input, completion_note)
 

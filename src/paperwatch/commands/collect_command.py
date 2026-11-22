@@ -38,8 +38,10 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable
+from contextlib import AbstractContextManager
+from pathlib import Path
 
-from paperwatch.activity_log import COMPONENT_COLLECT, prune_old_activity, recorded_activity
+from paperwatch.activity_log import COMPONENT_COLLECT, ActivityHandle, prune_old_activity, recorded_activity
 from paperwatch.app_context import AppContext
 from paperwatch.clock import utc_now
 from paperwatch.collection.collection_context import CollectionContext
@@ -93,11 +95,14 @@ def run_collect_command(
 
 
 def _run_collect_stages(
-    app: AppContext, build_gateway_once: Callable[[], ProviderGateway], fixture_paths: list, run_live_searches: bool
+    app: AppContext,
+    build_gateway_once: Callable[[], ProviderGateway],
+    fixture_paths: list[Path],
+    run_live_searches: bool,
 ) -> int:
     """The stages of one run, each recorded in the activity log (the monitor shows which one is running)."""
 
-    def stage(step_name: str):
+    def stage(step_name: str) -> AbstractContextManager[ActivityHandle]:
         return recorded_activity(app.connection, step_name)
 
     with stage("seeds"):
@@ -182,7 +187,7 @@ def _synchronize_seed_sources(app: AppContext, build_gateway: Callable[[], Provi
         print(f"Seeds: {seed_sync_outcome.describe()}")
 
 
-def _import_recorded_fixtures(collection_context: CollectionContext, fixture_paths: list) -> None:
+def _import_recorded_fixtures(collection_context: CollectionContext, fixture_paths: list[Path]) -> None:
     """A replay: recorded records go through the same catalog, screening, promotion, and queueing as live pages."""
     for fixture_path in fixture_paths:
         paper_source = RecordedFixtureSource(fixture_path)

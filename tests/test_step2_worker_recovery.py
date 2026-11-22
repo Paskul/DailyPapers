@@ -107,7 +107,7 @@ def test_worker_killed_right_after_commit_leaves_exactly_one_review(tmp_path, mo
     app = load_test_app(tmp_path, fake_model)
     collect(app, BASE_RECORD)
 
-    original_finish = work_command.finish_job_with_writes
+    original_finish = finish_job_with_writes  # the defining module's function (work_command imports it)
 
     def finish_then_die(*arguments, **keyword_arguments):
         assert original_finish(*arguments, **keyword_arguments)
@@ -133,6 +133,7 @@ def test_stale_worker_cannot_overwrite_the_reclaiming_workers_result(tmp_path):
     stale_app = load_test_app(tmp_path, FakeModelClient())
     collect(stale_app, BASE_RECORD)
     stale_claim = claim_next_due_job(stale_app.connection, lease_duration_seconds=1)
+    assert stale_claim is not None
     stale_result = handle_review_paper_job(stale_app, stale_claim)  # its "model call" finished, not yet committed
     time.sleep(2.1)  # the stale worker stalled past its lease without renewing
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import re
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
@@ -28,6 +28,10 @@ from paperwatch.screening.embedding_model_registry import (
     PinnedEmbeddingModel,
     look_up_pinned_embedding_model,
 )
+
+if TYPE_CHECKING:
+    import onnxruntime
+    from tokenizers import Tokenizer
 
 EMBEDDING_BACKEND_ONNX = "onnx"
 EMBEDDING_BACKEND_HASHING = "hashing"
@@ -99,7 +103,13 @@ def verify_pinned_model_files(pinned_model: PinnedEmbeddingModel, model_dir: Pat
 
 
 class OnnxSentenceEmbedder:
-    def __init__(self, pinned_model: PinnedEmbeddingModel, inference_session, tokenizer, batch_size: int) -> None:
+    def __init__(
+        self,
+        pinned_model: PinnedEmbeddingModel,
+        inference_session: onnxruntime.InferenceSession,
+        tokenizer: Tokenizer,
+        batch_size: int,
+    ) -> None:
         self.pinned_model = pinned_model
         self.identity = pinned_model.identity
         self.dimensions = pinned_model.dimensions
@@ -203,4 +213,5 @@ class HashingTestEmbedder:
 def normalize_rows(matrix: np.ndarray) -> np.ndarray:
     """L2-normalize each row; an all-zero row (no words) stays zero, so its cosine with anything is 0."""
     row_norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    return np.divide(matrix, row_norms, out=np.zeros_like(matrix), where=row_norms > 0)
+    normalized_matrix: np.ndarray = np.divide(matrix, row_norms, out=np.zeros_like(matrix), where=row_norms > 0)
+    return normalized_matrix

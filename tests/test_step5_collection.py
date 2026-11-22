@@ -54,7 +54,11 @@ from paperwatch.network.provider_gateway import ProviderGateway
 from paperwatch.network.provider_rules import load_provider_access_rules, packaged_provider_rules_path
 from paperwatch.public_query_catalog import build_public_query_catalog
 from paperwatch.publication_dates import ReleaseClass, classify_release, describe_date_precision
-from paperwatch.source_checkpoints import load_source_checkpoint, load_source_checkpoints_with_prefix
+from paperwatch.source_checkpoints import (
+    load_existing_source_checkpoint,
+    load_source_checkpoint,
+    load_source_checkpoints_with_prefix,
+)
 from paperwatch.sources.arxiv_atom import arxiv_id_submission_month, parse_api_search_page
 from paperwatch.sources.openalex_works import parse_works_page
 from paperwatch.sources.types import CollectedPaperRecord
@@ -253,9 +257,16 @@ def test_a_revision_of_a_known_paper_adds_an_edition_and_keeps_the_first_publica
     assert app.connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == review_jobs_before
 
 
+def refuse_provider_gateway() -> ProviderGateway:
+    """For a context that must never reach a provider."""
+    raise AssertionError("this test must not reach the paper providers")
+
+
 def advance_shared_clock(providers: FakePaperProviders, **time_delta) -> None:
     """Move the shared test clock (the providers hold the same clock object)."""
-    providers.current_time.advance(**time_delta)
+    shared_clock = providers.current_time
+    assert isinstance(shared_clock, ControlledClock)
+    shared_clock.advance(**time_delta)
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -270,7 +281,8 @@ def test_a_week_of_downtime_is_recovered_by_a_dated_api_search(app, providers, t
     providers.feeds["cs.RO"] = (date(2026, 11, 9), [FeedItem(before_downtime, "new")])
     collect(app, providers)
     assert (
-        load_source_checkpoint(app.connection, "arxiv-feed:cs.RO").last_completed_interval_end == "2026-11-09T11:00:00Z"
+        load_existing_source_checkpoint(app.connection, "arxiv-feed:cs.RO").last_completed_interval_end
+        == "2026-11-09T11:00:00Z"
     )
 
     missed_papers = [synthetic_paper(f"2611.0020{day}", date(2026, 11, 9 + day)) for day in range(5)]
@@ -315,9 +327,9 @@ def test_a_mid_page_failure_keeps_the_cursor_and_the_next_run_resumes_at_that_pa
     collect(app, providers)
 
     band_key = _first_arxiv_band_key(app)
-    blocked_checkpoint = load_source_checkpoint(app.connection, band_key)
+    blocked_checkpoint = load_existing_source_checkpoint(app.connection, band_key)
     assert blocked_checkpoint.coverage_status == "blocked" and blocked_checkpoint.cursor == "2"
-    assert "503" in blocked_checkpoint.stop_reason
+    assert "503" in (blocked_checkpoint.stop_reason or "")
     assert len(_arxiv_ids_from_route(app, "history:")) == 2  # page one was stored with its cursor
 
     test_clock.advance(hours=1)  # past the provider's outage pause
@@ -330,7 +342,7 @@ def test_a_mid_page_failure_keeps_the_cursor_and_the_next_run_resumes_at_that_pa
     ]
     assert starts_for_band[:3] == ["0", "2", "2"]  # the failed page was retried, not skipped and not restarted
     assert _arxiv_ids_from_route(app, "history:") == {f"2611.{index:05d}" for index in range(1, 7)}
-    assert load_source_checkpoint(app.connection, band_key).coverage_status == "exhausted"
+    assert load_existing_source_checkpoint(app.connection, band_key).coverage_status == "exhausted"
 
 
 def _first_arxiv_band_key(app) -> str:
@@ -510,7 +522,7 @@ def test_the_daily_budget_reserves_capacity_for_current_releases_and_records_the
         providers.feeds["cs.RO"] = (date(2026, 11, 16), [FeedItem(paper, "new") for paper in bigger_feed])
         collect(app, providers)  # the day's last slot goes to the feed; the rest is left to a recovery search
         assert len(_arxiv_ids_from_route(app, "arxiv-feed:")) == 3
-        feed_checkpoint = load_source_checkpoint(app.connection, "arxiv-feed:cs.RO")
+        feed_checkpoint = load_existing_source_checkpoint(app.connection, "arxiv-feed:cs.RO")
         assert feed_checkpoint.coverage_status == "capped" and feed_checkpoint.cursor is None
         [recovery_checkpoint] = load_source_checkpoints_with_prefix(app.connection, "arxiv-recovery:")
         assert recovery_checkpoint.coverage_status in ("active", "capped")
@@ -537,9 +549,9 @@ def test_category_feeds_share_their_limit_fairly_and_a_share_cut_schedules_no_re
         assert len(admitted_broad) == 3 and {"2611.04004", "2611.04005"} <= set(admitted_broad)
         assert _arxiv_ids_from_route(app, "arxiv-feed:cs.RO") == {"2611.04100"}
         assert load_source_checkpoints_with_prefix(app.connection, "arxiv-recovery:") == []
-        broad_checkpoint = load_source_checkpoint(app.connection, "arxiv-feed:cs.AI")
+        broad_checkpoint = load_existing_source_checkpoint(app.connection, "arxiv-feed:cs.AI")
         assert broad_checkpoint.coverage_status == "exhausted" and broad_checkpoint.cursor  # ETag kept
-        assert "fair share of the category feeds reached: 3 new record(s)" in broad_checkpoint.stop_reason
+        assert "fair share of the category feeds reached: 3 new record(s)" in (broad_checkpoint.stop_reason or "")
     finally:
         app.close()
 
@@ -788,7 +800,7 @@ def test_collection_context_counts_todays_candidates_from_the_catalog(app, provi
         [FeedItem(synthetic_paper("2611.09000", date(2026, 11, 13)), "new")],
     )
     collect(app, providers, fixture_paths=None)
-    context = CollectionContext.start(app.connection, app.config, build_gateway=lambda: None)
+    context = CollectionContext.start(app.connection, app.config, build_gateway=refuse_provider_gateway)
     assert context.candidate_budget.admitted_today_by_current_releases == 1
 
 
@@ -807,7 +819,9 @@ def test_without_an_openalex_key_only_first_pages_are_requested_and_nothing_is_p
     openalex_cursors = [request.url.params["cursor"] for request in providers.requests_to("api.openalex.org")]
     assert openalex_cursors and set(openalex_cursors) == {"*"}  # OpenAlex answers 401 to cursor pages without a key
     [recent_checkpoint] = load_source_checkpoints_with_prefix(app.connection, "openalex-recent:")
-    assert recent_checkpoint.coverage_status == "capped" and recent_checkpoint.stop_reason.startswith("first page only")
+    assert recent_checkpoint.coverage_status == "capped" and (recent_checkpoint.stop_reason or "").startswith(
+        "first page only"
+    )
     assert recent_checkpoint.last_completed_interval_end is not None  # the window counts as swept
     assert (
         app.connection.execute(

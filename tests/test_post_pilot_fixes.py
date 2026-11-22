@@ -303,6 +303,7 @@ def test_sigterm_stops_a_real_worker_within_seconds_during_a_long_model_call(ini
     assert exit_code == 0 and time.monotonic() - stop_sent_at < 10
     [job_row] = initialized_home.query("SELECT status, attempts, lease_token FROM jobs")
     assert (job_row["status"], job_row["attempts"], job_row["lease_token"]) == ("queued", 0, None)
+    assert worker.stdout is not None
     assert "back in the queue without using an attempt" in worker.stdout.read()
 
 
@@ -420,7 +421,9 @@ def test_retry_failed_requeues_model_output_failures_only(tmp_path, capsys):
         assert (job_row["status"], job_row["attempts"]) == ("queued", 0)
         assert job_row["last_error"].startswith("requeued by the operator after: [model-output]")
         assert app.connection.execute("SELECT status FROM papers").fetchone()[0] == "queued"
-        app.model_client._canned_final_answers_by_role.pop("reviewer")
+        fake_model_client = app.model_client
+        assert isinstance(fake_model_client, FakeModelClient)
+        fake_model_client._canned_final_answers_by_role.pop("reviewer")
         assert run_single_work_cycle(app, probe_paused_model_now=False).outcome == WorkCycleOutcome.JOB_COMPLETED
     finally:
         app.close()

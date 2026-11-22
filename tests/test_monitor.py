@@ -3,6 +3,7 @@ reads from systemd unit files, and the web server's safeguards."""
 
 from __future__ import annotations
 
+import argparse
 import http.client
 import json
 import os
@@ -38,11 +39,8 @@ from paperwatch.network.egress_guard import EgressBlocked, build_monitor_policy,
 NO_SCHEDULE = ScheduleState(schedule_source="none", moments=())
 
 
-class Arguments:
+class Arguments(argparse.Namespace):
     """The parsed CLI arguments the command functions read."""
-
-    def __init__(self, **values):
-        self.__dict__.update(values)
 
 
 def run_one_full_day(app) -> None:
@@ -343,7 +341,7 @@ def _request(server, method: str, path: str, host: str | None = None) -> http.cl
 def test_server_serves_the_page_and_the_snapshot_with_strict_headers(running_monitor):
     page = _request(running_monitor, "GET", "/")
     assert page.status == 200 and b"/monitor.js" in page.read()
-    assert "script-src 'self'" in page.getheader("Content-Security-Policy")
+    assert "script-src 'self'" in page.getheader("Content-Security-Policy", "")
     assert page.getheader("X-Frame-Options") == "DENY"
     for asset in ("/monitor.js", "/monitor.css"):
         assert _request(running_monitor, "GET", asset).status == 200

@@ -92,7 +92,7 @@ def _start_of_entry_holding(text: str, offset: int) -> int:
     return preceding_labels[-1].end() if preceding_labels else offset
 
 
-def _title_search_pattern(title: str) -> re.Pattern | None:
+def _title_search_pattern(title: str) -> re.Pattern[str] | None:
     title_words = WORD_PATTERN.findall(title)[:TITLE_WORDS_USED_TO_FIND_ENTRY]
     if len(title_words) < 2:
         return None

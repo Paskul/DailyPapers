@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -349,6 +350,7 @@ def test_zotero_sync_reads_bibliographic_items_only_and_records_title_only_seeds
     outcome = synchronize_zotero_collection(app.connection, make_gateway(app, fake_library.transport), ZOTERO_SOURCE)
     assert outcome.result == SeedSyncResult.SYNCED and outcome.detail == "library version 100"
     assert (outcome.active_seed_count, outcome.title_only_seed_count) == (3, 1)
+    assert outcome.skipped_item_counts is not None
     assert sum(outcome.skipped_item_counts.values()) == 3  # the note, the attachment, the trashed item
     assert len(fake_library.sent_requests) == 3  # 6 items in pages of 2
 
@@ -404,6 +406,7 @@ def test_deleted_and_moved_items_leave_the_seed_set_and_return_when_restored(app
     ] + [zotero_item("ITEMNEW7", "Freshly Added Zotero seed", abstract="New abstract.", version=101)]
     fake_library.library_version = 101
     outcome = synchronize_zotero_collection(app.connection, gateway, ZOTERO_SOURCE)
+    assert outcome.changes is not None
     assert (outcome.changes.added, outcome.changes.removed, outcome.active_seed_count) == (1, 2, 2)
     assert {seed.seed_id for seed in load_active_seeds(app.connection, [ZOTERO_SOURCE])} == {
         "zotero:ITEMARX2",
@@ -417,6 +420,7 @@ def test_deleted_and_moved_items_leave_the_seed_set_and_return_when_restored(app
     fake_library.items = standard_collection_items()  # moved back
     fake_library.library_version = 102
     outcome = synchronize_zotero_collection(app.connection, gateway, ZOTERO_SOURCE)
+    assert outcome.changes is not None
     assert outcome.changes.added == 2 and outcome.changes.removed == 1 and outcome.active_seed_count == 3
 
 
@@ -451,6 +455,7 @@ def test_csl_json_import_matches_zotero_semantics(app):
     outcome = import_csl_json_seed_file(app.connection, app.config, CSL_SOURCE)
     assert outcome.result == SeedSyncResult.SYNCED
     assert (outcome.active_seed_count, outcome.title_only_seed_count) == (3, 1)
+    assert outcome.skipped_item_counts is not None
     assert dict(outcome.skipped_item_counts) == {"no title": 1}
     file_key = build_csl_json_file_key("seeds/team_safety_seeds.csl.json")
     seeds = {seed.seed_id: seed for seed in load_active_seeds(app.connection, [CSL_SOURCE])}
@@ -475,6 +480,7 @@ def test_csl_json_import_matches_zotero_semantics(app):
     trimmed_export = json.loads(CSL_SEED_FIXTURE.read_text())[1:]
     seed_file.write_text(json.dumps(trimmed_export))
     trimmed_outcome = import_csl_json_seed_file(app.connection, app.config, CSL_SOURCE)
+    assert trimmed_outcome.changes is not None
     assert (trimmed_outcome.changes.removed, trimmed_outcome.active_seed_count) == (1, 2)
 
 
@@ -491,17 +497,22 @@ def test_invalid_csl_json_file_is_reported_and_keeps_the_cache(app):
 # --------------------------------------------------------------------------------------------------------------------
 
 
+def recording_empty_json_responder(sent_requests: list[httpx.Request]) -> Callable[[httpx.Request], httpx.Response]:
+    """A mock transport handler that records each request and answers an empty JSON object."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        sent_requests.append(request)
+        return httpx.Response(200, headers={"content-type": "application/json"}, stream=httpx.ByteStream(b"{}"))
+
+    return respond
+
+
 def test_looking_up_a_seed_doi_needs_the_explicit_setting(app):
     import_csl_json_seed_file(app.connection, app.config, CSL_SOURCE)
     sent_requests: list[httpx.Request] = []
     gateway = make_gateway(
         app,
-        httpx.MockTransport(
-            lambda request: (
-                sent_requests.append(request)
-                or httpx.Response(200, headers={"content-type": "application/json"}, stream=httpx.ByteStream(b"{}"))
-            )
-        ),
+        httpx.MockTransport(recording_empty_json_responder(sent_requests)),
     )
     with pytest.raises(SourceAccessDenied, match="known only from the private seed library"):
         gateway.get_work("doi:10.5555/synthetic.seed.0001")
@@ -539,12 +550,7 @@ def test_seed_lookup_is_allowed_when_the_operator_opts_in(tmp_path):
         sent_requests: list[httpx.Request] = []
         gateway = make_gateway(
             opted_in_app,
-            httpx.MockTransport(
-                lambda request: (
-                    sent_requests.append(request)
-                    or httpx.Response(200, headers={"content-type": "application/json"}, stream=httpx.ByteStream(b"{}"))
-                )
-            ),
+            httpx.MockTransport(recording_empty_json_responder(sent_requests)),
         )
         gateway.get_work("doi:10.5555/synthetic.seed.0001")
         assert sent_requests[0].url.path == "/works/doi:10.5555/synthetic.seed.0001"

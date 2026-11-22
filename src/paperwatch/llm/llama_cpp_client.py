@@ -149,9 +149,12 @@ class LlamaCppModelClient:
         if response.status_code != 200:
             raise ModelServerUnavailable(f"GET {url} returned HTTP {response.status_code}: {_shorten(response.text)}")
         try:
-            return response.json()
+            decoded_body = response.json()
         except ValueError as decode_error:
             raise ModelServerUnavailable(f"GET {url} did not return JSON") from decode_error
+        if not isinstance(decoded_body, dict):
+            raise ModelServerUnavailable(f"GET {url} did not return a JSON object")
+        return decoded_body
 
     def _send(
         self,
@@ -159,7 +162,7 @@ class LlamaCppModelClient:
         url: str,
         *,
         read_timeout_seconds: float,
-        json_body: dict | None = None,
+        json_body: dict[str, Any] | None = None,
         role_name_for_timeout_message: str | None = None,
     ) -> httpx.Response:
         timeouts = httpx.Timeout(

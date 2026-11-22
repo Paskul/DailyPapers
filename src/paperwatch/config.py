@@ -24,10 +24,13 @@ import typing
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from paperwatch.errors import ConfigurationError
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 CONFIG_FILE_NAME = "config.toml"
 TOPICS_FILE_NAME = "topics.toml"
@@ -593,7 +596,9 @@ def _validate_seed_file_paths(topic: TopicDefinition) -> None:
             )
 
 
-def _build_settings_section(settings_class: type, raw_section: Any, section_label: str):
+def _build_settings_section[SettingsT: DataclassInstance](
+    settings_class: type[SettingsT], raw_section: Any, section_label: str
+) -> SettingsT:
     """Build a frozen settings dataclass from a TOML table, rejecting unknown keys and wrong value types."""
     if not isinstance(raw_section, dict):
         raise ConfigurationError(f"[{section_label}] must be a table")

@@ -67,6 +67,7 @@ from paperwatch.research_profile import build_research_profiles
 from paperwatch.source_checkpoints import (
     SearchCoverageStatus,
     SourceCheckpoint,
+    load_existing_source_checkpoint,
     load_source_checkpoint,
     save_source_checkpoint,
 )
@@ -341,7 +342,7 @@ def _plan_remaining(context: CollectionContext, plan_key: str) -> int | None:
 
 def _plan_after_page(context: CollectionContext, plan_key: str, page_result: PageIngestionResult) -> SourceCheckpoint:
     """Inside the page transaction: count the page's new papers against the topic's plan, and cap it when full."""
-    plan_checkpoint = load_source_checkpoint(context.connection, plan_key)
+    plan_checkpoint = load_existing_source_checkpoint(context.connection, plan_key)
     candidates_admitted = plan_checkpoint.candidates_admitted + page_result.new_papers_admitted
     is_full = plan_checkpoint.candidate_budget is not None and candidates_admitted >= plan_checkpoint.candidate_budget
     return replace(
@@ -359,7 +360,7 @@ def _settle_plan_coverage(
     stopped_by_daily_allowance: bool,
 ) -> SourceCheckpoint:
     """Record why the plan stopped this run: exhausted, waiting for the daily allowance or a key, or blocked."""
-    plan_checkpoint = load_source_checkpoint(context.connection, plan_key)
+    plan_checkpoint = load_existing_source_checkpoint(context.connection, plan_key)
     if plan_checkpoint.remaining_candidate_budget == 0:
         return plan_checkpoint  # capped by its own budget inside the page transaction
     unfinished_units = [

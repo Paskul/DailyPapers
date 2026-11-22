@@ -110,8 +110,10 @@ def save_stage_result(
 
 def count_saved_stages_of_unfinished_readings(connection: sqlite3.Connection) -> int:
     """Stage results of inputs that have no review yet (a long paper in progress or waiting for its retry)."""
-    return connection.execute(
-        """SELECT COUNT(*) FROM review_stage_results AS stage
+    return int(
+        connection.execute(
+            """SELECT COUNT(*) FROM review_stage_results AS stage
            WHERE NOT EXISTS (SELECT 1 FROM reviews AS review WHERE review.paper_id = stage.paper_id
                              AND review.review_input_key = stage.review_input_key)"""
-    ).fetchone()[0]
+        ).fetchone()[0]
+    )

@@ -96,7 +96,8 @@ def parse_category_feed(body_bytes: bytes, discovery_route: str) -> ParsedFeed:
             skipped_counts[skip_reason] += 1
             continue
         records.append(parsed_record)
-        kind_counts[parsed_record.announcement_kind] += 1
+        if parsed_record.announcement_kind is not None:  # always set for a feed entry
+            kind_counts[parsed_record.announcement_kind] += 1
         announced_on = parsed_record.latest_revision_date or parsed_record.first_published_date
         if announced_on and len(announced_on) == 10:
             announcement_dates.append(announced_on)

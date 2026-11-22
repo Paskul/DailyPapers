@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date
+from typing import Any
 
 from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.page_ingestion import PageIngestionResult, ingest_records_with_checkpoints
@@ -64,18 +65,13 @@ class SearchTarget:
 @dataclass
 class SearchRunSummary:
     search_key: str
+    final_checkpoint: SourceCheckpoint  # where the search stands after this run (unchanged if no page was fetched)
     pages_fetched: int = 0
     ingestion: PageIngestionResult = field(default_factory=PageIngestionResult)
-    final_checkpoint: SourceCheckpoint | None = None
 
     def describe(self) -> str:
         checkpoint = self.final_checkpoint
-        state = (
-            f"{checkpoint.coverage_status}"
-            + (f" ({checkpoint.stop_reason})" if checkpoint and checkpoint.stop_reason else "")
-            if checkpoint
-            else "not run"
-        )
+        state = f"{checkpoint.coverage_status}" + (f" ({checkpoint.stop_reason})" if checkpoint.stop_reason else "")
         return (
             f"{self.search_key}: {self.pages_fetched} page(s), {self.ingestion.records_received} record(s), "
             f"{self.ingestion.new_papers_admitted} new, {self.ingestion.review_jobs_queued} new reading(s) "
@@ -109,7 +105,7 @@ def search_parameters(target: SearchTarget, public_value: str) -> dict[str, str]
     return parameters
 
 
-def window_from_parameters(query_parameters: dict) -> PublicationWindow | None:
+def window_from_parameters(query_parameters: dict[str, Any]) -> PublicationWindow | None:
     if PARAMETER_WINDOW_FIRST_DATE not in query_parameters:
         return None
     return PublicationWindow(

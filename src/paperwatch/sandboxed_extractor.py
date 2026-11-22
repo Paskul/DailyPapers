@@ -19,6 +19,7 @@ import secrets
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
@@ -145,7 +146,7 @@ def extract_text_in_sandbox(
 class BoundedStreamReader:
     """Drain a pipe on a background thread, keeping at most `maximum_bytes`; call `on_overflow` once if exceeded."""
 
-    def __init__(self, stream: IO[bytes] | None, maximum_bytes: int, on_overflow) -> None:
+    def __init__(self, stream: IO[bytes] | None, maximum_bytes: int, on_overflow: Callable[[], None] | None) -> None:
         self._stream = stream
         self._maximum_bytes = maximum_bytes
         self._on_overflow = on_overflow
@@ -175,7 +176,7 @@ class BoundedStreamReader:
         self._stream.close()
 
 
-def _stop_container(extractor_process: subprocess.Popen, container_runtime: str, container_name: str) -> None:
+def _stop_container(extractor_process: subprocess.Popen[bytes], container_runtime: str, container_name: str) -> None:
     """Kill the runtime client and make sure the container itself is gone (it could outlive its client)."""
     extractor_process.kill()
     extractor_process.wait()

@@ -289,10 +289,12 @@ def only_offered_choices(
 
 def count_reference_admissions_today(connection: sqlite3.Connection, moment: datetime) -> int:
     day_start = format_utc_timestamp(moment.replace(hour=0, minute=0, second=0, microsecond=0))
-    return connection.execute(
-        "SELECT COUNT(*) FROM reference_selections WHERE admission_status = 'admitted' AND admitted_at >= ?",
-        (day_start,),
-    ).fetchone()[0]
+    return int(
+        connection.execute(
+            "SELECT COUNT(*) FROM reference_selections WHERE admission_status = 'admitted' AND admitted_at >= ?",
+            (day_start,),
+        ).fetchone()[0]
+    )
 
 
 def admit_waiting_reference_selections(

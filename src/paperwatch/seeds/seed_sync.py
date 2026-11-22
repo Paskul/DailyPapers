@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
+from typing import Literal, overload
 
 from paperwatch.clock import utc_now_timestamp
 from paperwatch.config import AppConfig
@@ -208,7 +209,9 @@ def fetch_complete_zotero_collection(
         total_results = _integer_header(response, ZOTERO_TOTAL_RESULTS_HEADER, required=False)
         if parsed_page.raw_item_count == 0 or (total_results is not None and next_start >= total_results):
             return FetchedZoteroCollection(
-                list(seed_items_by_key.values()), snapshot_library_version, skipped_item_counts
+                list(seed_items_by_key.values()),
+                page_library_version,
+                skipped_item_counts,  # == the snapshot's
             )
         if next_start >= MAXIMUM_SEED_ITEMS_PER_ZOTERO_COLLECTION:
             raise SourceResponseRejected(
@@ -217,6 +220,10 @@ def fetch_complete_zotero_collection(
             )
 
 
+@overload
+def _integer_header(response: ProviderResponse, header_name: str, *, required: Literal[True]) -> int: ...
+@overload
+def _integer_header(response: ProviderResponse, header_name: str, *, required: Literal[False]) -> int | None: ...
 def _integer_header(response: ProviderResponse, header_name: str, *, required: bool) -> int | None:
     header_value = response.response_headers.get(header_name)
     if header_value is not None and header_value.strip().isdigit():

@@ -225,7 +225,7 @@ def _question_fit_of(assessment_row: sqlite3.Row) -> int:
 def _normalized_topic_score(assessment_row: sqlite3.Row) -> float:
     """Legacy 0-4 relevance and 0-100 priority on one scale, for ordering only."""
     if assessment_row["score_scale"] == LEGACY_RELEVANCE_SCALE:
-        return 25.0 * assessment_row["topic_score"]
+        return 25.0 * float(assessment_row["topic_score"])
     return float(assessment_row["topic_score"])
 
 

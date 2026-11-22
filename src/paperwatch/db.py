@@ -42,7 +42,7 @@ def connect_database(database_path: Path) -> sqlite3.Connection:
 
 
 def read_schema_version(connection: sqlite3.Connection) -> int:
-    return connection.execute("PRAGMA user_version").fetchone()[0]
+    return int(connection.execute("PRAGMA user_version").fetchone()[0])
 
 
 def apply_pending_migrations(connection: sqlite3.Connection) -> tuple[int, int]:

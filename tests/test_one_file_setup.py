@@ -223,7 +223,7 @@ def staged_config(tmp_path):
 
 def parse_unit(unit_text: str) -> dict[str, list[tuple[str, str]]]:
     sections: dict[str, list[tuple[str, str]]] = {}
-    current = None
+    current = ""
     for line in unit_text.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue

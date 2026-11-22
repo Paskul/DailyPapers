@@ -13,8 +13,10 @@ import hashlib
 import json
 import re
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from typing import Any
 from xml.sax.saxutils import escape
 
 import httpx
@@ -66,7 +68,7 @@ class FakeOpenAlexWork:
 
 @dataclass
 class FakePaperProviders:
-    current_time: callable = None  # returns the test's "now" (for OpenAlex late indexing)
+    current_time: Callable[[], datetime] | None = None  # returns the test's "now" (for OpenAlex late indexing)
     arxiv_papers: list[FakeArxivPaper] = field(default_factory=list)
     feeds: dict[str, tuple[date, list[FeedItem]]] = field(default_factory=dict)  # category -> (announced, items)
     openalex_works: list[FakeOpenAlexWork] = field(default_factory=list)
@@ -125,7 +127,7 @@ class FakePaperProviders:
         filters = dict(part.split(":", 1) for part in request.url.params.get("filter", "").split(",") if part)
         if "openalex" in filters:  # a batch of known ids (plan part 8)
             wanted_ids = filters["openalex"].split("|")
-            document = {
+            document: dict[str, Any] = {
                 "meta": {"count": 0, "next_cursor": None, "per_page": len(wanted_ids)},
                 "results": [openalex_work_json(work) for work in self.openalex_works if work.work_id in wanted_ids],
             }
@@ -196,6 +198,7 @@ def _arxiv_paper_matches(paper: FakeArxivPaper, query_match: re.Match) -> bool:
 
 
 def build_feed_xml(category: str, announced_on: date | None, items: list[FeedItem]) -> bytes:
+    announced_day = announced_on.isoformat() if announced_on is not None else ""
     entries = []
     for item in items:
         paper = item.paper
@@ -203,12 +206,12 @@ def build_feed_xml(category: str, announced_on: date | None, items: list[FeedIte
   <entry>
     <id>oai:arXiv.org:{paper.versioned_id}</id>
     <title>{escape(paper.title)}</title>
-    <updated>{announced_on.isoformat()}T05:01:26.819743+00:00</updated>
+    <updated>{announced_day}T05:01:26.819743+00:00</updated>
     <link href="https://arxiv.org/abs/{paper.arxiv_id}"/>
     <summary>arXiv:{paper.versioned_id} Announce Type: {item.announce_type}
 Abstract: {escape(paper.abstract)}</summary>
     {"".join(f'<category term="{escape(c)}"/>' for c in paper.categories)}
-    <published>{announced_on.isoformat()}T00:00:00-05:00</published>
+    <published>{announced_day}T00:00:00-05:00</published>
     <arxiv:announce_type>{item.announce_type}</arxiv:announce_type>
     <dc:rights>http://creativecommons.org/licenses/by/4.0/</dc:rights>
     {f"<arxiv:DOI>{escape(paper.doi)}</arxiv:DOI>" if paper.doi else ""}

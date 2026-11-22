@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -22,7 +23,7 @@ class ComparisonSummary:
     def note_relative_path_from_daily_dir(self) -> str:
         return f"../comparisons/{self.comparison_id}.md"
 
-    def to_writer_input(self) -> dict:
+    def to_writer_input(self) -> dict[str, Any]:
         return {
             "comparison_id": self.comparison_id,
             "topic_id": self.topic_id,

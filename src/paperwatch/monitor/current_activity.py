@@ -25,7 +25,7 @@ from paperwatch.dispatch_order import PRIORITY_CLASS_LABELS, JobPriorityClass
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME
 from paperwatch.monitor.activity_rows import ActivityStep, ActivityTree
 from paperwatch.monitor.database_access import load_paper_titles
-from paperwatch.monitor.schedule_state import ScheduleState
+from paperwatch.monitor.schedule_state import ScheduleState, ServiceState
 
 RECENT_REQUEST_WINDOW = timedelta(minutes=3)  # requests this recent mean a collect is probably running
 JOB_KIND_LABELS = {
@@ -115,10 +115,10 @@ def describe_worker(
 
     current_jobs = []
     for job_row in running_job_rows:
-        chain = jobs_in_activity.get(job_row["job_id"])
+        job_chain = jobs_in_activity.get(job_row["job_id"])
         current_jobs.append(
-            _describe_job_from_activity(job_row, chain, titles, now)
-            if chain
+            _describe_job_from_activity(job_row, job_chain, titles, now)
+            if job_chain
             else _describe_job_inferred(connection, job_row, titles, now)
         )
 
@@ -272,7 +272,7 @@ def describe_activity_step(activity_step: ActivityStep) -> str:
     detail = activity_step.detail
     if activity_step.step == "job":
         return (
-            f"{JOB_KIND_LABELS.get(detail.get('kind'), detail.get('kind', 'job'))} — attempt "
+            f"{JOB_KIND_LABELS.get(str(detail.get('kind')), detail.get('kind', 'job'))} — attempt "
             f"{detail.get('attempt', '?')}/{detail.get('max_attempts', '?')}"
         )
     if activity_step.step == "reading_stage":
@@ -429,7 +429,7 @@ def _report_is_writing(activity: ActivityTree | None) -> bool:
     )
 
 
-def _describe_service(service_state) -> dict[str, Any] | None:
+def _describe_service(service_state: ServiceState | None) -> dict[str, Any] | None:
     if service_state is None:
         return None
     return {

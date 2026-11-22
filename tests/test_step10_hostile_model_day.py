@@ -33,6 +33,7 @@ import re
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import build_in_process_app
@@ -43,12 +44,13 @@ from paperwatch.commands.report_command import run_report_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
 from paperwatch.errors import ModelOutputInvalid
 from paperwatch.llm.fake_answers import FAKE_ANSWER_BUILDERS_BY_ROLE
-from paperwatch.llm.fake_client import FakeModelClient
+from paperwatch.llm.fake_client import FakeModelClient, ScriptedAnswer
 from paperwatch.network.egress_guard import (
     build_collector_policy,
     build_local_model_policy,
     temporarily_armed_egress_policy,
 )
+from paperwatch.network.provider_requests import SearchResultOrder
 from paperwatch.network.provider_rules import load_provider_access_rules
 from paperwatch.public_query_catalog import build_public_query_catalog
 from paperwatch.references.reference_candidates import ReferenceCandidate
@@ -125,7 +127,7 @@ class CompromisedModel:
         self.answers_given: dict[str, int] = {}
         self.rejected_attack_count_by_role: dict[str, int] = {}
 
-    def scripts(self) -> dict[str, object]:
+    def scripts(self) -> dict[str, ScriptedAnswer]:
         return {role_name: self._answer for role_name in FAKE_ANSWER_BUILDERS_BY_ROLE}
 
     def _answer(self, request) -> str:
@@ -298,7 +300,7 @@ def promote_feed_papers_directly(app, providers: FakePaperProviders) -> None:
 
 
 def drain_worker(app) -> list[WorkCycleOutcome]:
-    outcomes = []
+    outcomes: list[WorkCycleOutcome] = []
     while (outcome := run_single_work_cycle(app, probe_paused_model_now=True).outcome) != WorkCycleOutcome.NO_JOB_DUE:
         outcomes.append(outcome)
         assert len(outcomes) < 200, "the worker must run out of work"
@@ -503,7 +505,7 @@ def prepared_selection() -> PreparedReferenceSelection:
             public_value=PHRASE,
             window_first_date=date(1940, 1, 1),
             window_last_date=date(2008, 1, 1),
-            result_order="relevance",
+            result_order=SearchResultOrder.RELEVANCE,
         )
         for branch_id in OFFERED_BRANCH_IDS
     ]
@@ -512,10 +514,10 @@ def prepared_selection() -> PreparedReferenceSelection:
     )
 
 
-def random_hostile_research_answer(generator: random.Random) -> object:
+def random_hostile_research_answer(generator: random.Random) -> dict[str, Any]:
     id_pool = list(OFFERED_CANDIDATE_IDS) + list(INVENTED_IDS) + list(LOOKALIKE_IDS)
     branch_pool = list(OFFERED_BRANCH_IDS) + ["B99", "B0", "", "B1; rm -rf /"] + list(LOOKALIKE_IDS)
-    selections = [
+    selections: list[object] = [
         {
             "candidate_id": generator.choice(id_pool),
             "role_in_parent": "method",

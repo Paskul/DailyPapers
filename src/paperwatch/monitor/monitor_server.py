@@ -137,7 +137,9 @@ class SnapshotProvider:
             connection.close()
 
 
-def build_request_handler(snapshot_provider: SnapshotProvider, allowed_host_names: frozenset[str]):
+def build_request_handler(
+    snapshot_provider: SnapshotProvider, allowed_host_names: frozenset[str]
+) -> type[BaseHTTPRequestHandler]:
     class MonitorRequestHandler(BaseHTTPRequestHandler):
         server_version = "paperwatch-monitor"
         sys_version = ""

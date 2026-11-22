@@ -16,7 +16,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -200,7 +200,7 @@ def expand_calendar_value(calendar_value: str, window_start: datetime, window_en
         zone = _zone_or_none(daily_match.group(4))
         if zone is None:
             return []
-        moments = []
+        moments: list[datetime] = []
         local_day: date = window_start.astimezone(zone).date() - timedelta(days=1)
         while True:
             moment = datetime.combine(local_day, time(hour, minute, second), tzinfo=zone)
@@ -212,7 +212,7 @@ def expand_calendar_value(calendar_value: str, window_start: datetime, window_en
     return []
 
 
-def _zone_or_none(zone_name: str | None):
+def _zone_or_none(zone_name: str | None) -> tzinfo | None:
     if zone_name is None:
         return datetime.now().astimezone().tzinfo  # systemd's default: the machine's local time
     try:

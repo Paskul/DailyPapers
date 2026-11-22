@@ -217,14 +217,18 @@ def set_paper_status(connection: sqlite3.Connection, paper_id: str, new_status: 
 
 
 def load_paper_row(connection: sqlite3.Connection, paper_id: str) -> sqlite3.Row:
-    paper_row = connection.execute("SELECT * FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()
+    paper_row: sqlite3.Row | None = connection.execute(
+        "SELECT * FROM papers WHERE paper_id = ?", (paper_id,)
+    ).fetchone()
     if paper_row is None:
         raise LookupError(f"paper {paper_id} not found")
     return paper_row
 
 
 def load_edition_row(connection: sqlite3.Connection, edition_id: str) -> sqlite3.Row:
-    edition_row = connection.execute("SELECT * FROM paper_editions WHERE edition_id = ?", (edition_id,)).fetchone()
+    edition_row: sqlite3.Row | None = connection.execute(
+        "SELECT * FROM paper_editions WHERE edition_id = ?", (edition_id,)
+    ).fetchone()
     if edition_row is None:
         raise LookupError(f"edition {edition_id} not found")
     return edition_row
@@ -295,10 +299,12 @@ def _choose_paper_for_record(
     if primary_paper_id is not None:
         return primary_paper_id
     placeholders = ",".join("?" * len(matched_paper_ids))
-    return connection.execute(
-        f"SELECT paper_id FROM papers WHERE paper_id IN ({placeholders}) ORDER BY discovered_at, rowid LIMIT 1",  # noqa: S608  # only ? placeholders are interpolated
-        matched_paper_ids,
-    ).fetchone()["paper_id"]
+    return str(
+        connection.execute(
+            f"SELECT paper_id FROM papers WHERE paper_id IN ({placeholders}) ORDER BY discovered_at, rowid LIMIT 1",  # noqa: S608  # only ? placeholders are interpolated
+            matched_paper_ids,
+        ).fetchone()["paper_id"]
+    )
 
 
 def _insert_new_paper(
@@ -383,7 +389,7 @@ def _advance_paper_from_new_sighting(
 ) -> None:
     """Fill gaps and move the latest revision forward. The title and origin route are never rewritten."""
     paper_row = load_paper_row(connection, paper_id)
-    column_updates: dict[str, str] = {}
+    column_updates: dict[str, str | None] = {}
     if paper_row["abstract"] is None and collected_record.abstract and sighting_added_text:
         column_updates["abstract"] = collected_record.abstract  # display copy; readings use edition snapshots
     if (

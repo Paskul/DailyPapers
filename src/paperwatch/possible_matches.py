@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Any
 
 from paperwatch.clock import utc_now_timestamp
 from paperwatch.text_normalization import extract_author_family_names
@@ -47,7 +48,7 @@ def flag_papers_with_same_title(
 
 
 def record_possible_match(
-    connection: sqlite3.Connection, paper_id_a: str, paper_id_b: str, match_reason: str, evidence: dict
+    connection: sqlite3.Connection, paper_id_a: str, paper_id_b: str, match_reason: str, evidence: dict[str, Any]
 ) -> None:
     """Insert the unordered pair once; a later sighting of the same pair keeps the first evidence."""
     first_paper_id, second_paper_id = sorted((paper_id_a, paper_id_b))

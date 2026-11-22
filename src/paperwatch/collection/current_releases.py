@@ -203,7 +203,8 @@ def store_category_feed(context: CollectionContext, polled_feed: PolledCategoryF
     previous_complete_poll, parsed_feed = polled_feed.previous_complete_poll, polled_feed.parsed_feed
     feed_route = arxiv_feed_route(arxiv_category)
     gap_is_too_long = polled_feed.has_coverage_gap(context.started_at)
-    response_etag = polled_feed.feed_response.response_headers.get(FEED_ETAG_RESPONSE_HEADER) or polled_feed.stored_etag
+    feed_response_headers = polled_feed.feed_response.response_headers if polled_feed.feed_response else {}
+    response_etag = feed_response_headers.get(FEED_ETAG_RESPONSE_HEADER) or polled_feed.stored_etag
     admission_limit = context.candidate_budget.remaining_for_route(feed_route)
     # Which limit binds: this category's fair share (a chosen limit), or the whole day's budget (a coverage gap).
     share_is_the_binding_limit = (
@@ -330,9 +331,9 @@ def run_open_recovery_searches(context: CollectionContext) -> list[str]:
         context.connection, ARXIV_RECOVERY_CHECKPOINT_PREFIX
     ):
         arxiv_category = recovery_checkpoint.query_parameters.get(PARAMETER_PUBLIC_VALUE)
-        category_query_id = (
-            _category_query_id(context, arxiv_category) if arxiv_category in approved_categories else None
-        )
+        if not isinstance(arxiv_category, str) or arxiv_category not in approved_categories:
+            continue  # its category is no longer approved
+        category_query_id = _category_query_id(context, arxiv_category)
         if category_query_id is None or not is_search_resumable(recovery_checkpoint):
             continue  # finished, or its category is no longer approved
         target = SearchTarget(

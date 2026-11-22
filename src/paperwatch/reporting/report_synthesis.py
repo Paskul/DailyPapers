@@ -197,7 +197,7 @@ def _describe_paper_without_passages(selected_review: SelectedReview, entry: Rep
 
     def statement_text(statement: dict[str, Any]) -> str:
         suffix = "" if statement["evidence_status"] == "supported" else " (insufficient evidence)"
-        return statement["statement"] + suffix
+        return str(statement["statement"]) + suffix
 
     return {
         "review_id": entry.review_id,

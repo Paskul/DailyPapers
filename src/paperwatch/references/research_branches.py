@@ -75,9 +75,9 @@ class ResearchBranch:
 
 def count_branches_requested_today(connection: sqlite3.Connection, moment: datetime) -> int:
     day_start = format_utc_timestamp(moment.replace(hour=0, minute=0, second=0, microsecond=0))
-    return connection.execute(
-        "SELECT COUNT(*) FROM research_branches WHERE requested_at >= ?", (day_start,)
-    ).fetchone()[0]
+    return int(
+        connection.execute("SELECT COUNT(*) FROM research_branches WHERE requested_at >= ?", (day_start,)).fetchone()[0]
+    )
 
 
 def offer_unused_branches(

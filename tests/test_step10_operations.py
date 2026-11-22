@@ -136,6 +136,7 @@ def test_capacity_flags_limits_above_the_measured_capacity(tmp_path):
     with write_transaction(app.connection):
         app.connection.execute("UPDATE model_calls SET duration_seconds = 3600")  # one hour per call
     measurement = measure_capacity(app.connection, app.config, window_end=utc_now(), window_hours=24)
+    assert measurement.estimated_reviews_per_day is not None
     assert measurement.estimated_reviews_per_day < measurement.configured_readings_per_day
     assert "the queue will grow" in "\n".join(describe_capacity(measurement))
     app.close()

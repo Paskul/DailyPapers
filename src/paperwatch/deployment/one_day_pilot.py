@@ -305,7 +305,9 @@ WantedBy=timers.target
 
 
 def describe_pilot_plan(plan: OneDayPilotPlan) -> list[str]:
-    describe = lambda moment: systemd_calendar_time(moment, plan.timezone_name)
+    def describe(moment: datetime) -> str:
+        return systemd_calendar_time(moment, plan.timezone_name)
+
     return (
         [f"Pilot {plan.pilot_date} -> report {plan.report_date}"]
         + [f"  collect  {describe(moment)}" for moment in plan.collect_moments]

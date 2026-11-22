@@ -17,6 +17,7 @@ import json
 import sqlite3
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp, utc_now, utc_now_timestamp
 from paperwatch.config import AppConfig
@@ -84,7 +85,7 @@ class ReportSnapshot:
     def selected_review_ids(self) -> list[str]:
         return [entry.review_id for entry in self.entries]
 
-    def snapshot_record(self) -> dict:
+    def snapshot_record(self) -> dict[str, Any]:
         """What reports.snapshot_json stores (entries live in report_items, timing in the reports columns)."""
         return {
             "timezone_name": self.timezone_name,
@@ -256,8 +257,8 @@ def _collect_statistics(
     window_start = previous_report["cutoff_at"] if previous_report else BEGINNING_OF_TIME
     window = (window_start, cutoff_at)
 
-    def count(sql: str, parameters: tuple = ()) -> int:
-        return connection.execute(sql, parameters).fetchone()[0]
+    def count(sql: str, parameters: tuple[Any, ...] = ()) -> int:
+        return int(connection.execute(sql, parameters).fetchone()[0])
 
     hours_since_previous = None
     if previous_report is not None:
@@ -293,10 +294,10 @@ def _collect_statistics(
 def _describe_service_outage(health: ServiceHealthState, window: tuple[str, str], *, include_error: bool) -> str | None:
     """A description when the service is paused now, or failed inside the window; None when it was healthy."""
     moment = utc_now()
-    if health.is_paused_at(moment):
+    if (paused_until := health.pause_end_at(moment)) is not None:
         description = (
             f"unavailable at the cutoff ({health.consecutive_failures} consecutive failure(s), "
-            f"paused until {format_utc_timestamp(health.paused_until)})"
+            f"paused until {format_utc_timestamp(paused_until)})"
         )
     elif health.last_failure_at and window[0] < health.last_failure_at <= window[1]:
         description = f"failed at least once since the previous report (last at {health.last_failure_at})"

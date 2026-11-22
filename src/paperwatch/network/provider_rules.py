@@ -317,7 +317,9 @@ def _require_string_list(raw_value: Any, label: str) -> list[str]:
     return raw_value
 
 
-def _require_number(raw_value: Any, label: str, number_type: type, *, allow_zero: bool = False):
+def _require_number[NumberT: (int, float)](
+    raw_value: Any, label: str, number_type: type[NumberT], *, allow_zero: bool = False
+) -> NumberT:
     if (
         isinstance(raw_value, bool)
         or not isinstance(raw_value, (int, float))

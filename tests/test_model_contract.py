@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import EXAMPLE_TOPIC_TOML, RECORDED_PAPER_FIXTURE
@@ -48,7 +49,7 @@ INSUFFICIENT = {
     "evidence_status": "insufficient_evidence",
     "supporting_passage_ids": [],
 }
-VALID_REVIEWER_ANSWER = {
+VALID_REVIEWER_ANSWER: dict[str, Any] = {
     "one_sentence_summary": "A monitor rejected all 37 exit-blocking plans.",
     "research_question": {
         "statement": "Can plans be checked before dispatch?",
@@ -147,7 +148,7 @@ def test_a_repaired_answer_is_accepted(tmp_path):
         {
             "reviewer": [
                 json.dumps({"wrong": "shape"}),
-                lambda request: json.dumps(build_fake_review(request.role_input)),
+                lambda request: json.dumps(build_fake_review(request.role_input or {})),
             ]
         }
     )

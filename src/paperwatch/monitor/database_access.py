@@ -43,7 +43,7 @@ def existing_table_names(connection: sqlite3.Connection) -> frozenset[str]:
 
 
 def schema_version(connection: sqlite3.Connection) -> int:
-    return connection.execute("PRAGMA user_version").fetchone()[0]
+    return int(connection.execute("PRAGMA user_version").fetchone()[0])
 
 
 def load_paper_titles(connection: sqlite3.Connection, paper_ids: Iterable[str | None]) -> dict[str, str]:

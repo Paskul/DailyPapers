@@ -136,7 +136,7 @@ def install_extracted_text(app, paper_id: str, extracted_text: str) -> str:
 
 
 def drain(app) -> list[WorkCycleOutcome]:
-    outcomes = []
+    outcomes: list[WorkCycleOutcome] = []
     while (outcome := run_single_work_cycle(app, probe_paused_model_now=True).outcome) != WorkCycleOutcome.NO_JOB_DUE:
         outcomes.append(outcome)
         assert len(outcomes) < 50

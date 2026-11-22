@@ -129,5 +129,5 @@ implicit_reexport = false
 warn_return_any = true
 
 [[tool.mypy.overrides]]
-module = ["onnxruntime", "onnxruntime.*"]  # ships no type information
+module = ["onnxruntime"]  # ships no type information
 ignore_missing_imports = true

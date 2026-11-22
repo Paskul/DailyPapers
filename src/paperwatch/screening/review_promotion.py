@@ -91,12 +91,13 @@ def utc_day_start_timestamp(moment: datetime) -> str:
 
 def count_screening_promotions_today(connection: sqlite3.Connection, moment: datetime) -> sqlite3.Row:
     placeholders = ", ".join("?" * len(SCREENING_PROMOTION_REASONS))
-    return connection.execute(
+    counts_row: sqlite3.Row = connection.execute(
         f"""SELECT COALESCE(SUM(promotion_reason != 'near_cutoff'), 0) AS regular_count,
                    COALESCE(SUM(promotion_reason = 'near_cutoff'), 0) AS near_cutoff_count
             FROM paper_promotions WHERE promoted_at >= ? AND promotion_reason IN ({placeholders})""",  # noqa: S608  # only ? placeholders are interpolated
         (utc_day_start_timestamp(moment), *SCREENING_PROMOTION_REASONS),
     ).fetchone()
+    return counts_row
 
 
 def promote_screened_candidates(
@@ -186,12 +187,12 @@ def promote_screened_candidates(
             outcome.promoted.append(decision)
 
         promoted_paper_ids = {decision.paper_id for decision in decisions}
-        for candidate in promotion_candidates:
-            if candidate.paper_id not in promoted_paper_ids:
+        for promotion_candidate in promotion_candidates:
+            if promotion_candidate.paper_id not in promoted_paper_ids:
                 outcome.newly_screened_out += connection.execute(
                     "UPDATE papers SET status = 'screened_out', updated_at = ? "
                     "WHERE paper_id = ? AND status = 'waiting_input'",
-                    (format_utc_timestamp(moment), candidate.paper_id),
+                    (format_utc_timestamp(moment), promotion_candidate.paper_id),
                 ).rowcount
     return outcome
 

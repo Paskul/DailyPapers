@@ -106,7 +106,7 @@ def find_passage_that_backs_finding(finding: Mapping[str, Any], passage_text_by_
     """The cited passage if it already passes; otherwise the ONE passage that contains the excerpt and backs every
     number of the claim and conditions. None when no passage, or more than one, qualifies (no guessing)."""
     if not check_finding(finding, passage_text_by_id, "finding"):
-        return finding["passage_id"]
+        return str(finding["passage_id"])
     normalized_excerpt = normalize_for_matching(str(finding["excerpt"]).strip(" \"'"))
     if not normalized_excerpt:
         return None

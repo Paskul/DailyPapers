@@ -10,7 +10,7 @@ from paperwatch.config import CONFIG_FILE_NAME, TOPICS_FILE_NAME, load_app_confi
 from paperwatch.db import apply_pending_migrations, connect_database
 
 
-def run_init_command(home_dir: Path, arguments: argparse.Namespace) -> int:
+def run_init_command(home_dir: Path, arguments: argparse.Namespace | None = None) -> int:
     home_dir = home_dir.expanduser().resolve()
     home_dir.mkdir(parents=True, exist_ok=True)
 

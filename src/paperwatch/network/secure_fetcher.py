@@ -85,7 +85,9 @@ def resolve_public_addresses_only(host: str, port: int) -> list[str]:
     import socket  # local import: tests inject a resolver and never touch DNS
 
     try:
-        return sorted({address_info[4][0] for address_info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)})
+        return sorted(
+            {str(address_info[4][0]) for address_info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)}
+        )
     except OSError:
         return []
 

@@ -28,6 +28,7 @@ import urllib.parse
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 HTTPS_PORT = 443
@@ -186,7 +187,7 @@ def temporarily_armed_egress_policy(policy: EgressPolicy) -> Iterator[EgressPoli
             _active_policy = previous_policy
 
 
-def _egress_audit_hook(event: str, arguments: tuple) -> None:
+def _egress_audit_hook(event: str, arguments: tuple[Any, ...]) -> None:
     policy = _active_policy
     if policy is None:
         return
@@ -229,6 +230,8 @@ def _parse_ip_address(host_text: str | None) -> ipaddress.IPv4Address | ipaddres
 
 def _resolve_now(host_name: str, port: int) -> set[str]:
     try:
-        return {address_info[4][0] for address_info in socket.getaddrinfo(host_name, port, type=socket.SOCK_STREAM)}
+        return {
+            str(address_info[4][0]) for address_info in socket.getaddrinfo(host_name, port, type=socket.SOCK_STREAM)
+        }
     except OSError:
         return set()

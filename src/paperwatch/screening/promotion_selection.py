@@ -14,6 +14,7 @@ Ties are broken by paper id, so the same inputs always give the same selection.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -54,6 +55,15 @@ class SlotsAvailable:
     remaining_share_by_topic_id: dict[str, int]  # per active topic, may be 0
     remaining_regular_slots: int  # shares + spare, for this run
     remaining_near_cutoff_slots: int
+
+
+def _ranking_order_for_topic(topic_id: str) -> Callable[[PromotionCandidate], tuple[float, str]]:
+    """Sort key for one topic's ranking: its best score first, then the paper id (the same order every run)."""
+
+    def ranking_order(candidate: PromotionCandidate) -> tuple[float, str]:
+        return (-candidate.score_by_topic_id[topic_id], candidate.paper_id)
+
+    return ranking_order
 
 
 def compute_slots_available(
@@ -102,7 +112,7 @@ def select_papers_for_promotion(
                 for candidate in scored_candidates
                 if candidate.score_by_topic_id.get(topic_id, -1.0) >= minimum_screening_score
             ),
-            key=lambda candidate, topic_id=topic_id: (-candidate.score_by_topic_id[topic_id], candidate.paper_id),
+            key=_ranking_order_for_topic(topic_id),
         )
         for topic_id in slots.remaining_share_by_topic_id
     }

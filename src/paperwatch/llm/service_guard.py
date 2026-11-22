@@ -24,8 +24,11 @@ MODEL_SERVICE_NAME = "model-server"
 class OutageBackoffSettings(Protocol):
     """Anything with these two fields: ModelSettings for the model server, ProviderAccessRules for providers."""
 
-    outage_backoff_initial_seconds: int
-    outage_backoff_max_seconds: int
+    @property
+    def outage_backoff_initial_seconds(self) -> int: ...
+
+    @property
+    def outage_backoff_max_seconds(self) -> int: ...
 
 
 @dataclass(frozen=True)
@@ -38,7 +41,13 @@ class ServiceHealthState:
     last_success_at: str | None
 
     def is_paused_at(self, moment: datetime) -> bool:
-        return self.paused_until is not None and moment < self.paused_until
+        return self.pause_end_at(moment) is not None
+
+    def pause_end_at(self, moment: datetime) -> datetime | None:
+        """When the pause ends, if the service is paused at `moment`; None if it is not paused then."""
+        if self.paused_until is not None and moment < self.paused_until:
+            return self.paused_until
+        return None
 
 
 def read_service_health_state(connection: sqlite3.Connection, service: str) -> ServiceHealthState:

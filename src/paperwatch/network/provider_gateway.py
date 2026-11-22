@@ -525,9 +525,9 @@ class ProviderGateway:
 
     def _require_provider_not_paused(self, provider_name: str) -> None:
         health_state = read_service_health_state(self._connection, provider_service_name(provider_name))
-        if health_state.is_paused_at(utc_now()):
+        if (paused_until := health_state.pause_end_at(utc_now())) is not None:
             raise ProviderUnavailable(
-                f"{provider_name} is paused until {format_utc_timestamp(health_state.paused_until)} after "
+                f"{provider_name} is paused until {format_utc_timestamp(paused_until)} after "
                 f"{health_state.consecutive_failures} failure(s); last error: {health_state.last_error}",
                 provider_name=provider_name,
             )

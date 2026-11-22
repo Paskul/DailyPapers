@@ -90,10 +90,12 @@ def insert_completed_reading(
         ),
     )
     if insert_cursor.rowcount != 1:
-        return connection.execute(
-            "SELECT review_id FROM reviews WHERE paper_id = ? AND review_input_key = ?",
-            (paper_id, packet.review_input_key),
-        ).fetchone()["review_id"]
+        return str(
+            connection.execute(
+                "SELECT review_id FROM reviews WHERE paper_id = ? AND review_input_key = ?",
+                (paper_id, packet.review_input_key),
+            ).fetchone()["review_id"]
+        )
 
     passage_by_id = packet.passage_by_id
     connection.executemany(

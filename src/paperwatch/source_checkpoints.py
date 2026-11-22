@@ -85,6 +85,14 @@ def load_source_checkpoint(connection: sqlite3.Connection, search_key: str) -> S
     )
 
 
+def load_existing_source_checkpoint(connection: sqlite3.Connection, search_key: str) -> SourceCheckpoint:
+    """A checkpoint the caller knows exists (saved earlier, e.g. in the same run): a missing one is a bug."""
+    checkpoint = load_source_checkpoint(connection, search_key)
+    if checkpoint is None:
+        raise LookupError(f"source checkpoint {search_key} not found")
+    return checkpoint
+
+
 def load_source_checkpoints_with_prefix(
     connection: sqlite3.Connection,
     search_key_prefix: str,
@@ -95,7 +103,7 @@ def load_source_checkpoints_with_prefix(
         "SELECT search_key FROM source_checkpoints WHERE search_key LIKE ? ESCAPE '\\' ORDER BY search_key",
         (escaped_prefix + "%",),
     ).fetchall()
-    return [load_source_checkpoint(connection, key_row["search_key"]) for key_row in key_rows]
+    return [load_existing_source_checkpoint(connection, key_row["search_key"]) for key_row in key_rows]
 
 
 def save_source_checkpoint(connection: sqlite3.Connection, checkpoint: SourceCheckpoint) -> None:

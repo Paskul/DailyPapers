@@ -49,7 +49,7 @@ ABSOLUTE_CALENDAR_TIME = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} Ameri
 def parse_unit(unit_text: str) -> dict[str, list[tuple[str, str]]]:
     """{section: [(key, value), ...]} keeping repeated keys in order."""
     sections: dict[str, list[tuple[str, str]]] = {}
-    current_section = None
+    current_section = ""
     for line in unit_text.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue

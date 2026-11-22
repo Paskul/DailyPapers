@@ -29,6 +29,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from paperwatch.config import CONFIG_FILE_NAME, TOPICS_FILE_NAME, AppConfig, load_app_config
 from paperwatch.db import read_schema_version
@@ -59,7 +60,7 @@ class BackupError(RuntimeError):
 @dataclass(frozen=True)
 class BackupResult:
     backup_dir: Path
-    manifest: dict
+    manifest: dict[str, Any]
 
     def describe(self) -> str:
         counts = self.manifest["row_counts"]
@@ -216,7 +217,7 @@ def _open_read_only(database_path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _describe_database(database_path: Path) -> dict:
+def _describe_database(database_path: Path) -> dict[str, Any]:
     connection = _open_read_only(database_path)
     try:
         existing_tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}

@@ -58,7 +58,8 @@ class SelectedReview:
 
     @property
     def reading_record(self) -> dict[str, Any]:
-        return json.loads(self.review_row["reading_record_json"] or "{}")
+        reading_record: dict[str, Any] = json.loads(self.review_row["reading_record_json"] or "{}")
+        return reading_record
 
     @property
     def is_evidence_review(self) -> bool:

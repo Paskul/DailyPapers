@@ -13,6 +13,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import PROMPT_INJECTION_FIXTURE, build_in_process_app
@@ -138,7 +139,7 @@ class SideEffectRecorder:
 
     def __init__(self) -> None:
         self.active = False
-        self.connections: list[object] = []
+        self.connections: list[tuple[Any, ...]] = []
         self.program_launches: list[str] = []
         self.files_opened_for_writing: list[str] = []
         sys.addaudithook(self._record)

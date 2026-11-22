@@ -17,6 +17,7 @@ import sys
 import textwrap
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import RECORDED_PAPER_FIXTURE, build_in_process_app, find_unused_local_port
@@ -229,9 +230,11 @@ def test_extractor_accepts_only_cached_source_files_and_a_configured_image(tmp_p
         )
 
 
-def load_extractor_entrypoint(input_path: Path):
+def load_extractor_entrypoint(input_path: Path) -> Any:
+    """The extractor's entrypoint script as a module (it is not part of the package)."""
     module_spec = importlib.util.spec_from_file_location("paperwatch_extractor_entrypoint", EXTRACTOR_ENTRYPOINT)
-    entrypoint_module = importlib.util.module_from_spec(module_spec)
+    assert module_spec is not None and module_spec.loader is not None
+    entrypoint_module: Any = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(entrypoint_module)
     entrypoint_module.INPUT_PATH = str(input_path)
     return entrypoint_module

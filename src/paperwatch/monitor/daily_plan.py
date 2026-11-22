@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 import statistics
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -208,7 +209,7 @@ def describe_daily_budgets(
     """Today's counters (UTC day, like the limits themselves). A counter that cannot be read is left out."""
     budgets: list[dict[str, Any]] = []
 
-    def add(label: str, compute_used, limit: int | None, note: str | None = None) -> None:
+    def add(label: str, compute_used: Callable[[], Any], limit: int | None, note: str | None = None) -> None:
         try:
             budgets.append({"label": label, "used": int(compute_used()), "limit": limit, "note": note})
         except (sqlite3.Error, KeyError, TypeError):
@@ -232,7 +233,7 @@ def describe_daily_budgets(
 
     def promotions_today() -> int:
         counts = count_screening_promotions_today(connection, now)
-        return counts["regular_count"] + counts["near_cutoff_count"]
+        return int(counts["regular_count"]) + int(counts["near_cutoff_count"])
 
     add("Readings promoted", promotions_today, app_config.screening.daily_promotion_limit)
     add(

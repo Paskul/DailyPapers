@@ -19,6 +19,7 @@ import os
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -145,7 +146,7 @@ def unit(vector: np.ndarray) -> np.ndarray:
 
 def write_csl_seeds(home_dir: Path, relative_path: str, seed_numbers: range) -> list[tuple[str, str]]:
     """Write a CSL JSON file of synthetic seeds; returns [(seed id, document text)] for the vector table."""
-    seed_items = [
+    seed_items: list[dict[str, Any]] = [
         {
             "id": f"seed-{seed_number}",
             "type": "article-journal",
@@ -310,11 +311,11 @@ def test_a_phrase_match_no_longer_outweighs_the_question_signal():
     raw_scores = {
         paper_id: combine_screening_signals(by_topic["topic"], weights) for paper_id, by_topic in signals.items()
     }
-    assert max(raw_scores, key=raw_scores.get) == "p0"
+    assert max(raw_scores, key=lambda paper_id: raw_scores[paper_id] or 0.0) == "p0"
     normalized = {
         paper_id: scores["topic"] for paper_id, scores in compute_pool_normalized_scores(signals, weights).items()
     }
-    assert max(normalized, key=normalized.get) == "p9"
+    assert max(normalized, key=lambda paper_id: normalized[paper_id] or 0.0) == "p9"
     # The match moves p0's phrase percentile from 0.45 to 0.95, worth 0.2/0.5 x 0.5 = 20 question percentile points:
     # exactly two places among ten papers, so p0 passes p1 and ties p2.
     assert normalized["p0"] > normalized["p1"] and normalized["p0"] == pytest.approx(normalized["p2"])
@@ -392,9 +393,7 @@ def test_five_hundred_candidates_get_known_nearest_seeds_and_thirty_fair_promoti
             if row["promotion_reason"] == "topic_share" and row["topic_id"] == topic_id
         }
         assert len(share_ids) == 13
-        topic_ranking = sorted(
-            normalized, key=lambda paper_id, topic_id=topic_id: (-normalized[paper_id][topic_id], paper_id)
-        )
+        topic_ranking = rank_papers_for_topic(normalized, topic_id)
         other_shares = {
             row["paper_id"]
             for row in promotions
@@ -541,6 +540,11 @@ def test_a_full_timestamp_counts_as_its_calendar_day():
     from_timestamp = dispatch_order_for_promoted_paper("2026-11-17T18:59:38Z", 0.6, SCREENING_MOMENT)
     assert from_timestamp == dispatch_order_for_promoted_paper("2026-11-17", 0.6, SCREENING_MOMENT)
     assert classify_release("2026-11-17T18:59:38Z", SCREENING_MOMENT) == ReleaseClass.NEW_RELEASE
+
+
+def rank_papers_for_topic(normalized_scores: dict[str, dict[str, float]], topic_id: str) -> list[str]:
+    """Best normalized score for the topic first, then paper id."""
+    return sorted(normalized_scores, key=lambda paper_id: (-normalized_scores[paper_id][topic_id], paper_id))
 
 
 def test_all_four_job_types_are_claimed_in_class_order(tmp_path, monkeypatch):

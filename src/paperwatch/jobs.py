@@ -26,7 +26,7 @@ from typing import Any
 from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp, utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
 from paperwatch.dispatch_order import JobDispatchOrder, JobPriorityClass
-from paperwatch.errors import PaperwatchError
+from paperwatch.errors import DatabaseError, PaperwatchError
 from paperwatch.identifiers import JOB_ID_PREFIX, new_internal_id
 
 REVIEW_PAPER_JOB_KIND = "review_paper"  # classes 0-3: a reading of one paper
@@ -51,6 +51,12 @@ class ClaimedJob:
     attempts_including_this_one: int
     max_attempts: int
     lease_token: str
+
+    def required_paper_id(self) -> str:
+        """The paper of a paper job (review_paper); a job row without one is corrupt."""
+        if self.paper_id is None:
+            raise DatabaseError(f"job {self.job_id} ({self.kind}) has no paper_id")
+        return self.paper_id
 
 
 class LeaseLostError(Exception):

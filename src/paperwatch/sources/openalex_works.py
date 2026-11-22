@@ -45,7 +45,8 @@ def parse_works_page(body_bytes: bytes, discovery_route: str) -> ParsedSearchPag
         raise SourceResponseRejected(f"OpenAlex: response is not valid JSON ({decode_error})") from None
     if not isinstance(response_document, dict) or not isinstance(response_document.get("results"), list):
         raise SourceResponseRejected("OpenAlex: response has no `results` list")
-    meta = response_document.get("meta") if isinstance(response_document.get("meta"), dict) else {}
+    raw_meta = response_document.get("meta")
+    meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
 
     records: list[CollectedPaperRecord] = []
     skipped_counts: Counter[str] = Counter()
@@ -142,7 +143,8 @@ def rebuild_abstract_from_inverted_index(inverted_index: Any) -> str | None:
 
 def _stated_identifier_links(raw_work: dict[str, Any]) -> list[RawIdentifier]:
     stated_links: list[RawIdentifier] = []
-    work_identifiers = raw_work.get("ids") if isinstance(raw_work.get("ids"), dict) else {}
+    raw_identifiers = raw_work.get("ids")
+    work_identifiers: dict[str, Any] = raw_identifiers if isinstance(raw_identifiers, dict) else {}
     for doi_value in (work_identifiers.get("doi"), raw_work.get("doi")):
         if isinstance(doi_value, str):
             stated_links.append(RawIdentifier(DOI_SCHEME, doi_value))

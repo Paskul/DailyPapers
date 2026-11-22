@@ -261,6 +261,8 @@ def _assess_topics(
         return []
     # Anchors are found by the text screening embedded: the preferred edition's title and abstract.
     screened_edition_row = select_edition_to_read(app.connection, packet.paper_id)
+    if screened_edition_row is None:
+        raise LookupError(f"paper {packet.paper_id} has no edition")
     topic_anchors = build_topic_anchors(
         app.connection,
         app.config,

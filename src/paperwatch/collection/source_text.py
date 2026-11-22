@@ -153,9 +153,12 @@ def editions_in_text_preference_order(connection: sqlite3.Connection, paper_id: 
 
 def count_network_downloads_today(connection: sqlite3.Connection, context: CollectionContext) -> int:
     day_start = format_utc_timestamp(context.started_at.replace(hour=0, minute=0, second=0, microsecond=0))
-    return connection.execute(
-        "SELECT COUNT(*) FROM edition_source_texts WHERE downloaded_from_network = 1 AND acquired_at >= ?", (day_start,)
-    ).fetchone()[0]
+    return int(
+        connection.execute(
+            "SELECT COUNT(*) FROM edition_source_texts WHERE downloaded_from_network = 1 AND acquired_at >= ?",
+            (day_start,),
+        ).fetchone()[0]
+    )
 
 
 def _is_due_for_another_attempt(context: CollectionContext, paper_id: str) -> bool:

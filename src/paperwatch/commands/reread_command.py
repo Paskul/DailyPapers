@@ -44,7 +44,7 @@ def run_reread_command(app: AppContext, arguments: argparse.Namespace) -> int:
         if enqueue_outcome == ReadingEnqueueOutcome.QUEUED:
             set_paper_status(app.connection, paper_id, "queued")
 
-    if enqueue_outcome != ReadingEnqueueOutcome.QUEUED:
+    if enqueue_outcome != ReadingEnqueueOutcome.QUEUED or reading_input is None:
         print(f"no reread queued for {paper_id}: {enqueue_outcome}")
         return 1
     print(

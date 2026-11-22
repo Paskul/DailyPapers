@@ -42,6 +42,7 @@ from paperwatch.llm.inference_reservation import (
     wait_while_inference_is_reserved,
 )
 from paperwatch.readings import enqueue_reading_if_needed
+from paperwatch.rendering.file_output import write_output_file_atomically
 from paperwatch.reporting.publication_lock import hold_report_publication_lock
 from paperwatch.reporting.report_schedule import (
     latest_due_report_date,
@@ -263,7 +264,7 @@ def test_kill_between_rename_and_database_update_republishes_the_same_bytes(
 ):
     add_reviewed_papers(app, 3, strong=True)
     test_clock.advance(hours=HOURS_TO_PASS_THE_FIRST_CUTOFF)
-    original_write = report_command.write_output_file_atomically
+    original_write = write_output_file_atomically  # rendering.file_output's (report_command imports it)
 
     def write_then_die(destination_path, file_bytes):
         original_write(destination_path, file_bytes)
@@ -339,7 +340,7 @@ def test_floor_order_and_seed_exclusion(app, test_clock):  # noqa: F811
         maximum_entries=15,
         excluded_paper_ids=frozenset(),
     )
-    order_keys = [(-entry.reading_priority, entry.paper_id) for entry in everything.entries]
+    order_keys = [(-(entry.reading_priority or 0), entry.paper_id) for entry in everything.entries]
     assert order_keys == sorted(order_keys) and len(order_keys) == 5  # score, then (same coverage) paper id
 
 

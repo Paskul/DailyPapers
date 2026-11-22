@@ -28,6 +28,7 @@ from paperwatch.activity_log import COMPONENT_REPORT, recorded_activity
 from paperwatch.app_context import AppContext
 from paperwatch.clock import utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
+from paperwatch.errors import DatabaseError
 from paperwatch.rendering.comparison_notes import restore_missing_comparison_notes
 from paperwatch.rendering.daily_report import render_daily_report
 from paperwatch.rendering.file_output import make_output_file_group_readable, write_output_file_atomically
@@ -83,7 +84,7 @@ def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
                     report_output_path,
                     active_seed_paper_ids=load_active_seed_library_paper_ids(app.connection, app.config),
                 )
-            report_row = _load_report_row(app.connection, report_date)
+            report_row = _load_existing_report_row(app.connection, report_date)
         if report_row["status"] == REPORT_STATUS_WRITING:  # stages 2 and 3 (also after a crash in them)
             with recorded_activity(app.connection, "synthesize"):
                 _synthesize_and_render(app, report_date)
@@ -91,7 +92,7 @@ def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
             published_paper_count = _publish_saved_report(app, report_date, report_output_path)  # stage 4
         run_activity.add_detail(papers=published_paper_count)
 
-    synthesis_status = _load_report_row(app.connection, report_date)["synthesis_status"]
+    synthesis_status = _load_existing_report_row(app.connection, report_date)["synthesis_status"]
     print(
         f"published report for {report_date} with {published_paper_count} paper(s) "
         f"(synthesis: {synthesis_status}): {report_output_path}"
@@ -100,7 +101,18 @@ def run_report_command(app: AppContext, arguments: argparse.Namespace) -> int:
 
 
 def _load_report_row(connection: sqlite3.Connection, report_date: str) -> sqlite3.Row | None:
-    return connection.execute("SELECT * FROM reports WHERE report_date = ?", (report_date,)).fetchone()
+    report_row: sqlite3.Row | None = connection.execute(
+        "SELECT * FROM reports WHERE report_date = ?", (report_date,)
+    ).fetchone()
+    return report_row
+
+
+def _load_existing_report_row(connection: sqlite3.Connection, report_date: str) -> sqlite3.Row:
+    """The report row a later stage relies on (stage 1 saved it)."""
+    report_row = _load_report_row(connection, report_date)
+    if report_row is None:
+        raise DatabaseError(f"the report row for {report_date} is missing")
+    return report_row
 
 
 def _synthesize_and_render(app: AppContext, report_date: str) -> None:
@@ -144,7 +156,7 @@ def _save_rendered_report(
 
 def _publish_saved_report(app: AppContext, report_date: str, report_output_path: Path) -> int:
     """Restore missing notes first, then write the saved bytes atomically, then mark the report published."""
-    report_row = _load_report_row(app.connection, report_date)
+    report_row = _load_existing_report_row(app.connection, report_date)
     item_rows = app.connection.execute(
         "SELECT review_id FROM report_items WHERE report_date = ? ORDER BY rank", (report_date,)
     ).fetchall()

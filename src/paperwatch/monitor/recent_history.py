@@ -244,11 +244,11 @@ def _job_lane(
         lane = []
         for step in sorted(job_steps, key=lambda step: step.started_at):
             entry = step.as_json(now=now)
-            job_row = job_rows.get(step.detail.get("job_id"))
+            job_row = job_rows.get(str(step.detail.get("job_id")))
             entry.update(
                 {
                     "job_id": step.detail.get("job_id"),
-                    "kind_label": JOB_KIND_LABELS.get(step.detail.get("kind"), step.detail.get("kind")),
+                    "kind_label": JOB_KIND_LABELS.get(str(step.detail.get("kind")), step.detail.get("kind")),
                     "title": titles.get(job_row["paper_id"]) if job_row else None,
                     "inferred": False,
                 }
@@ -424,7 +424,7 @@ def _events(
         add(row["last_failure_at"], "outage", "bad", f"{row['service']} unavailable: {_shorten(row['last_error'])}")
     if activity is not None:
         for step in activity.steps_by_id.values():
-            if step.step == "job" and step.outcome in ("retry", "released", "paused"):
+            if step.step == "job" and step.outcome in ("retry", "released", "paused") and step.finished_at:
                 add(
                     format_utc_timestamp(step.finished_at),
                     "job_retry",
@@ -470,7 +470,7 @@ def _day_totals(
         day_start = datetime.combine(day, datetime.min.time(), tzinfo=report_timezone)
         start_text = format_utc_timestamp(day_start)
         end_text = format_utc_timestamp(day_start + timedelta(days=1))
-        call_counts = defaultdict(int)
+        call_counts: defaultdict[str, int] = defaultdict(int)
         model_seconds = 0.0
         for row in connection.execute(
             "SELECT outcome, COUNT(*) AS call_count, SUM(duration_seconds) AS seconds FROM model_calls "
