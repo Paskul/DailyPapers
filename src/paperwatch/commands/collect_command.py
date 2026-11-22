@@ -42,19 +42,19 @@ from collections.abc import Callable
 from paperwatch.activity_log import COMPONENT_COLLECT, prune_old_activity, recorded_activity
 from paperwatch.app_context import AppContext
 from paperwatch.clock import utc_now
-from paperwatch.db import write_transaction
-from paperwatch.readings import compute_source_text_hold_until, release_readings_held_for_source_text
 from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.current_releases import collect_current_releases
 from paperwatch.collection.historical_search import historical_search_has_work, run_historical_searches
 from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
 from paperwatch.collection.source_text import acquire_source_texts
 from paperwatch.comparisons.comparison_queue import queue_comparisons_for_recent_reviews
+from paperwatch.db import write_transaction
+from paperwatch.errors import describe_failure_for_operator
+from paperwatch.network.provider_gateway import ProviderGateway
+from paperwatch.readings import compute_source_text_hold_until, release_readings_held_for_source_text
 from paperwatch.references.reference_fetch import fetch_references_of_reviewed_papers
 from paperwatch.references.reference_selection import admit_waiting_reference_selections, queue_reference_selection_jobs
 from paperwatch.references.research_branches import run_requested_research_branches
-from paperwatch.errors import describe_failure_for_operator
-from paperwatch.network.provider_gateway import ProviderGateway
 from paperwatch.research_profile import (
     build_research_profiles,
     explain_empty_research_profile,
@@ -166,9 +166,11 @@ def _queue_follow_up_work(app: AppContext, collection_context: CollectionContext
         )
         comparison_jobs = queue_comparisons_for_recent_reviews(app.connection, app.config, utc_now())
     return [
-        f"Follow-up: {selection_jobs} reference choice(s) queued for the research role, {admitted} waiting "
-        f"reference reading(s) admitted ({waiting} still waiting for the daily limit), {comparison_jobs} "
-        "comparison(s) queued"
+        (
+            f"Follow-up: {selection_jobs} reference choice(s) queued for the research role, {admitted} waiting "
+            f"reference reading(s) admitted ({waiting} still waiting for the daily limit), {comparison_jobs} "
+            "comparison(s) queued"
+        )
     ]
 
 

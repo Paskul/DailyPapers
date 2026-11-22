@@ -17,11 +17,12 @@ import argparse
 import json
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import RECORDED_PAPER_FIXTURE, PaperwatchHome, build_in_process_app
 
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import record_collected_paper
@@ -77,9 +78,7 @@ from paperwatch.seeds.seed_store import SeedSourceReference
 from paperwatch.seeds.seed_sync import import_csl_json_seed_file
 from paperwatch.sources.types import CollectedPaperRecord
 
-from conftest import RECORDED_PAPER_FIXTURE, PaperwatchHome, build_in_process_app
-
-SCREENING_MOMENT = datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc)
+SCREENING_MOMENT = datetime(2026, 11, 19, 12, 0, tzinfo=UTC)
 VECTOR_DIMENSIONS = 64
 SEED_COUNT = 10
 CANDIDATE_COUNT = 500
@@ -191,7 +190,7 @@ def five_hundred_candidates(tmp_path):
     seed_directions = seed_directions[: SEED_COUNT + 1]  # orthonormal rows; the last one is a pure-noise direction
     vector_by_text: dict[str, np.ndarray] = {}
     seed_id_by_number: dict[int, str] = {}
-    for relative_path, seed_numbers in ((ALPHA_SEED_FILE, range(0, 5)), (BETA_SEED_FILE, range(5, 10))):
+    for relative_path, seed_numbers in ((ALPHA_SEED_FILE, range(5)), (BETA_SEED_FILE, range(5, 10))):
         for seed_number, (seed_id, seed_text) in zip(
             seed_numbers, write_csl_seeds(app.config.home_dir, relative_path, seed_numbers)
         ):
@@ -692,7 +691,7 @@ def test_new_text_of_a_promoted_paper_is_queued_without_spending_a_slot(tmp_path
     promoted_id = record_collected_paper(app.connection, arxiv_version("2401.00001v1", "First text.")).paper_id
     waiting_id = record_collected_paper(app.connection, arxiv_version("2401.00002v1", "Other text.")).paper_id
     assert promote_paper_directly_and_queue_review(app.connection, promoted_id, max_attempts=3)
-    assert count_screening_promotions_today(app.connection, datetime.now(timezone.utc))["regular_count"] == 0
+    assert count_screening_promotions_today(app.connection, datetime.now(UTC))["regular_count"] == 0
 
     page_result = ingest_records_with_checkpoints(
         app.connection,
@@ -781,8 +780,10 @@ def test_real_onnx_embedder_ranks_a_related_abstract_first(tmp_path):
     assert embedder.identity == PINNED_EMBEDDING_MODELS["bge-base-en-v1.5"].identity
     for number, abstract in enumerate(
         (
-            "Runtime monitors reject unsafe joint plans of multi-robot teams before "
-            "dispatch, keeping human exits clear.",
+            (
+                "Runtime monitors reject unsafe joint plans of multi-robot teams before "
+                "dispatch, keeping human exits clear."
+            ),
             "We sequence the genome of a desert beetle and annotate its genes.",
         )
     ):

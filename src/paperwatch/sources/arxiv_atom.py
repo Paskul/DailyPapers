@@ -17,9 +17,9 @@ when arXiv's own text says so: an author comment or abstract stating that the pa
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ElementTree
 from collections import Counter
 from dataclasses import dataclass, field
+from xml.etree import ElementTree
 
 from paperwatch.errors import SourceResponseRejected
 from paperwatch.publication_dates import normalize_partial_date

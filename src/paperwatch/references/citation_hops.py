@@ -86,7 +86,7 @@ def find_reviewed_papers_to_follow(
         row["citing_paper_id"]
         for row in connection.execute(
             f"""SELECT citing_paper_id FROM reference_fetches
-            WHERE fetch_status IN ({", ".join("?" * len(FETCH_STATUSES_THAT_ARE_FINAL))}) OR attempts >= ?""",
+            WHERE fetch_status IN ({", ".join("?" * len(FETCH_STATUSES_THAT_ARE_FINAL))}) OR attempts >= ?""",  # noqa: S608  # only ? placeholders are interpolated
             (*FETCH_STATUSES_THAT_ARE_FINAL, MAXIMUM_REFERENCE_FETCH_ATTEMPTS),
         )
     }

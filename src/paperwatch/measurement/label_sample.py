@@ -57,7 +57,7 @@ class SampledCandidate:
 def draw_label_sample(
     connection: sqlite3.Connection, app_config: AppConfig, *, sample_size: int, seed: int
 ) -> list[SampledCandidate]:
-    generator = random.Random(seed)
+    generator = random.Random(seed)  # noqa: S311  # a reproducible shuffle for hand labels, not security
     active_topics = [topic for topic in app_config.topics]
     if not active_topics:
         return []

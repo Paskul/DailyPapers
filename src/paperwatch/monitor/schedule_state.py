@@ -16,22 +16,28 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from paperwatch.deployment.one_day_pilot import (
+    ALL_PILOT_UNIT_NAMES,
+)
+from paperwatch.deployment.one_day_pilot import (
+    COLLECT_TIMER as PILOT_COLLECT_TIMER,
+)
+from paperwatch.deployment.one_day_pilot import (
+    FINISH_TIMER as PILOT_FINISH_TIMER,
+)
+from paperwatch.deployment.one_day_pilot import (
+    REPORT_TIMER as PILOT_REPORT_TIMER,
+)
 from paperwatch.deployment.unit_names import (
     DAILY_COLLECT_TIMER,
     DAILY_REPORT_TIMER,
     DAILY_SERVICE_NAMES,
     DAILY_TIMER_NAMES,
     MONITOR_SERVICE,
-)
-from paperwatch.deployment.one_day_pilot import (
-    ALL_PILOT_UNIT_NAMES,
-    COLLECT_TIMER as PILOT_COLLECT_TIMER,
-    FINISH_TIMER as PILOT_FINISH_TIMER,
-    REPORT_TIMER as PILOT_REPORT_TIMER,
 )
 
 SYSTEM_UNIT_DIR = Path("/etc/systemd/system")
@@ -134,7 +140,7 @@ def read_schedule_state(
         for stamp_dir in stamp_dirs:
             stamp_path = stamp_dir / f"stamp-{timer_name}"
             try:
-                last_fired[timer_name] = datetime.fromtimestamp(stamp_path.stat().st_mtime, timezone.utc)
+                last_fired[timer_name] = datetime.fromtimestamp(stamp_path.stat().st_mtime, UTC)
                 break
             except OSError:
                 continue
@@ -223,7 +229,7 @@ def query_service_states(scope: str, unit_names: tuple[str, ...]) -> dict[str, S
         + ["show", "--no-pager", f"--property={','.join(SHOWN_PROPERTIES)}", "--", *unit_names]
     )
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603  # fixed program and arguments, no shell
             command,
             capture_output=True,
             text=True,

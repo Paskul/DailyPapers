@@ -15,6 +15,7 @@ from datetime import date
 
 import httpx
 import pytest
+from conftest import build_in_process_app
 
 from paperwatch.catalog import record_collected_paper
 from paperwatch.errors import (
@@ -31,8 +32,6 @@ from paperwatch.network.provider_rules import load_provider_access_rules, packag
 from paperwatch.network.secure_fetcher import HttpsHop, SecureHttpsFetcher
 from paperwatch.public_query_catalog import build_public_query_catalog
 from paperwatch.sources.types import CollectedPaperRecord, RawIdentifier
-
-from conftest import build_in_process_app
 
 PRIVATE_QUESTION = "Can a runtime monitor reject a joint robot plan before it blocks a human exit?"
 TOPICS_WITH_ALL_INPUTS = f"""
@@ -89,11 +88,14 @@ def app(tmp_path):
     test_app.close()
 
 
+NO_COLLECTOR_CREDENTIALS = CollectorCredentials()
+
+
 def make_gateway(
     app,
     respond=atom_response,
     *,
-    credentials=CollectorCredentials(),
+    credentials=NO_COLLECTOR_CREDENTIALS,
     rules_text=None,
     resolved_addresses=(PUBLIC_ADDRESS,),
 ):

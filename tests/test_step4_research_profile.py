@@ -16,6 +16,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from conftest import FIXTURES_DIR, build_in_process_app
 
 from paperwatch.catalog import record_collected_paper
 from paperwatch.commands.collect_command import run_collect_command
@@ -42,8 +43,6 @@ from paperwatch.seeds.seed_sync import (
 )
 from paperwatch.seeds.zotero_items import parse_zotero_items_page
 from paperwatch.sources.types import CollectedPaperRecord, RawIdentifier
-
-from conftest import FIXTURES_DIR, build_in_process_app
 
 PUBLIC_ADDRESS = "93.184.216.34"
 ZOTERO_COLLECTION_KEY = "ABCD2345"

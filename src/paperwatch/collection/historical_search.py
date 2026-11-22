@@ -274,7 +274,7 @@ def run_topic_historical_search(
             unit_checkpoints[chosen_unit.checkpoint_key],
             chosen_unit.search_target,
             maximum_pages=1,
-            extra_admission_limit=lambda: min(fair_quota, _plan_remaining(context, plan_key) or 0),
+            extra_admission_limit=lambda: min(fair_quota, _plan_remaining(context, plan_key) or 0),  # noqa: B023  # called synchronously, within this loop iteration
             related_checkpoints_after_page=lambda page_result: [_plan_after_page(context, plan_key, page_result)],
             extra_limit_stop_reason="this window's share of the topic's budget is used for now; it continues when "
             "the other windows have had theirs",

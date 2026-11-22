@@ -22,8 +22,8 @@ from enum import StrEnum
 from paperwatch.clock import parse_utc_timestamp
 from paperwatch.publication_dates import ReleaseClass, classify_release
 from paperwatch.reporting.revision_changes import (
-    RevisionChange,
     ReviewedVersion,
+    RevisionChange,
     describe_material_revision_changes,
     text_fingerprint_of_review,
 )

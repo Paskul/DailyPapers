@@ -8,7 +8,7 @@ import sqlite3
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -47,7 +47,9 @@ class PaperwatchHome:
         self.home_dir = home_dir
 
     def run_cli(self, *cli_arguments: str) -> CliResult:
-        completed = subprocess.run(self.cli_command(*cli_arguments), capture_output=True, text=True, timeout=120)
+        completed = subprocess.run(
+            self.cli_command(*cli_arguments), capture_output=True, text=True, timeout=120, check=False
+        )
         return CliResult(completed.returncode, completed.stdout, completed.stderr)
 
     def cli_command(self, *cli_arguments: str) -> list[str]:
@@ -92,7 +94,7 @@ class PaperwatchHome:
         """Plan part 9 publishes a date only after its cutoff, or early (`--early`) for today's date. A subprocess
         test cannot move the clock, so pick a report timezone in which today's 23:59 cutoff is still at least an
         hour ahead, and a floor of 0 (the fake model's ratings stay below 65). Returns today's date there."""
-        utc_moment = datetime.now(timezone.utc)
+        utc_moment = datetime.now(UTC)
         timezone_name = "UTC" if utc_moment.hour < 22 else "Etc/GMT+12"  # UTC-12: about 10:00-11:59 then
         self.replace_in_config('timezone = "America/New_York"', f'timezone = "{timezone_name}"')
         self.replace_in_config('publish_time = "07:00"', 'publish_time = "23:59"')

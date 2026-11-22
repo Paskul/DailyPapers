@@ -33,7 +33,7 @@ import argparse
 import pwd
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -154,7 +154,7 @@ def only_before_condition(deadline: datetime) -> str:
     """ExecCondition: exit 0 (run) only before `deadline`. `$$` and `%%` are systemd's escapes for `$` and `%`."""
     deadline_epoch = int(deadline.timestamp())
     return (
-        f"# Skip (never run) at or after {deadline.astimezone(timezone.utc):%Y-%m-%dT%H:%M:%SZ}, whoever starts "
+        f"# Skip (never run) at or after {deadline.astimezone(UTC):%Y-%m-%dT%H:%M:%SZ}, whoever starts "
         f"this unit.\nExecCondition=/usr/bin/sh -c 'test \"$$(date +%%s)\" -lt {deadline_epoch}'"
     )
 
@@ -299,12 +299,13 @@ Unit={FINISH_SERVICE}
 WantedBy=timers.target
 """,
     }
-    assert set(units) == set(ALL_PILOT_UNIT_NAMES)
+    if set(units) != set(ALL_PILOT_UNIT_NAMES):
+        raise RuntimeError("the rendered pilot units do not match ALL_PILOT_UNIT_NAMES")
     return units
 
 
 def describe_pilot_plan(plan: OneDayPilotPlan) -> list[str]:
-    describe = lambda moment: systemd_calendar_time(moment, plan.timezone_name)  # noqa: E731
+    describe = lambda moment: systemd_calendar_time(moment, plan.timezone_name)
     return (
         [f"Pilot {plan.pilot_date} -> report {plan.report_date}"]
         + [f"  collect  {describe(moment)}" for moment in plan.collect_moments]
@@ -325,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
     app_config = load_app_config(arguments.home)
     plan = plan_one_day_pilot(
         app_config,
-        now=datetime.now(timezone.utc),
+        now=datetime.now(UTC),
         collector_uid=pwd.getpwnam(app_config.access.collector_account).pw_uid,
         paperwatch_executable=arguments.paperwatch_executable,
     )

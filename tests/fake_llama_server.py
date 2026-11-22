@@ -11,7 +11,7 @@ import json
 import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Self
 
 FAKE_SERVER_BUILD = "fake-http-build"
 
@@ -32,11 +32,11 @@ class FakeLlamaServer:
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self.port}/v1"
 
-    def __enter__(self) -> FakeLlamaServer:
+    def __enter__(self) -> Self:
         fake_server = self
 
         class RequestHandler(BaseHTTPRequestHandler):
-            def do_GET(self) -> None:  # noqa: N802 (http.server naming)
+            def do_GET(self) -> None:
                 if self.path == "/health":
                     self._send_json(200, {"status": "ok"})
                 elif self.path == "/v1/models":
@@ -58,7 +58,7 @@ class FakeLlamaServer:
                 else:
                     self._send_json(404, {"error": "not found"})
 
-            def do_POST(self) -> None:  # noqa: N802
+            def do_POST(self) -> None:
                 request_payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake_server.received_chat_payloads.append(request_payload)
                 final_answer = fake_server._choose_final_answer(request_payload)

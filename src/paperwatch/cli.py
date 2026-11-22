@@ -21,14 +21,14 @@ from pathlib import Path
 
 from paperwatch import __version__
 from paperwatch.app_context import AppContext
+from paperwatch.commands.access_check_command import COMPONENT_COLLECTOR, COMPONENT_WORKER, run_access_check_command
 from paperwatch.commands.backup_command import run_backup_command
 from paperwatch.commands.capacity_command import run_capacity_command
-from paperwatch.commands.label_sample_command import run_label_sample_command
-from paperwatch.commands.monitor_command import add_monitor_arguments, run_monitor_command
-from paperwatch.commands.access_check_command import COMPONENT_COLLECTOR, COMPONENT_WORKER, run_access_check_command
 from paperwatch.commands.collect_command import run_collect_command
 from paperwatch.commands.doctor_command import run_doctor_command
 from paperwatch.commands.init_command import run_init_command
+from paperwatch.commands.label_sample_command import run_label_sample_command
+from paperwatch.commands.monitor_command import add_monitor_arguments, run_monitor_command
 from paperwatch.commands.report_command import run_report_command
 from paperwatch.commands.reread_command import run_reread_command
 from paperwatch.commands.retry_failed_command import add_retry_failed_arguments, run_retry_failed_command

@@ -38,7 +38,6 @@ from paperwatch.errors import (
     SourceRequestBudgetExhausted,
 )
 from paperwatch.references.bibliography_identifiers import (
-    BibliographyIdentifier,
     find_bibliography_identifiers,
     provider_title_matches_entry,
 )

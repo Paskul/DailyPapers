@@ -41,7 +41,7 @@ def main() -> int:
         leading_bytes = input_file.read(SNIFF_BYTES)
     if leading_bytes.startswith(b"%PDF-"):
         # Replace this process: pdftotext streams straight to our stdout.
-        os.execv(PDFTOTEXT_PATH, ["pdftotext", "-enc", "UTF-8", "-q", INPUT_PATH, "-"])
+        os.execv(PDFTOTEXT_PATH, ["pdftotext", "-enc", "UTF-8", "-q", INPUT_PATH, "-"])  # noqa: S606  # fixed pdftotext path and arguments; the input path is fixed too
     if leading_bytes.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"<"):
         return write_xml_text()
     print("unsupported input: neither PDF nor XML", file=sys.stderr)
@@ -57,7 +57,7 @@ def write_xml_text() -> int:
         print("refused: XML declares entities", file=sys.stderr)
         return UNSUPPORTED_INPUT_EXIT_STATUS
     try:
-        root_element = element_tree.fromstring(document_bytes)
+        root_element = element_tree.fromstring(document_bytes)  # noqa: S314  # a DOCTYPE/ENTITY is refused before parsing; expat also limits entity expansion
     except element_tree.ParseError as parse_error:
         print(f"invalid XML: {parse_error}", file=sys.stderr)
         return UNSUPPORTED_INPUT_EXIT_STATUS

@@ -132,7 +132,7 @@ def check_restored_home(restored_home: Path) -> RestoreCheck:
     manifest = json.loads(manifest_path.read_text())
     try:
         app_config = load_app_config(restored_home)
-    except Exception as load_error:  # any config problem means the restore is not usable as is
+    except Exception as load_error:  # noqa: BLE001  # any config problem means the restore is not usable as is
         return RestoreCheck([f"the restored config does not load: {load_error}"], restored_home)
     for path_name, restored_path in (("state_dir", app_config.state_dir), ("output_dir", app_config.output_dir)):
         if restored_home.resolve() not in restored_path.resolve().parents:
@@ -224,7 +224,7 @@ def _describe_database(database_path: Path) -> dict:
             "schema_version": read_schema_version(connection),
             "integrity_check": connection.execute("PRAGMA integrity_check").fetchone()[0],
             "row_counts": {
-                table_name: connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+                table_name: connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]  # noqa: S608  # table names come from COUNTED_TABLES
                 for table_name in COUNTED_TABLES
                 if table_name in existing_tables
             },

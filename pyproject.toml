@@ -92,11 +92,13 @@ extend-select = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = [
     "S101",  # assert is how pytest checks
+    "S104",  # the monitor tests check that all-interfaces addresses are refused
     "S105",  # hard-coded "passwords": test keys and placeholders
     "S106",
     "S108",  # fixed /tmp paths inside test doubles
     "S311",  # pseudo-random data for the hostile-model tests (not security relevant)
     "S603",  # the tests start the CLI and helper programs on purpose
+    "S605",  # ... and check that the egress guard blocks a shell launch
     "S607",
 ]
 

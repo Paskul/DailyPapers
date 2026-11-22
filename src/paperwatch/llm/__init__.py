@@ -17,7 +17,7 @@ FAKE_MODEL_DELAY_ENVIRONMENT_VARIABLE = "PAPERWATCH_FAKE_MODEL_DELAY_SECONDS"
 def build_model_client(model_settings: ModelSettings) -> ModelClient:
     if model_settings.backend == "fake":
         # Imported here to avoid a cycle: the healthcheck role imports from paperwatch.llm.
-        from paperwatch.roles.healthcheck import HEALTHCHECK_ROLE, HEALTHCHECK_EXPECTED_FINAL_ANSWER
+        from paperwatch.roles.healthcheck import HEALTHCHECK_EXPECTED_FINAL_ANSWER, HEALTHCHECK_ROLE
 
         return FakeModelClient(
             {HEALTHCHECK_ROLE.role_name: HEALTHCHECK_EXPECTED_FINAL_ANSWER},

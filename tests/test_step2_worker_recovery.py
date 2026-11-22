@@ -12,6 +12,7 @@ import signal
 import time
 
 import pytest
+from conftest import ARXIV_ROUTE_FIXTURE, OPENALEX_ROUTE_FIXTURE, RECORDED_PAPER_FIXTURE, PaperwatchHome
 
 from paperwatch.app_context import AppContext
 from paperwatch.commands import work_command
@@ -19,8 +20,6 @@ from paperwatch.commands.work_command import WorkCycleOutcome, handle_review_pap
 from paperwatch.jobs import claim_next_due_job, finish_job_with_writes
 from paperwatch.llm import FAKE_MODEL_DELAY_ENVIRONMENT_VARIABLE
 from paperwatch.llm.fake_client import FakeModelClient
-
-from conftest import ARXIV_ROUTE_FIXTURE, OPENALEX_ROUTE_FIXTURE, RECORDED_PAPER_FIXTURE, PaperwatchHome
 
 SLOW_FAKE_MODEL = {FAKE_MODEL_DELAY_ENVIRONMENT_VARIABLE: "6"}
 # Stored timestamps have whole-second resolution, so a lease of N seconds lasts between N-1 and N seconds. A 3 s

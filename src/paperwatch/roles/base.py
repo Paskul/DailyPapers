@@ -29,6 +29,7 @@ limit shrink to the time left, and no call starts after the deadline (ModelCallD
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
 import time
@@ -123,7 +124,8 @@ def run_role_with_one_repair(
 ) -> RoleRunResult:
     """Run the role; if its answer is invalid, ask once more with the problems listed. Outages, timeouts and lock
     waits propagate unchanged (they are retried by the worker). Two invalid answers end the job with both reasons."""
-    call_options = dict(
+    run_this_role_once = functools.partial(
+        run_role_once,
         role_definition=role_definition,
         role_input=role_input,
         app_config=app_config,
@@ -134,10 +136,10 @@ def run_role_with_one_repair(
         holds_inference_reservation=holds_inference_reservation,
     )
     try:
-        return run_role_once(**call_options, salvage_policy=SALVAGE_IF_AT_MOST_HALF_DROPPED)
+        return run_this_role_once(salvage_policy=SALVAGE_IF_AT_MOST_HALF_DROPPED)
     except ModelOutputInvalid as first_rejection:
         try:
-            return run_role_once(**call_options, rejected_first_answer=first_rejection, salvage_policy=SALVAGE_ALWAYS)
+            return run_this_role_once(rejected_first_answer=first_rejection, salvage_policy=SALVAGE_ALWAYS)
         except ModelOutputInvalid as second_rejection:
             if first_rejection.salvage is not None:
                 return _result_from_salvaged_first_answer(

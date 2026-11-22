@@ -121,7 +121,7 @@ def measure_capacity(
     ).fetchone()
     oldest_queued_review_hours = None
     if queued_row["oldest"]:
-        oldest_moment = datetime.fromisoformat(queued_row["oldest"].replace("Z", "+00:00"))
+        oldest_moment = datetime.fromisoformat(queued_row["oldest"])
         oldest_queued_review_hours = (window_end - oldest_moment).total_seconds() / 3600.0
     return CapacityMeasurement(
         window_start=window_start,
@@ -193,9 +193,11 @@ def _reserved_minutes_per_day(roles: list[RoleCallSummary], window_hours: float,
 
 def describe_capacity(measurement: CapacityMeasurement) -> list[str]:
     lines = [
-        f"Capacity over {measurement.window_minutes / 60:.1f} h "
-        f"({format_utc_timestamp(measurement.window_start)} .. {format_utc_timestamp(measurement.window_end)}): "
-        f"model busy {measurement.model_busy_fraction:.0%} of the time"
+        (
+            f"Capacity over {measurement.window_minutes / 60:.1f} h "
+            f"({format_utc_timestamp(measurement.window_start)} .. {format_utc_timestamp(measurement.window_end)}): "
+            f"model busy {measurement.model_busy_fraction:.0%} of the time"
+        )
     ]
     if not measurement.roles:
         return lines + ["  no model calls in this window"]

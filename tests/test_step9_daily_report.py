@@ -17,16 +17,19 @@ import re
 import threading
 import time
 from dataclasses import replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
+from conftest import build_in_process_app
+from test_step5_collection import START_OF_TEST_WEEK, test_clock  # noqa: F401  (pytest fixture)
+from test_step7_evidence_reading import PARAGRAPH_FILLER, drain, install_extracted_text
 
 from paperwatch.catalog import record_collected_paper
 from paperwatch.clock import utc_now
 from paperwatch.commands import report_command
 from paperwatch.commands.report_command import run_report_command
-from paperwatch.config import ReportSettings
 from paperwatch.commands.reread_command import run_reread_command
+from paperwatch.config import ReportSettings
 from paperwatch.db import connect_database, write_transaction
 from paperwatch.dispatch_order import dispatch_order_for_operator_request
 from paperwatch.errors import ModelOutputInvalid, ModelServerUnavailable, ReportNotDueYet, ReportPublicationInProgress
@@ -38,6 +41,7 @@ from paperwatch.llm.inference_reservation import (
     reserve_inference_slot,
     wait_while_inference_is_reserved,
 )
+from paperwatch.readings import enqueue_reading_if_needed
 from paperwatch.reporting.publication_lock import hold_report_publication_lock
 from paperwatch.reporting.report_schedule import (
     latest_due_report_date,
@@ -45,17 +49,12 @@ from paperwatch.reporting.report_schedule import (
     scheduled_cutoff_for_report_date,
 )
 from paperwatch.reporting.report_selection import select_report_entries
-from paperwatch.readings import enqueue_reading_if_needed
 from paperwatch.reporting.revision_changes import ReviewedVersion, describe_material_revision_changes
 from paperwatch.roles.base import parse_and_validate_role_output, run_role_once
 from paperwatch.roles.healthcheck import HEALTHCHECK_ROLE
 from paperwatch.roles.writer import WRITER_ROLE
 from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.sources.types import CollectedPaperRecord
-
-from conftest import build_in_process_app
-from test_step5_collection import START_OF_TEST_WEEK, test_clock  # noqa: F401  (pytest fixture)
-from test_step7_evidence_reading import PARAGRAPH_FILLER, drain, install_extracted_text
 
 FIRST_REPORT_DATE = "2026-11-16"  # START_OF_TEST_WEEK is 2026-11-16 11:00 UTC = 06:00 in New York
 HOURS_TO_PASS_THE_FIRST_CUTOFF = 2  # 13:00 UTC = 08:00 New York, after the 07:00 cutoff
@@ -649,23 +648,17 @@ def test_a_writer_that_misses_its_deadline_gives_the_fallback(tmp_path, test_clo
 
 def test_the_cutoff_follows_local_time_across_daylight_saving_changes():
     settings = ReportSettings()
-    assert scheduled_cutoff_for_report_date(date(2026, 3, 7), settings) == datetime(
-        2026, 3, 7, 12, 0, tzinfo=timezone.utc
-    )
-    assert scheduled_cutoff_for_report_date(date(2026, 3, 8), settings) == datetime(
-        2026, 3, 8, 11, 0, tzinfo=timezone.utc
-    )
-    assert scheduled_cutoff_for_report_date(date(2026, 11, 1), settings) == datetime(
-        2026, 11, 1, 12, 0, tzinfo=timezone.utc
-    )
-    before_cutoff = datetime(2026, 11, 16, 11, 59, tzinfo=timezone.utc)
+    assert scheduled_cutoff_for_report_date(date(2026, 3, 7), settings) == datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
+    assert scheduled_cutoff_for_report_date(date(2026, 3, 8), settings) == datetime(2026, 3, 8, 11, 0, tzinfo=UTC)
+    assert scheduled_cutoff_for_report_date(date(2026, 11, 1), settings) == datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
+    before_cutoff = datetime(2026, 11, 16, 11, 59, tzinfo=UTC)
     assert latest_due_report_date(before_cutoff, settings) == date(2026, 11, 15)
     assert latest_due_report_date(before_cutoff + timedelta(minutes=1), settings) == date(2026, 11, 16)
 
 
 def test_a_report_that_is_not_due_needs_early_and_only_for_today():
     settings = ReportSettings()
-    before_cutoff = datetime(2026, 11, 16, 11, 0, tzinfo=timezone.utc)
+    before_cutoff = datetime(2026, 11, 16, 11, 0, tzinfo=UTC)
     with pytest.raises(ReportNotDueYet):
         resolve_report_timing(settings, before_cutoff, "2026-11-16", publish_early=False)
     with pytest.raises(ReportNotDueYet):
@@ -690,9 +683,11 @@ def test_an_early_report_says_so_and_later_completions_go_to_the_next_report(app
 
 def test_one_publication_process_at_a_time(app, test_clock):  # noqa: F811
     test_clock.advance(hours=HOURS_TO_PASS_THE_FIRST_CUTOFF)
-    with hold_report_publication_lock(app.config.report_publication_lock_path):
-        with pytest.raises(ReportPublicationInProgress):
-            run_report_command(app, argparse.Namespace(report_date=None, publish_early=False))
+    with (
+        hold_report_publication_lock(app.config.report_publication_lock_path),
+        pytest.raises(ReportPublicationInProgress),
+    ):
+        run_report_command(app, argparse.Namespace(report_date=None, publish_early=False))
     assert app.connection.execute("SELECT COUNT(*) FROM reports").fetchone()[0] == 0
     publish(app)
     assert app.connection.execute("SELECT report_date FROM reports").fetchone()[0] == FIRST_REPORT_DATE

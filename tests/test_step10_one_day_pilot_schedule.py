@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -116,6 +116,7 @@ def test_systemd_itself_computes_no_second_elapse_for_any_timer(pilot):
                 capture_output=True,
                 text=True,
                 timeout=30,
+                check=False,
             )
             assert f"Normalized form: {calendar_time}" in analysis.stdout, analysis.stdout + analysis.stderr
             assert "Iteration #2" not in analysis.stdout, f"{calendar_time} would elapse more than once"
@@ -142,11 +143,11 @@ def test_the_expiry_condition_really_skips_after_its_deadline(pilot, deadline_of
     """Run the ExecCondition command line exactly as systemd would (after its `$$`/`%%` unescaping)."""
     _plan, units, _texts = pilot
     rendered_condition = values(units[WORKER_SERVICE], "Service", "ExecCondition")[0]
-    deadline_epoch = int(datetime.now(timezone.utc).timestamp()) + deadline_offset_seconds
+    deadline_epoch = int(datetime.now(UTC).timestamp()) + deadline_offset_seconds
     command_line = re.sub(r"-lt \d+", f"-lt {deadline_epoch}", rendered_condition)
     shell_script = command_line.removeprefix("/usr/bin/sh -c '").removesuffix("'")
     shell_script = shell_script.replace("$$", "$").replace("%%", "%")
-    assert subprocess.run(["sh", "-c", shell_script], timeout=10).returncode == expected_exit_code
+    assert subprocess.run(["sh", "-c", shell_script], timeout=10, check=False).returncode == expected_exit_code
 
 
 def test_the_finish_step_disables_and_deletes_every_pilot_unit(pilot):

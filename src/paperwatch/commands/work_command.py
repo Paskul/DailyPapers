@@ -24,6 +24,7 @@ Saved stage results of a long paper are kept, so the next run continues with the
 from __future__ import annotations
 
 import argparse
+import functools
 import logging
 import signal
 import sqlite3
@@ -36,8 +37,9 @@ from paperwatch.activity_log import COMPONENT_WORKER, recorded_activity
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import load_edition_row, set_paper_status
 from paperwatch.clock import utc_now, utc_now_timestamp
+from paperwatch.comparisons.comparison_job import prepare_comparison, write_comparison
+from paperwatch.comparisons.comparison_queue import ComparisonJobInput, queue_comparison_for_review
 from paperwatch.db import write_transaction
-from paperwatch.service_log_redaction import redact_service_log_text
 from paperwatch.errors import (
     InferenceLockTimeout,
     ModelServerUnavailable,
@@ -46,8 +48,6 @@ from paperwatch.errors import (
     UnexpectedWorkerError,
     describe_failure_for_operator,
 )
-from paperwatch.comparisons.comparison_job import prepare_comparison, write_comparison
-from paperwatch.comparisons.comparison_queue import ComparisonJobInput, queue_comparison_for_review
 from paperwatch.jobs import (
     ATTEMPT_SETTLEMENT_FAILED_PERMANENTLY,
     ATTEMPT_SETTLEMENT_LEASE_LOST,
@@ -85,6 +85,7 @@ from paperwatch.review_store import insert_completed_reading
 from paperwatch.roles.base import run_role_with_one_repair
 from paperwatch.roles.comparison import COMPARISON_ROLE
 from paperwatch.roles.research import RESEARCH_ROLE
+from paperwatch.service_log_redaction import redact_service_log_text
 from paperwatch.worker_stop import (
     WorkerStopRequested,
     request_worker_stop,
@@ -469,11 +470,12 @@ def _release_job_after_stop_request(
 
 
 def _settle_failed_job(app: AppContext, claimed_job: ClaimedJob, failure: PaperwatchError) -> WorkCycleReport:
-    job_reference = dict(job_id=claimed_job.job_id, paper_id=claimed_job.paper_id, failure=failure)
-    lease_lost_report = WorkCycleReport(
+    report_about_this_job = functools.partial(
+        WorkCycleReport, job_id=claimed_job.job_id, paper_id=claimed_job.paper_id, failure=failure
+    )
+    lease_lost_report = report_about_this_job(
         WorkCycleOutcome.LEASE_LOST,
         f"{failure}; lease on {claimed_job.job_id} was already lost, so the newer worker's state is left untouched",
-        **job_reference,
     )
     with write_transaction(app.connection):
         if failure.is_service_outage or isinstance(failure, InferenceLockTimeout):
@@ -510,7 +512,7 @@ def _settle_failed_job(app: AppContext, claimed_job: ClaimedJob, failure: Paperw
             set_paper_status(app.connection, claimed_job.paper_id, paper_status)
     if claimed_job.paper_id:
         message += f"; paper {claimed_job.paper_id} is preserved"
-    return WorkCycleReport(outcome, message, **job_reference)
+    return report_about_this_job(outcome, message)
 
 
 # --------------------------------------------------------------------------------------------------------------------

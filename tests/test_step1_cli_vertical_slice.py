@@ -3,9 +3,9 @@ model endpoint unavailable. The CLI must report which component failed and prese
 
 from __future__ import annotations
 
-from paperwatch.roles.reviewer import REVIEWER_PROMPT_VERSION
-
 from conftest import RECORDED_PAPER_FIXTURE, PaperwatchHome
+
+from paperwatch.roles.reviewer import REVIEWER_PROMPT_VERSION
 
 
 def test_recorded_paper_flows_through_cli_with_fake_model(initialized_home: PaperwatchHome) -> None:

@@ -152,14 +152,20 @@ def _render_metadata_lines(selected_review: SelectedReview) -> list[str]:
     paper_row, review_row = selected_review.paper_row, selected_review.review_row
     return [
         f"- Authors: {escape_untrusted_inline_text(', '.join(json.loads(paper_row['authors_json']))) or 'unknown'}",
-        f"- First published: {escape_untrusted_inline_text(paper_row['first_published_date']) or 'unknown'}"
-        f" · source version: {escape_untrusted_inline_text(paper_row['source_version']) or 'unknown'}",
+        (
+            f"- First published: {escape_untrusted_inline_text(paper_row['first_published_date']) or 'unknown'}"
+            f" · source version: {escape_untrusted_inline_text(paper_row['source_version']) or 'unknown'}"
+        ),
         f"- Source: {_render_source_links(selected_review.paper_aliases)}",
-        f"- Paper id: `{paper_row['paper_id']}` · review id: `{review_row['review_id']}` · edition id: "
-        f"`{review_row['edition_id']}`",
-        f"- Reviewed {review_row['completed_at']} · model "
-        f"{escape_untrusted_inline_text(review_row['model_identity'])} · build "
-        f"{escape_untrusted_inline_text(review_row['server_build'])} · prompt {review_row['prompt_version']}",
+        (
+            f"- Paper id: `{paper_row['paper_id']}` · review id: `{review_row['review_id']}` · edition id: "
+            f"`{review_row['edition_id']}`"
+        ),
+        (
+            f"- Reviewed {review_row['completed_at']} · model "
+            f"{escape_untrusted_inline_text(review_row['model_identity'])} · build "
+            f"{escape_untrusted_inline_text(review_row['server_build'])} · prompt {review_row['prompt_version']}"
+        ),
     ]
 
 
@@ -235,8 +241,10 @@ def _render_topic_scores(selected_review: SelectedReview) -> list[str]:
             f"- Why: {escape_untrusted_inline_text(topic_assessment.rationale) or 'no rationale given'}",
             f"- Matched seeds: {'; '.join(matched_seeds) or 'none'}",
             f"- Compared reviews: {', '.join(compared_reviews) or 'none'}",
-            f"- Topic profile `{topic_assessment.topic_profile_sha256[:12]}` (a changed question or seed "
-            "set gets a new assessment; the reading is reused)",
+            (
+                f"- Topic profile `{topic_assessment.topic_profile_sha256[:12]}` (a changed question or seed "
+                "set gets a new assessment; the reading is reused)"
+            ),
             "",
         ]
     return score_lines
@@ -246,8 +254,10 @@ def _render_reading_coverage(reading_record: dict[str, Any], coverage: str) -> l
     if not reading_record:
         return [f"- Coverage: {coverage}."]
     coverage_lines = [
-        f"- Text read: {reading_record.get('text_kind', 'abstract')} · coverage {coverage} · "
-        f"{reading_record.get('passage_count', 0)} passage(s)"
+        (
+            f"- Text read: {reading_record.get('text_kind', 'abstract')} · coverage {coverage} · "
+            f"{reading_record.get('passage_count', 0)} passage(s)"
+        )
     ]
     sections_read = reading_record.get("sections_read", [])
     if reading_record.get("text_kind") == "extracted_text":

@@ -15,9 +15,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import PROMPT_INJECTION_FIXTURE, build_in_process_app
+from fake_llama_server import FakeLlamaServer
 
 from paperwatch.catalog import record_collected_paper
-from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.commands.report_command import run_report_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
 from paperwatch.errors import ModelOutputInvalid
@@ -28,10 +29,8 @@ from paperwatch.rendering.markdown_safety import escape_untrusted_inline_text
 from paperwatch.roles.base import parse_and_validate_role_output
 from paperwatch.roles.reviewer import REVIEWER_ROLE
 from paperwatch.roles.topic_assessor import TOPIC_ASSESSOR_ROLE
+from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.sources.fixture_source import RecordedFixtureSource
-
-from conftest import PROMPT_INJECTION_FIXTURE, build_in_process_app
-from fake_llama_server import FakeLlamaServer
 
 INJECTION_MARKER = "SYNTHETIC INJECTION FIXTURE"
 EXFILTRATION_HOST = "exfil.example"

@@ -136,9 +136,11 @@ def test_stage_validates_with_the_application_and_writes_shell_safe_values(tmp_p
         [
             "bash",
             "-c",
-            f"source {shlex.quote(str(stage_dir / 'setup.env'))} && "
-            'printf "%s|%s|%s|%s" "$PAPERWATCH_HOME" "$SETUP_MODE" "$MODEL_PORT" '
-            '"$DAILY_SCHEDULE"',
+            (
+                f"source {shlex.quote(str(stage_dir / 'setup.env'))} && "
+                'printf "%s|%s|%s|%s" "$PAPERWATCH_HOME" "$SETUP_MODE" "$MODEL_PORT" '
+                '"$DAILY_SCHEDULE"'
+            ),
         ],
         capture_output=True,
         text=True,
@@ -286,12 +288,13 @@ def test_rendered_units_pass_systemd_analyze(staged_config, tmp_path):
         ["systemd-analyze", "verify", "--man=no", *sorted(str(path) for path in unit_dir.iterdir())],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
 
 
 def test_setup_script_is_valid_bash_and_check_mode_changes_nothing(tmp_path):
-    assert subprocess.run(["bash", "-n", str(REPOSITORY_DIR / "setup.sh")]).returncode == 0
+    assert subprocess.run(["bash", "-n", str(REPOSITORY_DIR / "setup.sh")], check=False).returncode == 0
     settings_path = write_settings(
         tmp_path, example_with(home=str(tmp_path / "home"), mode="local", credentials_file="")
     )
@@ -300,6 +303,7 @@ def test_setup_script_is_valid_bash_and_check_mode_changes_nothing(tmp_path):
         capture_output=True,
         text=True,
         timeout=300,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert "Settings are valid" in result.stdout

@@ -19,7 +19,6 @@ import unicodedata
 from collections.abc import Iterable, Mapping
 from decimal import Decimal, InvalidOperation
 
-
 MINIMUM_EXCERPT_WORDS = 3
 MAXIMUM_EXCERPT_WORDS = 60
 NUMBER_PATTERN = re.compile(r"(?<![\w.])[-+−]?\d+(?:,\d{3})*(?:\.\d+)?(?![\w])")
@@ -150,8 +149,10 @@ def check_numbers_occur_in_passages(
     ]
     if unsupported_numbers:
         return [
-            f"{where}: the number(s) {', '.join(unsupported_numbers)} do not occur in the cited passage(s) "
-            f"{', '.join(cited_passage_ids)}"
+            (
+                f"{where}: the number(s) {', '.join(unsupported_numbers)} do not occur in the cited passage(s) "
+                f"{', '.join(cited_passage_ids)}"
+            )
         ]
     return []
 

@@ -142,10 +142,10 @@ def build_request_handler(snapshot_provider: SnapshotProvider, allowed_host_name
         server_version = "paperwatch-monitor"
         sys_version = ""
 
-        def do_GET(self) -> None:  # noqa: N802 (http.server's naming)
+        def do_GET(self) -> None:
             self._respond(include_body=True)
 
-        def do_HEAD(self) -> None:  # noqa: N802
+        def do_HEAD(self) -> None:
             self._respond(include_body=False)
 
         def _respond(self, *, include_body: bool) -> None:
@@ -202,10 +202,10 @@ def build_request_handler(snapshot_provider: SnapshotProvider, allowed_host_name
             if include_body:
                 self.wfile.write(body)
 
-        def do_POST(self) -> None:  # noqa: N802 -- read-only server
+        def do_POST(self) -> None:
             self._send(HTTPStatus.METHOD_NOT_ALLOWED, b"read-only\n", "text/plain; charset=utf-8", True)
 
-        do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_POST  # noqa: N815
+        do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_POST
 
         def log_message(self, format_text: str, *arguments: Any) -> None:
             LOGGER.debug("monitor %s: " + format_text, self.client_address[0], *arguments)

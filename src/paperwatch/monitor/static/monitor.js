@@ -1,5 +1,6 @@
 // paperwatch monitor page. Reads /api/snapshot every REFRESH_MS and renders it; counters tick every second.
 // Paper titles and error texts are untrusted: they are only ever inserted with textContent, never as HTML.
+// biome-ignore lint/suspicious/noRedundantUseStrict: index.html loads this file as a classic script, not a module
 "use strict";
 
 const REFRESH_MS = 15000;
@@ -51,16 +52,16 @@ const state = {
 
 function readStoredNumber(key, fallback) {
   try {
-    const value = Number(localStorage.getItem("paperwatch-monitor-" + key));
+    const value = Number(localStorage.getItem(`paperwatch-monitor-${key}`));
     return value > 0 ? value : fallback;
-  } catch (error) {
+  } catch {
     return fallback;
   }
 }
 function storeValue(key, value) {
   try {
-    localStorage.setItem("paperwatch-monitor-" + key, String(value));
-  } catch (error) {
+    localStorage.setItem(`paperwatch-monitor-${key}`, String(value));
+  } catch {
     /* private mode */
   }
 }
@@ -196,7 +197,7 @@ function render(snapshot) {
   renderStatusCards(snapshot);
   renderCurrentJobs(snapshot.now.worker);
   renderTimeline(snapshot);
-  renderPlan(snapshot.plan, snapshot.now.report);
+  renderPlan(snapshot.plan);
   renderQueue(snapshot.plan.queue);
   renderEvents(snapshot.history.events);
   renderDays(snapshot.history.days);
@@ -333,7 +334,7 @@ function renderCurrentJobs(worker) {
       );
     meta.append(el("span", "source-tag", job.source === "activity" ? "exact" : "inferred"));
     card.append(meta);
-    if (job.progress && job.progress.total) {
+    if (job.progress?.total) {
       const bar = el("div", "progress");
       const fill = el("div");
       fill.style.width = `${Math.min(100, (100 * job.progress.done) / job.progress.total)}%`;
@@ -661,7 +662,7 @@ function renderTimelineLegend(lanesData) {
 // Plan, queue, events, days, budgets
 // ---------------------------------------------------------------------------------------------------------------
 
-function renderPlan(plan, report) {
+function renderPlan(plan) {
   const container = document.getElementById("plan");
   container.replaceChildren();
   const sourceText = {
@@ -846,7 +847,7 @@ function renderBudgets(budgets) {
   for (const budget of budgets) {
     const row = el("div", "meter-row");
     row.append(el("span", null, budget.label));
-    const meter = el("div", "meter" + (budget.limit && budget.used >= budget.limit ? " full" : ""));
+    const meter = el("div", `meter${budget.limit && budget.used >= budget.limit ? " full" : ""}`);
     const fill = el("div");
     fill.style.width = `${budget.limit ? Math.min(100, (100 * budget.used) / budget.limit) : 0}%`;
     meter.append(fill);

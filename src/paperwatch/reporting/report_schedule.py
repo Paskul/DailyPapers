@@ -17,7 +17,7 @@ Which date `report` publishes:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from paperwatch.config import ReportSettings
@@ -45,7 +45,7 @@ def scheduled_cutoff_for_report_date(report_date: date, report_settings: ReportS
     local_cutoff = datetime.combine(
         report_date, parse_clock_time(report_settings.publish_time), tzinfo=ZoneInfo(report_settings.timezone)
     )
-    return local_cutoff.astimezone(timezone.utc)
+    return local_cutoff.astimezone(UTC)
 
 
 def local_date_at(moment: datetime, report_settings: ReportSettings) -> date:
@@ -91,6 +91,6 @@ def resolve_report_timing(
     return ReportTiming(
         report_date.isoformat(),
         scheduled_cutoff_at,
-        moment.astimezone(timezone.utc).replace(microsecond=0),
+        moment.astimezone(UTC).replace(microsecond=0),
         published_early=True,
     )

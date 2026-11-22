@@ -102,7 +102,8 @@ FULL_TEXT_EDITION_ORDER_SQL = """CASE WHEN edition_key LIKE 'arxiv:%' THEN 0 WHE
 
 def select_edition_to_read(connection: sqlite3.Connection, paper_id: str) -> sqlite3.Row | None:
     return connection.execute(
-        f"SELECT * FROM paper_editions WHERE paper_id = ? ORDER BY {PREFERRED_EDITION_ORDER_SQL} LIMIT 1", (paper_id,)
+        f"SELECT * FROM paper_editions WHERE paper_id = ? ORDER BY {PREFERRED_EDITION_ORDER_SQL} LIMIT 1",  # noqa: S608  # interpolates module constants only; values are bound
+        (paper_id,),
     ).fetchone()
 
 
@@ -122,7 +123,7 @@ def select_reading_input(
                 WHERE edition.paper_id = ? AND source_text.extraction_status = 'extracted'
                   AND source_text.normalized_text_sha256 IS NOT NULL
                   AND source_text.extracted_text_characters >= ?)
-            SELECT * FROM readable_editions ORDER BY {FULL_TEXT_EDITION_ORDER_SQL} LIMIT 1""",
+            SELECT * FROM readable_editions ORDER BY {FULL_TEXT_EDITION_ORDER_SQL} LIMIT 1""",  # noqa: S608  # interpolates module constants only; values are bound
         (paper_id, MINIMUM_USABLE_EXTRACTED_TEXT_CHARACTERS),
     ).fetchone()
     if extracted_row is not None:

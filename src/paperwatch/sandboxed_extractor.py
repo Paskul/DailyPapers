@@ -93,7 +93,7 @@ def extract_text_in_sandbox(
     command = build_extractor_container_command(extractor_settings, input_file_path, container_name)
     started_monotonic = time.monotonic()
     try:
-        extractor_process = subprocess.Popen(
+        extractor_process = subprocess.Popen(  # noqa: S603  # fixed program and arguments, no shell
             command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -180,7 +180,7 @@ def _stop_container(extractor_process: subprocess.Popen, container_runtime: str,
     extractor_process.kill()
     extractor_process.wait()
     try:
-        subprocess.run(
+        subprocess.run(  # noqa: S603  # fixed program and arguments, no shell
             [container_runtime, "rm", "--force", container_name],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,

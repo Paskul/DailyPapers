@@ -7,8 +7,8 @@ a request. XML is parsed only after refusing document type declarations, so no e
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ElementTree
 from collections.abc import Iterable
+from xml.etree import ElementTree
 
 from paperwatch.errors import SourceInputError, SourceResponseRejected
 from paperwatch.scholarly_identifiers import normalize_identifier
@@ -62,6 +62,6 @@ def parse_untrusted_xml(body_bytes: bytes, source_label: str) -> ElementTree.Ele
     if b"<!DOCTYPE" in body_bytes[:XML_PROLOGUE_BYTES_CHECKED_FOR_DOCTYPE].upper():
         raise SourceResponseRejected(f"{source_label}: response declares a document type; refused")
     try:
-        return ElementTree.fromstring(body_bytes)
+        return ElementTree.fromstring(body_bytes)  # noqa: S314  # a DOCTYPE/ENTITY is refused before parsing; expat also limits entity expansion
     except ElementTree.ParseError as parse_error:
         raise SourceResponseRejected(f"{source_label}: response is not well-formed XML ({parse_error})") from None

@@ -6,16 +6,17 @@ kept apart, and a reading repeated only for changed text or an explicit operator
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from conftest import EXAMPLE_TOPIC_TOML
 
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import record_collected_paper
-from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.commands.init_command import run_init_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
 from paperwatch.db import apply_pending_migrations, connect_database
@@ -29,6 +30,7 @@ from paperwatch.research_graph import (
     resolve_citation_edges,
 )
 from paperwatch.scholarly_identifiers import NormalizedIdentifier, normalize_identifier
+from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.source_checkpoints import (
     SearchCoverageStatus,
     SourceCheckpoint,
@@ -36,8 +38,6 @@ from paperwatch.source_checkpoints import (
     save_source_checkpoint,
 )
 from paperwatch.sources.types import CollectedPaperRecord, RawIdentifier
-
-from conftest import EXAMPLE_TOPIC_TOML
 
 BASE_RECORD = CollectedPaperRecord(
     provider="arxiv",
@@ -77,7 +77,7 @@ def drain_queue(app: AppContext) -> list[WorkCycleOutcome]:
 
 
 def count_rows(connection: sqlite3.Connection, table_name: str) -> int:
-    return connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+    return connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]  # noqa: S608  # table names come from COUNTED_TABLES
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -283,7 +283,7 @@ def test_changed_text_gets_a_new_reading_and_identical_text_does_not(tmp_path):
 def test_abstract_arriving_for_title_only_record_supersedes_the_queued_title_reading(tmp_path):
     fake_model = FakeModelClient()
     app = load_test_app(tmp_path, fake_model)
-    paper_id, was_queued = collect(app, replace(BASE_RECORD, abstract=None))
+    _paper_id, was_queued = collect(app, replace(BASE_RECORD, abstract=None))
     assert was_queued
     assert collect(app, BASE_RECORD)[1]  # same edition, now with its abstract: newly available text
 
@@ -315,7 +315,7 @@ def test_operator_reread_gets_its_own_generation_and_review(initialized_home):
     assert initialized_home.run_cli("work", "--once").exit_code == 0
 
     review_rows = initialized_home.query("SELECT reading_generation, review_input_key FROM reviews ORDER BY rowid")
-    assert [row["reading_generation"] for row in review_rows][0] == "initial"
+    assert review_rows[0]["reading_generation"] == "initial"
     assert review_rows[1]["reading_generation"].startswith("g_")
     assert review_rows[1]["review_input_key"].endswith(f":generation:{review_rows[1]['reading_generation']}")
     [reread_job] = initialized_home.query("SELECT priority, input_json FROM jobs WHERE priority = 0")
@@ -402,7 +402,9 @@ def test_citation_edges_and_comparisons_are_unique(tmp_path):
     assert build_comparison_key("team-safety", "ab" * 32, review_id_a, review_id_b) == build_comparison_key(
         "team-safety", "ab" * 32, review_id_b, review_id_a
     )
-    comparison_arguments = dict(
+    record_this_comparison = functools.partial(
+        record_comparison,
+        app.connection,
         topic_id="team-safety",
         question_sha256="ab" * 32,
         comparison_output={"x": 1},
@@ -411,12 +413,8 @@ def test_citation_edges_and_comparisons_are_unique(tmp_path):
         model_identity="m",
         server_build="b",
     )
-    first_id, first_is_new = record_comparison(
-        app.connection, review_id_a=review_id_a, review_id_b=review_id_b, **comparison_arguments
-    )
-    second_id, second_is_new = record_comparison(
-        app.connection, review_id_a=review_id_b, review_id_b=review_id_a, **comparison_arguments
-    )
+    first_id, first_is_new = record_this_comparison(review_id_a=review_id_a, review_id_b=review_id_b)
+    second_id, second_is_new = record_this_comparison(review_id_a=review_id_b, review_id_b=review_id_a)
     assert first_is_new and not second_is_new and first_id == second_id
     assert count_rows(app.connection, "comparisons") == 1
 

@@ -88,7 +88,7 @@ from paperwatch.seeds.seed_items import SEED_DISCOVERY_ROUTE_PREFIXES
 from paperwatch.source_cache import INTERNAL_ID_PATTERN, CachedSourceFile, store_source_bytes
 
 PROVIDER_SERVICE_NAME_PREFIX = "provider:"
-CREDENTIAL_SECRET_FIELD = "api_key"
+CREDENTIAL_SECRET_FIELD = "api_key"  # noqa: S105  # a field or option name, not a secret
 STATUS_CODES_MEANING_RECORD_NOT_FOUND = frozenset({404, 410})
 STATUS_CODES_MEANING_PROVIDER_UNAVAILABLE = frozenset({401, 403, 429})  # plus every 5xx
 

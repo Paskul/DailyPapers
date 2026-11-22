@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 import statistics
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp
@@ -114,7 +114,7 @@ def describe_queue(connection: sqlite3.Connection, *, now: datetime) -> dict[str
     class_rows = connection.execute(
         f"""SELECT {EFFECTIVE_PRIORITY_CLASS_SQL} AS effective_class, COUNT(*) AS job_count, MIN(created_at) AS oldest,
                    SUM(due_at > :now) AS held_count
-            FROM jobs WHERE status = 'queued' GROUP BY effective_class ORDER BY effective_class""",
+            FROM jobs WHERE status = 'queued' GROUP BY effective_class ORDER BY effective_class""",  # noqa: S608  # interpolates module constants only; values are bound
         {"now": now_text},
     ).fetchall()
     next_rows = connection.execute(
@@ -123,7 +123,7 @@ def describe_queue(connection: sqlite3.Connection, *, now: datetime) -> dict[str
             FROM jobs WHERE status = 'queued'
             ORDER BY due_at > :now, {EFFECTIVE_PRIORITY_CLASS_SQL}, within_class_order_primary DESC,
                      within_class_order_secondary DESC, created_at, job_id
-            LIMIT {NEXT_JOBS_SHOWN}""",
+            LIMIT {NEXT_JOBS_SHOWN}""",  # noqa: S608  # interpolates module constants only; values are bound
         {"now": now_text},
     ).fetchall()
     # Due jobs first, in claim order; a held job (e.g. waiting for its PDF) waits for its due time whatever its class.
@@ -255,7 +255,7 @@ def describe_daily_budgets(
     )
     try:
         provider_rules = load_provider_access_rules()
-        utc_date_text = now.astimezone(timezone.utc).date().isoformat()
+        utc_date_text = now.astimezone(UTC).date().isoformat()
         for row in connection.execute(
             "SELECT provider_name, requests_reserved FROM provider_request_budgets WHERE budget_date = ? "
             "ORDER BY provider_name",

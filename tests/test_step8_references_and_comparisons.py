@@ -15,10 +15,12 @@ import json
 from datetime import date, timedelta
 
 import pytest
+from conftest import build_in_process_app
+from fake_paper_providers import PUBLIC_ADDRESS, FakeOpenAlexWork, FakePaperProviders
+from test_step7_evidence_reading import install_extracted_text
 
 from paperwatch.catalog import record_collected_paper
 from paperwatch.clock import utc_now
-from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.commands.collect_command import run_collect_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
 from paperwatch.comparisons.comparison_queue import queue_comparison_for_review
@@ -38,10 +40,6 @@ from paperwatch.roles.comparison import COMPARISON_ROLE
 from paperwatch.roles.research import RESEARCH_ROLE
 from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.sources.types import CollectedPaperRecord
-
-from conftest import build_in_process_app
-from fake_paper_providers import PUBLIC_ADDRESS, FakeOpenAlexWork, FakePaperProviders
-from test_step7_evidence_reading import install_extracted_text
 
 TOPICS = """
 [[topics]]

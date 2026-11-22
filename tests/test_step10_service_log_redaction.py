@@ -9,8 +9,7 @@ from __future__ import annotations
 import io
 import logging
 
-from paperwatch.errors import ModelOutputRejectedAfterRepair, ProviderUnavailable
-from paperwatch.errors import describe_failure_for_operator
+from paperwatch.errors import ModelOutputRejectedAfterRepair, ProviderUnavailable, describe_failure_for_operator
 from paperwatch.service_log_redaction import (
     CHATTY_HTTP_LOGGER_NAMES,
     OMITTED_TEXT_MARKER,

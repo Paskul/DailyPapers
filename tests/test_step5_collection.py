@@ -13,26 +13,38 @@ the clock is controlled.
 from __future__ import annotations
 
 import argparse
+import itertools
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
+from conftest import RECORDED_PAPER_FIXTURE, build_in_process_app
+from fake_paper_providers import (
+    PUBLIC_ADDRESS,
+    FakeArxivPaper,
+    FakeOpenAlexWork,
+    FakePaperProviders,
+    FeedItem,
+    build_api_page_xml,
+    openalex_work_json,
+    search_windows_sent,
+)
 
 from paperwatch import clock
 from paperwatch.catalog import load_paper_row
 from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.historical_search import (
-    history_plan_key,
     historical_queries_for_topic,
+    history_plan_key,
     plan_windows,
     recency_schedule_settings,
 )
+from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
 from paperwatch.collection.recency_schedule import (
     RecencyScheduleSettings,
     build_recency_weighted_windows,
     exponential_boundary_ages,
 )
-from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
 from paperwatch.commands.collect_command import run_collect_command
 from paperwatch.commands.report_command import run_report_command
 from paperwatch.commands.work_command import run_single_work_cycle
@@ -46,18 +58,6 @@ from paperwatch.source_checkpoints import load_source_checkpoint, load_source_ch
 from paperwatch.sources.arxiv_atom import arxiv_id_submission_month, parse_api_search_page
 from paperwatch.sources.openalex_works import parse_works_page
 from paperwatch.sources.types import CollectedPaperRecord
-
-from conftest import RECORDED_PAPER_FIXTURE, build_in_process_app
-from fake_paper_providers import (
-    PUBLIC_ADDRESS,
-    FakeArxivPaper,
-    FakeOpenAlexWork,
-    FakePaperProviders,
-    FeedItem,
-    build_api_page_xml,
-    openalex_work_json,
-    search_windows_sent,
-)
 
 PHRASE = "runtime assurance"
 PRIVATE_QUESTION = "PRIVATE-QUESTION: Can a runtime monitor reject a joint robot plan before it blocks a human exit?"
@@ -73,7 +73,7 @@ SEEDS_ONLY_STYLE_TOPICS = """
 id = "category-watch"
 arxiv_categories = ["cs.RO"]
 """
-START_OF_TEST_WEEK = datetime(2026, 11, 16, 11, 0, tzinfo=timezone.utc)  # a Monday
+START_OF_TEST_WEEK = datetime(2026, 11, 16, 11, 0, tzinfo=UTC)  # a Monday
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -264,7 +264,7 @@ def advance_shared_clock(providers: FakePaperProviders, **time_delta) -> None:
 
 
 def test_a_week_of_downtime_is_recovered_by_a_dated_api_search(app, providers, test_clock):
-    test_clock.moment = datetime(2026, 11, 9, 11, 0, tzinfo=timezone.utc)
+    test_clock.moment = datetime(2026, 11, 9, 11, 0, tzinfo=UTC)
     before_downtime = synthetic_paper("2611.00100", date(2026, 11, 6))
     providers.arxiv_papers.append(before_downtime)
     providers.feeds["cs.RO"] = (date(2026, 11, 9), [FeedItem(before_downtime, "new")])
@@ -277,7 +277,7 @@ def test_a_week_of_downtime_is_recovered_by_a_dated_api_search(app, providers, t
     latest_paper = synthetic_paper("2611.00300", date(2026, 11, 14))
     providers.arxiv_papers += missed_papers + [latest_paper]
     providers.feeds["cs.RO"] = (date(2026, 11, 16), [FeedItem(latest_paper, "new")])  # only the latest announcement
-    test_clock.moment = datetime(2026, 11, 16, 11, 0, tzinfo=timezone.utc)  # a week later
+    test_clock.moment = datetime(2026, 11, 16, 11, 0, tzinfo=UTC)  # a week later
     collect(app, providers)
 
     [recovery_checkpoint] = load_source_checkpoints_with_prefix(app.connection, "arxiv-recovery:")
@@ -380,7 +380,7 @@ def test_a_late_indexed_openalex_work_is_found_by_the_overlapping_recent_window(
         f"Synthetic journal study of {PHRASE}",
         "SYNTHETIC abstract text.",
         publication_date=date(2026, 11, 10),
-        visible_from=datetime(2026, 11, 17, 0, 0, tzinfo=timezone.utc),
+        visible_from=datetime(2026, 11, 17, 0, 0, tzinfo=UTC),
         doi="10.5555/late.1",
     )
     providers.openalex_works.append(late_work)
@@ -403,7 +403,7 @@ def test_a_late_indexed_openalex_work_is_found_by_the_overlapping_recent_window(
     assert paper_row is not None and paper_row["origin_route"].startswith("openalex-recent:team-safety:openalex:")
     assert paper_row["first_published_date"] == "2026-11-10"
     assert (
-        classify_release(paper_row["first_published_date"], datetime(2026, 11, 17, tzinfo=timezone.utc))
+        classify_release(paper_row["first_published_date"], datetime(2026, 11, 17, tzinfo=UTC))
         == ReleaseClass.NEW_RELEASE
     )
     [recent_checkpoint] = load_source_checkpoints_with_prefix(app.connection, "openalex-recent:")
@@ -849,7 +849,7 @@ def test_recency_windows_are_contiguous_equal_mass_slices_of_an_exponential():
     plan_date, settings = date(2026, 11, 16), RecencyScheduleSettings()
     windows = build_recency_weighted_windows(plan_date, settings)
     assert len(windows) == 8 and windows[0].last_date == plan_date and windows[-1].first_date == date(1940, 1, 1)
-    for newer, older in zip(windows, windows[1:]):
+    for newer, older in itertools.pairwise(windows):
         assert older.last_date + timedelta(days=1) == newer.first_date  # no gap, no overlap
     widths = [(window.last_date - window.first_date).days + 1 for window in windows]
     assert widths == sorted(widths) and widths[-1] > 50 * widths[0]  # narrow recent windows, one wide old one
@@ -862,7 +862,7 @@ def test_recency_windows_are_contiguous_equal_mass_slices_of_an_exponential():
     def area_up_to(age_years: float) -> float:
         return 1.0 - 2.0 ** (-age_years / 6.0)
 
-    for newer_age, older_age in zip(boundary_ages, boundary_ages[1:]):
+    for newer_age, older_age in itertools.pairwise(boundary_ages):
         assert (area_up_to(older_age) - area_up_to(newer_age)) / area_up_to(span_years) == pytest.approx(1 / 8)
     assert boundary_ages[4] == pytest.approx(6.0, abs=0.05)  # half the weight falls within one half-life
     # Old windows take their most-cited papers first; recent ones use relevance.

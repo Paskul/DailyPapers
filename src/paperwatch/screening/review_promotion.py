@@ -94,7 +94,7 @@ def count_screening_promotions_today(connection: sqlite3.Connection, moment: dat
     return connection.execute(
         f"""SELECT COALESCE(SUM(promotion_reason != 'near_cutoff'), 0) AS regular_count,
                    COALESCE(SUM(promotion_reason = 'near_cutoff'), 0) AS near_cutoff_count
-            FROM paper_promotions WHERE promoted_at >= ? AND promotion_reason IN ({placeholders})""",
+            FROM paper_promotions WHERE promoted_at >= ? AND promotion_reason IN ({placeholders})""",  # noqa: S608  # only ? placeholders are interpolated
         (utc_day_start_timestamp(moment), *SCREENING_PROMOTION_REASONS),
     ).fetchone()
 

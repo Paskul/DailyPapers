@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from paperwatch.config import AppConfig, load_app_config
@@ -48,7 +48,7 @@ NOTICE = (
 
 def daily_calendar_time(clock_text: str, timezone_name: str, delay: timedelta = timedelta()) -> str:
     """'*-*-* 06:30:00 America/New_York': every day at that local time."""
-    moment = datetime.combine(datetime(2000, 1, 1).date(), parse_clock_time(clock_text)) + delay
+    moment = datetime.combine(date(2000, 1, 1), parse_clock_time(clock_text)) + delay
     return f"*-*-* {moment:%H:%M:%S} {timezone_name}"
 
 

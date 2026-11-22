@@ -16,6 +16,7 @@ import sqlite3
 import threading
 from pathlib import Path
 from types import TracebackType
+from typing import Self
 
 from paperwatch.db import connect_database
 from paperwatch.errors import PaperwatchError
@@ -46,7 +47,7 @@ class JobLeaseKeeper:
         self.lease_was_lost = False
         self.successful_renewal_count = 0
 
-    def __enter__(self) -> JobLeaseKeeper:
+    def __enter__(self) -> Self:
         self._renewal_thread.start()
         return self
 

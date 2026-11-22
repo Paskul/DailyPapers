@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from paperwatch.errors import ConfigurationError
 
-POOLING_CLS_TOKEN = "cls"  # the first token's last hidden state (BGE models)
+POOLING_CLS_TOKEN = "cls"  # noqa: S105  # the first token's last hidden state (BGE models)
 POOLING_MEAN_OF_TOKENS = "mean"  # attention-masked mean of the last hidden states (MiniLM-style models)
 
 

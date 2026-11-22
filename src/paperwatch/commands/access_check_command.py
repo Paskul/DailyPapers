@@ -522,11 +522,12 @@ def _check_extractor_sandbox(app: AppContext) -> list[CheckResult]:
         return results
     try:
         image_present = (
-            subprocess.run(
+            subprocess.run(  # noqa: S603  # fixed program and arguments, no shell
                 [extractor_settings.container_runtime, "image", "exists", extractor_settings.image],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=60,
+                check=False,
             ).returncode
             == 0
         )
@@ -591,8 +592,10 @@ def build_minimal_pdf_bytes(page_text: str) -> bytes:
     pdf_objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
-        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+            b"/Resources << /Font << /F1 5 0 R >> >> >>"
+        ),
         b"<< /Length " + str(len(content_stream)).encode("ascii") + b" >>\nstream\n" + content_stream + b"\nendstream",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]

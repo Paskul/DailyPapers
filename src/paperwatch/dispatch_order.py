@@ -23,7 +23,7 @@ readings (class 3), and comparisons of two reviews (class 4).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 
 from paperwatch.clock import format_utc_timestamp
@@ -81,7 +81,7 @@ def compute_new_release_fresh_until(first_published_date: str) -> datetime:
     """The end of the seven-day fresh window counted from the original release date (the earliest day a coarse date
     can mean, as in publication_dates.classify_release): through the whole seventh day after release."""
     release_day = earliest_calendar_day(first_published_date)
-    return datetime(release_day.year, release_day.month, release_day.day, tzinfo=timezone.utc) + timedelta(
+    return datetime(release_day.year, release_day.month, release_day.day, tzinfo=UTC) + timedelta(
         days=NEW_RELEASE_FRESH_WINDOW_DAYS + 1
     )
 

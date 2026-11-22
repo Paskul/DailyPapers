@@ -16,6 +16,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from conftest import build_in_process_app
 from jsonschema import Draft202012Validator
 
 from paperwatch.catalog import record_collected_paper
@@ -42,8 +43,6 @@ from paperwatch.screening.review_promotion import (
 )
 from paperwatch.source_cache import store_extracted_text
 from paperwatch.sources.types import CollectedPaperRecord
-
-from conftest import build_in_process_app
 
 SMALL_READING_LIMITS = {  # several reading sections from a short synthetic paper
     "section_max_characters = 24000": "section_max_characters = 1500",

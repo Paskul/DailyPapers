@@ -12,8 +12,8 @@ import re
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import set_paper_status
 from paperwatch.db import write_transaction
-from paperwatch.errors import ConfigurationError
 from paperwatch.dispatch_order import dispatch_order_for_operator_request
+from paperwatch.errors import ConfigurationError
 from paperwatch.readings import ReadingEnqueueOutcome, enqueue_reading_if_needed, new_reading_generation_id
 
 INTERNAL_PAPER_ID_PATTERN = re.compile(r"^p_[0-9a-f]{16}$")

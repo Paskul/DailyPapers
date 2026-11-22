@@ -34,7 +34,7 @@ SECRET_HEADER_PATTERN = re.compile(
     r"(bearer\s+)?([^\s'\",}]+)"
 )
 QUOTED_FRAGMENT_PATTERN = re.compile(
-    r"'([^'\n]{%d,})'|\"([^\"\n]{%d,})\"" % (MAXIMUM_KEPT_QUOTED_CHARACTERS + 1, MAXIMUM_KEPT_QUOTED_CHARACTERS + 1)
+    r"'([^'\n]{%d,})'|\"([^\"\n]{%d,})\"" % (MAXIMUM_KEPT_QUOTED_CHARACTERS + 1, MAXIMUM_KEPT_QUOTED_CHARACTERS + 1)  # noqa: UP031  # keeps the regex braces readable
 )
 
 
@@ -56,7 +56,7 @@ class ServiceLogRedactionFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             rendered_message = record.getMessage()
-        except Exception:  # a malformed record: keep only its template
+        except Exception:  # noqa: BLE001  # a malformed record: keep only its template
             rendered_message = str(record.msg)
         record.msg = redact_service_log_text(rendered_message)
         record.args = None

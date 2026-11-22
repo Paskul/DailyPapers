@@ -7,10 +7,10 @@ import os
 from pathlib import Path
 
 import pytest
+from conftest import EXAMPLE_TOPIC_TOML, RECORDED_PAPER_FIXTURE
 
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import record_collected_paper
-from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.commands.init_command import run_init_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
 from paperwatch.errors import ModelOutputInvalid
@@ -18,9 +18,8 @@ from paperwatch.llm.fake_client import FakeModelClient
 from paperwatch.llm.reasoning import separate_reasoning_from_final_answer
 from paperwatch.roles.base import parse_and_validate_role_output
 from paperwatch.roles.reviewer import REVIEWER_ROLE
+from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.sources.fixture_source import RecordedFixtureSource
-
-from conftest import EXAMPLE_TOPIC_TOML, RECORDED_PAPER_FIXTURE
 
 
 @pytest.mark.parametrize(
@@ -172,8 +171,8 @@ def test_empty_queue_issues_zero_inference_calls(tmp_path):
 @pytest.mark.skipif(os.environ.get("PAPERWATCH_LIVE_MODEL") != "1", reason="set PAPERWATCH_LIVE_MODEL=1")
 def test_live_server_reviews_recorded_paper(tmp_path):
     """Optional: the same vertical slice against the real local llama.cpp server."""
-    from paperwatch.llm.llama_cpp_client import LlamaCppModelClient
     from paperwatch.config import ModelSettings
+    from paperwatch.llm.llama_cpp_client import LlamaCppModelClient
 
     app = _load_app_with_one_queued_paper(tmp_path, LlamaCppModelClient(ModelSettings()))
     cycle_report = run_single_work_cycle(app, probe_paused_model_now=True)

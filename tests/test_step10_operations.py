@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import csv
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
+from conftest import build_in_process_app
+from test_step7_evidence_reading import drain, install_extracted_text
 
 from paperwatch.catalog import record_collected_paper
 from paperwatch.cli import NO_NETWORK_COMMAND_NAMES, select_egress_policy_for_command
@@ -23,9 +25,6 @@ from paperwatch.measurement.label_sample import LABEL_COLUMNS, draw_label_sample
 from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
 from paperwatch.source_cache import SOURCE_FILES_SUBDIRECTORY
 from paperwatch.sources.types import CollectedPaperRecord
-
-from conftest import build_in_process_app
-from test_step7_evidence_reading import drain, install_extracted_text
 
 KILOBYTE = 1024
 
@@ -148,7 +147,7 @@ def test_capacity_flags_limits_above_the_measured_capacity(tmp_path):
 
 
 def publishable_today_replacements() -> dict[str, str]:
-    timezone_name = "UTC" if datetime.now(timezone.utc).hour < 22 else "Etc/GMT+12"
+    timezone_name = "UTC" if datetime.now(UTC).hour < 22 else "Etc/GMT+12"
     return {
         'timezone = "America/New_York"': f'timezone = "{timezone_name}"',
         'publish_time = "07:00"': 'publish_time = "23:59"',

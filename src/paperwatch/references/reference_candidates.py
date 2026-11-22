@@ -17,9 +17,9 @@ from typing import Any
 
 from paperwatch.config import AppConfig
 from paperwatch.jobs import REVIEW_PAPER_JOB_KIND
+from paperwatch.readings import select_edition_to_read
 from paperwatch.references.citation_contexts import CitationContext, CitedWorkDescription, find_citation_contexts
 from paperwatch.references.paper_text import bibliography_passages, body_passages, load_extracted_text_passages
-from paperwatch.readings import select_edition_to_read
 from paperwatch.scholarly_identifiers import ARXIV_SCHEME, DOI_SCHEME
 from paperwatch.text_normalization import extract_author_family_names
 
@@ -70,7 +70,7 @@ def list_reference_candidates(
               AND edge.cited_paper_id NOT IN (SELECT paper_id FROM jobs
                                               WHERE kind = '{REVIEW_PAPER_JOB_KIND}' AND paper_id IS NOT NULL)
             GROUP BY edge.cited_paper_id
-            ORDER BY best_screening_score IS NULL, best_screening_score DESC, edge.cited_paper_id""",
+            ORDER BY best_screening_score IS NULL, best_screening_score DESC, edge.cited_paper_id""",  # noqa: S608  # interpolates module constants only; values are bound
         {"parent": parent_paper_id},
     ).fetchall()
     candidate_rows = [row for row in candidate_rows if row["paper_id"] not in active_seed_paper_ids][:limit]

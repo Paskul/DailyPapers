@@ -49,8 +49,8 @@ from paperwatch.collection.paged_search import (
 )
 from paperwatch.collection.topic_word_ranking import rank_records_by_topic_words, topic_words_for_category
 from paperwatch.errors import ProviderUnavailable, SourceAccessDenied, SourceInputError
-from paperwatch.network.provider_requests import PublicationWindow
 from paperwatch.network.provider_gateway import ProviderResponse
+from paperwatch.network.provider_requests import PublicationWindow
 from paperwatch.public_query_catalog import QUERY_KIND_CATEGORY, QUERY_KIND_KEYWORDS, build_public_query_catalog
 from paperwatch.source_checkpoints import (
     SearchCoverageStatus,
@@ -229,8 +229,8 @@ def store_category_feed(context: CollectionContext, polled_feed: PolledCategoryF
                 feed_checkpoint,
                 cursor=None,
                 coverage_status=SearchCoverageStatus.CAPPED,
-                stop_reason=f"daily candidate budget reached after part of the feed; the rest "
-                f"is left to the recovery search",
+                stop_reason="daily candidate budget reached after part of the feed; the rest "
+                "is left to the recovery search",
                 last_completed_interval_end=context.started_at_timestamp,
             )
         else:

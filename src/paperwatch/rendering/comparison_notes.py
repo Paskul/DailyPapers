@@ -70,9 +70,11 @@ def render_comparison_note(connection: sqlite3.Connection, comparison_id: str) -
             if content.get("shared_dimensions")
             else ""
         ),
-        f"- Compared {comparison_row['completed_at']} · model "
-        f"{escape_untrusted_inline_text(comparison_row['model_identity'])} · prompt "
-        f"{comparison_row['prompt_version']}",
+        (
+            f"- Compared {comparison_row['completed_at']} · model "
+            f"{escape_untrusted_inline_text(comparison_row['model_identity'])} · prompt "
+            f"{comparison_row['prompt_version']}"
+        ),
         "",
         "## Papers",
         "",

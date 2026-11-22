@@ -184,8 +184,8 @@ def _arxiv_paper_matches(paper: FakeArxivPaper, query_match: re.Match) -> bool:
     if query_match["phrase"] and query_match["phrase"].lower() not in (paper.title + " " + paper.abstract).lower():
         return False
     if query_match["first"]:
-        first_date = datetime.strptime(query_match["first"], "%Y%m%d").date()
-        last_date = datetime.strptime(query_match["last"], "%Y%m%d").date()
+        first_date = date.fromisoformat(query_match["first"])  # YYYYMMDD
+        last_date = date.fromisoformat(query_match["last"])
         return first_date <= paper.submitted_on <= last_date
     return True
 

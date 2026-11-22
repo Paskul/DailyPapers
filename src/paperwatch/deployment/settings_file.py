@@ -245,8 +245,10 @@ def stage_settings(settings_path: Path, stage_dir: Path, *, extractor_image: str
         "".join(f"{name}={shlex.quote(value)}\n" for name, value in shell_values.items()), encoding="utf-8"
     )
     return [
-        f"settings valid: {len(app_config.topics)} topic(s) ({shell_values['TOPIC_IDS'] or 'none'}), mode "
-        f"{split.setup.mode}, home {split.setup.home}"
+        (
+            f"settings valid: {len(app_config.topics)} topic(s) ({shell_values['TOPIC_IDS'] or 'none'}), mode "
+            f"{split.setup.mode}, home {split.setup.home}"
+        )
     ]
 
 

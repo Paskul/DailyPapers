@@ -8,12 +8,12 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-
 from conftest import RECORDED_PAPER_FIXTURE, build_in_process_app
+
 from paperwatch.activity_log import finish_activity, recorded_activity, start_activity
 from paperwatch.clock import format_utc_timestamp, utc_now
 from paperwatch.commands.collect_command import run_collect_command
@@ -113,10 +113,12 @@ def test_report_run_records_its_stages(tmp_path):
 
 def test_a_failing_step_records_failed_and_reraises_and_a_broken_log_never_fails_the_step(tmp_path):
     app = build_in_process_app(tmp_path / "home")
-    with pytest.raises(ValueError):
-        with recorded_activity(app.connection, "run", component="collect"):
-            with recorded_activity(app.connection, "screening"):
-                raise ValueError("embedding exploded https://example.org/x?api_key=SECRET")
+    with (
+        pytest.raises(ValueError),
+        recorded_activity(app.connection, "run", component="collect"),
+        recorded_activity(app.connection, "screening"),
+    ):
+        raise ValueError("embedding exploded https://example.org/x?api_key=SECRET")
     rows = {row["step"]: row for row in app.connection.execute("SELECT * FROM activity_log")}
     assert rows["screening"]["outcome"] == "failed" and rows["run"]["outcome"] == "failed"
     assert "SECRET" not in rows["screening"]["note"]  # notes are redacted like service logs
@@ -168,22 +170,24 @@ def _claim_review_job(app):
 def test_snapshot_shows_the_exact_current_step_from_the_activity_log(tmp_path):
     app = build_in_process_app(tmp_path / "home")
     job_id = _claim_review_job(app)
-    with recorded_activity(app.connection, "run", {"mode": "loop"}, component="work"):
-        with recorded_activity(
+    with (
+        recorded_activity(app.connection, "run", {"mode": "loop"}, component="work"),
+        recorded_activity(
             app.connection, "job", {"job_id": job_id, "kind": "review_paper", "attempt": 1, "max_attempts": 3}
-        ):
-            with recorded_activity(
-                app.connection,
-                "reading_stage",
-                {"stage": "section", "position": 2, "sections_to_read": 5, "section_count": 5},
-            ):
-                call_id = start_activity(
-                    app.connection,
-                    "model_call",
-                    {"role": "section_reader", "repair": True, "job_id": job_id, "timeout_seconds": 1800},
-                )
-                snapshot = snapshot_of(app)
-                finish_activity(app.connection, call_id, "ok")
+        ),
+        recorded_activity(
+            app.connection,
+            "reading_stage",
+            {"stage": "section", "position": 2, "sections_to_read": 5, "section_count": 5},
+        ),
+    ):
+        call_id = start_activity(
+            app.connection,
+            "model_call",
+            {"role": "section_reader", "repair": True, "job_id": job_id, "timeout_seconds": 1800},
+        )
+        snapshot = snapshot_of(app)
+        finish_activity(app.connection, call_id, "ok")
     worker = snapshot["now"]["worker"]
     assert worker["state"] == "working" and worker["source"] == "activity"
     [job] = worker["jobs"]
@@ -256,7 +260,7 @@ def test_building_a_snapshot_never_writes(tmp_path):
 
 def test_schedule_reads_the_pilot_and_the_daily_timers(tmp_path):
     app = build_in_process_app(tmp_path / "home")
-    installed_at = datetime(2026, 11, 20, 14, 20, tzinfo=timezone.utc)
+    installed_at = datetime(2026, 11, 20, 14, 20, tzinfo=UTC)
     pilot_dir = tmp_path / "pilot-units"
     pilot_dir.mkdir()
     for name, text in render_pilot_units(plan_one_day_pilot(app.config, now=installed_at, collector_uid=999)).items():
@@ -292,7 +296,7 @@ def test_schedule_reads_the_pilot_and_the_daily_timers(tmp_path):
 
 
 def test_calendar_expressions_and_systemctl_output_are_parsed():
-    start = datetime(2026, 11, 20, 12, tzinfo=timezone.utc)
+    start = datetime(2026, 11, 20, 12, tzinfo=UTC)
     assert expand_calendar_value("*-*-* 06:30:00 America/New_York", start, start + timedelta(days=1)) == [
         datetime(2026, 11, 21, 6, 30, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
     ]

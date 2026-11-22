@@ -18,9 +18,10 @@ from typing import Any
 
 from paperwatch.activity_log import recorded_activity
 from paperwatch.app_context import AppContext
+from paperwatch.errors import ModelOutputInvalid
 from paperwatch.reading.comparison_anchors import TopicAnchors, assessable_topic_profiles, build_topic_anchors
-from paperwatch.reading.reading_priority import RELATIVE_VALUE, ScoredTopicAssessment, score_topic_assessment
 from paperwatch.reading.reading_plan import COVERAGE_ABSTRACT_ONLY
+from paperwatch.reading.reading_priority import RELATIVE_VALUE, ScoredTopicAssessment, score_topic_assessment
 from paperwatch.reading.review_packet import ReviewPacket
 from paperwatch.reading.stage_results import (
     SYNTHESIS_STAGE_KEY,
@@ -31,7 +32,6 @@ from paperwatch.reading.stage_results import (
 )
 from paperwatch.readings import select_edition_to_read
 from paperwatch.research_profile import build_research_profiles
-from paperwatch.errors import ModelOutputInvalid
 from paperwatch.roles.base import (
     RoleDefinition,
     RoleInput,

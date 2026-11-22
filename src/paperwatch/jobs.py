@@ -32,7 +32,7 @@ from paperwatch.identifiers import JOB_ID_PREFIX, new_internal_id
 REVIEW_PAPER_JOB_KIND = "review_paper"  # classes 0-3: a reading of one paper
 COMPARE_REVIEWS_JOB_KIND = "compare_reviews"  # class 4: queued from part 8; the worker gains its handler then
 
-__all__ = ["JobPriorityClass", "JobDispatchOrder"]  # re-exported: callers import the classes from here
+__all__ = ["JobDispatchOrder", "JobPriorityClass"]  # re-exported: callers import the classes from here
 
 # The class a job is claimed under right now: a new release past its fresh window drops to older literature.
 EFFECTIVE_PRIORITY_CLASS_SQL = f"""CASE WHEN priority = {int(JobPriorityClass.NEW_RELEASE)}
@@ -149,7 +149,7 @@ def claim_next_due_job(connection: sqlite3.Connection, *, lease_duration_seconds
                   OR (status = 'running' AND lease_expires_at <= :now)
                ORDER BY {EFFECTIVE_PRIORITY_CLASS_SQL}, within_class_order_primary DESC,
                         within_class_order_secondary DESC, created_at, job_id
-               LIMIT 1""",
+               LIMIT 1""",  # noqa: S608  # interpolates module constants only; values are bound
             {"now": now_timestamp},
         ).fetchone()
         if job_row is None:
@@ -298,7 +298,7 @@ def summarize_queued_jobs_by_class(connection: sqlite3.Connection, moment: datet
         for summary_row in connection.execute(
             f"""SELECT {EFFECTIVE_PRIORITY_CLASS_SQL} AS effective_class, COUNT(*) AS queued_count,
                            MIN(created_at) AS oldest_queued_at
-                    FROM jobs WHERE status = 'queued' GROUP BY effective_class ORDER BY effective_class""",
+                    FROM jobs WHERE status = 'queued' GROUP BY effective_class ORDER BY effective_class""",  # noqa: S608  # interpolates module constants only; values are bound
             {"now": format_utc_timestamp(moment)},
         )
     ]

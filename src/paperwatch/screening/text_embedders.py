@@ -132,12 +132,12 @@ class OnnxSentenceEmbedder:
                 providers=["CPUExecutionProvider"],
             )
             tokenizer = Tokenizer.from_file(str(model_dir / pinned_model.tokenizer_file.file_name))
-        except Exception as load_error:  # onnxruntime raises its own exception types
+        except Exception as load_error:  # noqa: BLE001  # onnxruntime raises its own exception types
             raise ScreeningUnavailable(
                 f"the embedding model {pinned_model.name} failed to load: {load_error}"
             ) from None
         tokenizer.enable_truncation(max_length=pinned_model.maximum_tokens)
-        tokenizer.enable_padding(pad_id=tokenizer.token_to_id("[PAD]") or 0, pad_token="[PAD]")
+        tokenizer.enable_padding(pad_id=tokenizer.token_to_id("[PAD]") or 0, pad_token="[PAD]")  # noqa: S106  # the tokenizer's padding token, not a secret
         return cls(pinned_model, inference_session, tokenizer, batch_size)
 
     def prepare_query_text(self, query_text: str) -> str:

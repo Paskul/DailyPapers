@@ -136,11 +136,15 @@ def _render_opening(context: _ReportContext) -> list[str]:
             f"{statistics.hours_since_previous_report:g} h earlier"
         )
     opening_lines += [
-        f"- Since then: {statistics.papers_found_in_window} paper(s) found, {statistics.papers_screened_in_window} "
-        f"screened, {statistics.reviews_completed_in_window} review(s) completed · selected today: "
-        f"**{len(snapshot.entries)}** (reading priority at least {snapshot.minimum_reading_priority}/100)",
-        f"- Backlog: {statistics.eligible_held_for_later} qualifying review(s) held for later reports · "
-        f"{statistics.jobs_queued} queued job(s) · {statistics.jobs_failed} failed",
+        (
+            f"- Since then: {statistics.papers_found_in_window} paper(s) found, {statistics.papers_screened_in_window} "
+            f"screened, {statistics.reviews_completed_in_window} review(s) completed · selected today: "
+            f"**{len(snapshot.entries)}** (reading priority at least {snapshot.minimum_reading_priority}/100)"
+        ),
+        (
+            f"- Backlog: {statistics.eligible_held_for_later} qualifying review(s) held for later reports · "
+            f"{statistics.jobs_queued} queued job(s) · {statistics.jobs_failed} failed"
+        ),
         "- Source outages: "
         + ("; ".join(escape_untrusted_inline_text(line) for line in statistics.source_outages) or "none"),
     ]
@@ -175,8 +179,10 @@ def _render_what_matters_today(context: _ReportContext) -> list[str]:
     if not snapshot.entries:
         if statistics.model_outage or statistics.source_outages:
             return [
-                "No paper qualified for this report. **This is not a quiet day:** see the outages above. "
-                "Queued papers are kept and will be reported once they are read."
+                (
+                    "No paper qualified for this report. **This is not a quiet day:** see the outages above. "
+                    "Queued papers are kept and will be reported once they are read."
+                )
             ]
         if statistics.jobs_queued:
             return [f"No paper qualified for this report yet; {statistics.jobs_queued} job(s) are still queued."]
@@ -241,9 +247,11 @@ def _render_ranked_papers(context: _ReportContext, selected_reviews: list[Select
         published = escape_untrusted_inline_text(paper_row["first_published_date"]) or "date unknown"
         topic_text = f" · topic {render_code_span(entry.best_topic_id)}" if entry.best_topic_id else ""
         entry_lines += [
-            f"### {entry.rank}. {escape_untrusted_inline_text(paper_row['title'])} — {score_text} · "
-            f"{ENTRY_LABEL_TEXT.get(entry.entry_label, entry.entry_label)} · "
-            f"{COVERAGE_TEXT.get(entry.coverage, entry.coverage)}",
+            (
+                f"### {entry.rank}. {escape_untrusted_inline_text(paper_row['title'])} — {score_text} · "
+                f"{ENTRY_LABEL_TEXT.get(entry.entry_label, entry.entry_label)} · "
+                f"{COVERAGE_TEXT.get(entry.coverage, entry.coverage)}"
+            ),
             "",
             f"{authors} · {published}{topic_text}",
             "",
@@ -268,8 +276,10 @@ def _render_ranked_papers(context: _ReportContext, selected_reviews: list[Select
                 "",
             )
             entry_lines += [
-                f"**Why read it** (from the saved topic assessment). "
-                f"{escape_untrusted_inline_text(rationale) or 'No rationale was saved.'}",
+                (
+                    f"**Why read it** (from the saved topic assessment). "
+                    f"{escape_untrusted_inline_text(rationale) or 'No rationale was saved.'}"
+                ),
                 "",
             ]
             cited_passage_ids = [
@@ -291,9 +301,11 @@ def _render_ranked_papers(context: _ReportContext, selected_reviews: list[Select
 def _render_update_lines(context: _ReportContext, entry: ReportEntry) -> list[str]:
     changes = "; ".join(escape_untrusted_inline_text(change.description) for change in entry.revision_changes)
     return [
-        f"**Update.** Recommended on {entry.previous_report_date} from "
-        f"[the earlier review](<../papers/{entry.paper_id}/{entry.previous_review_id}.md>); this newer review "
-        f"read different text. What changed: {changes}.",
+        (
+            f"**Update.** Recommended on {entry.previous_report_date} from "
+            f"[the earlier review](<../papers/{entry.paper_id}/{entry.previous_review_id}.md>); this newer review "
+            f"read different text. What changed: {changes}."
+        ),
         "",
     ]
 

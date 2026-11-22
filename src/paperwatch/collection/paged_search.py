@@ -186,13 +186,13 @@ def run_search_pages(
             )
             advanced_checkpoint = _advance_checkpoint_after_page(
                 context,
-                checkpoint,
-                parsed_page.next_cursor,
-                parsed_page.total_results,
+                checkpoint,  # noqa: B023  # called synchronously, within this loop iteration
+                parsed_page.next_cursor,  # noqa: B023  # called synchronously, within this loop iteration
+                parsed_page.total_results,  # noqa: B023  # called synchronously, within this loop iteration
                 page_result,
                 stop_reason_if_cut_short,
             )
-            checkpoints_saved_with_page.append(advanced_checkpoint)
+            checkpoints_saved_with_page.append(advanced_checkpoint)  # noqa: B023  # called synchronously, within this loop iteration
             return [advanced_checkpoint] + (
                 related_checkpoints_after_page(page_result) if related_checkpoints_after_page else []
             )

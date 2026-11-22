@@ -27,7 +27,6 @@ from datetime import timedelta
 
 from paperwatch.catalog import load_paper_aliases
 from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp
-from paperwatch.collection.source_cache_limit import prune_replaceable_downloads
 from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.local_source_files import (
     LocalSourceFolder,
@@ -35,6 +34,7 @@ from paperwatch.collection.local_source_files import (
     file_stems_for_paper,
     read_local_source_bytes,
 )
+from paperwatch.collection.source_cache_limit import prune_replaceable_downloads
 from paperwatch.db import write_transaction
 from paperwatch.errors import (
     ExtractionError,
@@ -47,9 +47,9 @@ from paperwatch.errors import (
 from paperwatch.jobs import REVIEW_PAPER_JOB_KIND
 from paperwatch.readings import FULL_TEXT_EDITION_ORDER_SQL
 from paperwatch.review_inputs import fingerprint_extracted_reading_text
-from paperwatch.screening.review_promotion import queue_new_reading_for_promoted_paper_in_transaction
 from paperwatch.sandboxed_extractor import BYTES_PER_MEGABYTE, extract_text_in_sandbox
 from paperwatch.scholarly_identifiers import ARXIV_SCHEME, OPENALEX_SCHEME
+from paperwatch.screening.review_promotion import queue_new_reading_for_promoted_paper_in_transaction
 from paperwatch.source_cache import CachedSourceFile, cached_edition_directory, store_extracted_text, store_source_bytes
 
 TEXT_ROUTE_LOCAL_FILE = "local_file"
@@ -146,7 +146,8 @@ def editions_in_text_preference_order(connection: sqlite3.Connection, paper_id: 
     """arXiv editions first (newest version first), then OpenAlex, then the rest (newest sighting first). The same
     order picks the edition a full-text reading uses (paperwatch.readings.select_reading_input)."""
     return connection.execute(
-        f"SELECT * FROM paper_editions WHERE paper_id = ? ORDER BY {FULL_TEXT_EDITION_ORDER_SQL}", (paper_id,)
+        f"SELECT * FROM paper_editions WHERE paper_id = ? ORDER BY {FULL_TEXT_EDITION_ORDER_SQL}",  # noqa: S608  # interpolates module constants only; values are bound
+        (paper_id,),
     ).fetchall()
 
 
@@ -369,6 +370,6 @@ def _update_extraction(context: CollectionContext, edition_id: str, **column_val
     assignments = ", ".join(f"{column_name} = ?" for column_name in column_values)
     with write_transaction(context.connection):
         context.connection.execute(
-            f"UPDATE edition_source_texts SET {assignments}, updated_at = ? WHERE edition_id = ?",
+            f"UPDATE edition_source_texts SET {assignments}, updated_at = ? WHERE edition_id = ?",  # noqa: S608  # column names come from code; values are bound
             (*column_values.values(), context.started_at_timestamp, edition_id),
         )

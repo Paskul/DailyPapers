@@ -31,10 +31,13 @@ import json
 import random
 import re
 import sys
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
+from conftest import build_in_process_app
+from fake_paper_providers import FakeArxivPaper, FakeOpenAlexWork, FakePaperProviders, FeedItem
+from test_step5_collection import collect, test_clock  # noqa: F401  (pytest fixture)
 
 from paperwatch.commands.report_command import run_report_command
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
@@ -58,10 +61,6 @@ from paperwatch.references.research_branches import ResearchBranch
 from paperwatch.roles.base import parse_and_validate_role_output
 from paperwatch.roles.research import RESEARCH_ROLE
 from paperwatch.screening.review_promotion import promote_paper_directly_and_queue_review
-
-from conftest import build_in_process_app
-from fake_paper_providers import FakeArxivPaper, FakeOpenAlexWork, FakePaperProviders, FeedItem
-from test_step5_collection import collect, test_clock  # noqa: F401  (pytest fixture)
 
 PHRASE = "runtime assurance"
 PRIVATE_QUESTION = "PRIVATE-QUESTION: Can a runtime monitor reject a joint robot plan before it blocks a human exit?"
@@ -343,10 +342,10 @@ def test_a_compromised_model_on_an_adversarial_day_cannot_steer_lookups_or_touch
             with temporarily_armed_egress_policy(local_model_policy):
                 worker_outcomes += drain_worker(app)
             test_clock.advance(hours=7)  # past the reference readings' 6 h hold for full text
-        test_clock.moment = datetime(2026, 11, 17, 12, 30, tzinfo=timezone.utc)  # 07:30 New York
+        test_clock.moment = datetime(2026, 11, 17, 12, 30, tzinfo=UTC)  # 07:30 New York
         with temporarily_armed_egress_policy(local_model_policy):
             assert run_report_command(app, argparse.Namespace(report_date="2026-11-17", publish_early=False)) == 0
-            test_clock.moment = datetime(2026, 11, 18, 12, 30, tzinfo=timezone.utc)
+            test_clock.moment = datetime(2026, 11, 18, 12, 30, tzinfo=UTC)
             assert run_report_command(app, argparse.Namespace(report_date="2026-11-18", publish_early=False)) == 0
     finally:
         SIDE_EFFECTS.active = False
@@ -442,7 +441,7 @@ def test_a_compromised_model_on_an_adversarial_day_cannot_steer_lookups_or_touch
 OFFERED_CANDIDATE_IDS = ("p_aaaaaaaaaaaaaaaa", "p_bbbbbbbbbbbbbbbb")
 OFFERED_BRANCH_IDS = ("B1", "B2")
 LOOKALIKE_IDS = (
-    "p_aaaaaaaaaaaaaaaa​",
+    "p_aaaaaaaaaaaaaaaa\u200b",
     " p_aaaaaaaaaaaaaaaa",
     "P_AAAAAAAAAAAAAAAA",
     "p_aaaaaaaaaaaaaaab",

@@ -8,40 +8,40 @@ from datetime import timedelta
 
 from paperwatch.app_context import AppContext
 from paperwatch.clock import format_utc_timestamp, utc_now
-from paperwatch.config import TOPICS_FILE_NAME
-from paperwatch.dispatch_order import PRIORITY_CLASS_LABELS
-from paperwatch.jobs import summarize_queued_jobs_by_class
-from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, read_service_health_state
-from paperwatch.network.outbound_ledger import summarize_outbound_requests_today
-from paperwatch.network.provider_gateway import PROVIDER_SERVICE_NAME_PREFIX
-from paperwatch.research_profile import (
-    TopicResearchProfile,
-    build_research_profiles,
-    explain_empty_research_profile,
-    load_active_seed_library_paper_ids,
-)
-from paperwatch.seeds.seed_store import count_active_seeds_by_source, seed_sources_of_all_topics
 from paperwatch.collection.candidate_budget import CandidateAdmissionBudget
-from paperwatch.collection.source_cache_limit import measure_source_cache
 from paperwatch.collection.current_releases import (
     ARXIV_FEED_CHECKPOINT_PREFIX,
     ARXIV_RECOVERY_CHECKPOINT_PREFIX,
     OPENALEX_RECENT_CHECKPOINT_PREFIX,
 )
 from paperwatch.collection.historical_search import (
-    history_plan_key,
     historical_queries_for_topic,
+    history_plan_key,
     plan_windows,
     recency_schedule_settings,
 )
-from paperwatch.public_query_catalog import build_public_query_catalog
+from paperwatch.collection.source_cache_limit import measure_source_cache
 from paperwatch.comparisons.comparison_queue import count_comparison_jobs_created_today
+from paperwatch.config import TOPICS_FILE_NAME
+from paperwatch.dispatch_order import PRIORITY_CLASS_LABELS
+from paperwatch.jobs import summarize_queued_jobs_by_class
+from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, read_service_health_state
+from paperwatch.network.outbound_ledger import summarize_outbound_requests_today
+from paperwatch.network.provider_gateway import PROVIDER_SERVICE_NAME_PREFIX
+from paperwatch.public_query_catalog import build_public_query_catalog
 from paperwatch.reading.stage_results import count_saved_stages_of_unfinished_readings
 from paperwatch.references.reference_selection import count_reference_admissions_today
 from paperwatch.references.research_branches import count_branches_requested_today
+from paperwatch.research_profile import (
+    TopicResearchProfile,
+    build_research_profiles,
+    explain_empty_research_profile,
+    load_active_seed_library_paper_ids,
+)
 from paperwatch.screening.embedding_model_registry import look_up_pinned_embedding_model
 from paperwatch.screening.review_promotion import count_screening_promotions_today, utc_day_start_timestamp
 from paperwatch.screening.text_embedders import EMBEDDING_BACKEND_HASHING
+from paperwatch.seeds.seed_store import count_active_seeds_by_source, seed_sources_of_all_topics
 from paperwatch.source_checkpoints import SourceCheckpoint, load_source_checkpoint, load_source_checkpoints_with_prefix
 
 

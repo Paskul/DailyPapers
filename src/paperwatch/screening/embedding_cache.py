@@ -55,7 +55,7 @@ def load_cached_vectors(
         placeholders = ", ".join("?" * len(hash_chunk))
         for vector_row in connection.execute(
             f"""SELECT text_sha256, vector_float32 FROM text_embeddings
-                    WHERE embedding_model_identity = ? AND text_sha256 IN ({placeholders})""",
+                    WHERE embedding_model_identity = ? AND text_sha256 IN ({placeholders})""",  # noqa: S608  # only ? placeholders are interpolated
             (model_identity, *hash_chunk),
         ):
             cached_vectors[vector_row["text_sha256"]] = np.frombuffer(vector_row["vector_float32"], dtype="<f4")

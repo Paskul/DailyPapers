@@ -18,8 +18,8 @@ import time
 import urllib.parse
 import zlib
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 
 import httpx
 
@@ -125,16 +125,19 @@ class SecureHttpsFetcher:
             pool=bounds.connect_timeout_seconds,
         )
         hop_deadline = time.monotonic() + bounds.total_timeout_seconds
-        client_options = dict(timeout=timeouts, follow_redirects=False, trust_env=False)
+        # A fresh client per hop: no cookies or connections are carried over to the next hop.
         if self._transport is not None:
-            client_options["transport"] = self._transport
+            http_client = httpx.Client(
+                timeout=timeouts, follow_redirects=False, trust_env=False, transport=self._transport
+            )
         else:
-            client_options["verify"] = build_strict_tls_context()
+            http_client = httpx.Client(
+                timeout=timeouts, follow_redirects=False, trust_env=False, verify=build_strict_tls_context()
+            )
         try:
-            with httpx.Client(**client_options) as http_client:  # fresh client per hop: no cookies carried over
-                with http_client.stream("GET", hop.url, headers=request_headers) as response:
-                    connected_address = self._check_connected_address(hop, response)
-                    return self._read_response(hop, bounds, response, connected_address, hop_deadline)
+            with http_client, http_client.stream("GET", hop.url, headers=request_headers) as response:
+                connected_address = self._check_connected_address(hop, response)
+                return self._read_response(hop, bounds, response, connected_address, hop_deadline)
         except (SourceAccessDenied, SourceResponseRejected, ProviderUnavailable):
             raise
         except httpx.TimeoutException as timeout_error:
@@ -198,16 +201,18 @@ class SecureHttpsFetcher:
         hop_deadline: float,
     ) -> HopResult:
         content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-        result_without_body = dict(
+        result_without_body = HopResult(
             status_code=response.status_code,
             content_type=content_type,
             location_header=response.headers.get("location"),
             retry_after_seconds=parse_retry_after_seconds(response.headers.get("retry-after")),
+            body_bytes=b"",
+            wire_bytes=0,
             connected_address=connected_address,
             response_headers=tuple((name.lower(), value) for name, value in response.headers.items()),
         )
         if not 200 <= response.status_code < 300:
-            return HopResult(body_bytes=b"", wire_bytes=0, **result_without_body)  # body never read
+            return result_without_body  # body never read
 
         if content_type not in bounds.accepted_content_types:
             raise SourceResponseRejected(
@@ -237,7 +242,7 @@ class SecureHttpsFetcher:
                     f"{hop.provider_name}: response took longer than {bounds.total_timeout_seconds:.0f} s"
                 )
             body_decoder.feed(raw_chunk)
-        return HopResult(body_bytes=body_decoder.finish(), wire_bytes=wire_bytes, **result_without_body)
+        return replace(result_without_body, body_bytes=body_decoder.finish(), wire_bytes=wire_bytes)
 
 
 class BoundedBodyDecoder:
@@ -325,10 +330,8 @@ def parse_retry_after_seconds(retry_after_header: str | None) -> float | None:
     except (TypeError, ValueError):
         return None
     if retry_moment.tzinfo is None:
-        retry_moment = retry_moment.replace(tzinfo=timezone.utc)
-    return float(
-        min(max(0.0, (retry_moment - datetime.now(timezone.utc)).total_seconds()), MAXIMUM_RETRY_AFTER_SECONDS)
-    )
+        retry_moment = retry_moment.replace(tzinfo=UTC)
+    return float(min(max(0.0, (retry_moment - datetime.now(UTC)).total_seconds()), MAXIMUM_RETRY_AFTER_SECONDS))
 
 
 def _find_in_cause_chain(error: BaseException, wanted_type: type[BaseException]) -> BaseException | None:

@@ -112,4 +112,4 @@ def _screening_seed(stored_seed: StoredSeed) -> ScreeningSeed:
 
 def compute_screening_input_sha256(document_text: str, screening_fingerprint: str) -> str:
     """What one stored score depends on: the paper's screened text and the topic's screening fingerprint."""
-    return hashlib.sha256(f"{screening_fingerprint}\n{document_text}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{screening_fingerprint}\n{document_text}".encode()).hexdigest()

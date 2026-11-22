@@ -29,10 +29,10 @@ from paperwatch.clock import format_utc_timestamp, utc_now_timestamp
 from paperwatch.config import AppConfig
 from paperwatch.dispatch_order import dispatch_order_for_important_reference, dispatch_order_for_reference_selection
 from paperwatch.jobs import REVIEW_PAPER_JOB_KIND, enqueue_job_if_absent
+from paperwatch.reading.reading_pipeline import summarize_review_for_assessment
 from paperwatch.references.citation_hops import citation_hop_depth_of_paper, describe_followable_review
 from paperwatch.references.reference_candidates import ReferenceCandidate, list_reference_candidates
 from paperwatch.references.research_branches import ResearchBranch, offer_unused_branches, record_branch_request
-from paperwatch.reading.reading_pipeline import summarize_review_for_assessment
 from paperwatch.review_store import load_latest_topic_assessments
 from paperwatch.roles.base import RoleRunResult
 from paperwatch.roles.research import RESEARCH_ROLE_NAME
@@ -309,7 +309,7 @@ def admit_waiting_reference_selections(
     waiting_rows = connection.execute(
         f"""SELECT * FROM reference_selections WHERE admission_status = '{ADMISSION_WAITING_DAILY_CAP}'
               AND (:parent IS NULL OR parent_review_id = :parent)
-            ORDER BY importance DESC, selected_at, parent_review_id, cited_paper_id""",
+            ORDER BY importance DESC, selected_at, parent_review_id, cited_paper_id""",  # noqa: S608  # interpolates module constants only; values are bound
         {"parent": only_parent_review_id},
     ).fetchall()
     admitted_today = count_reference_admissions_today(connection, moment)

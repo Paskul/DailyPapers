@@ -18,6 +18,9 @@ import stat
 import time
 
 import pytest
+from conftest import RECORDED_PAPER_FIXTURE, PaperwatchHome, build_in_process_app
+from test_model_contract import REVIEWER_ROLE_INPUT, VALID_REVIEWER_ANSWER, _load_app_with_one_queued_paper
+from test_step7_evidence_reading import add_paper
 
 from paperwatch.collection.candidate_budget import CandidateAdmissionBudget, water_fill
 from paperwatch.collection.topic_word_ranking import rank_records_by_topic_words
@@ -43,10 +46,6 @@ from paperwatch.worker_stop import (
     request_worker_stop,
     reset_worker_stop_request,
 )
-
-from conftest import RECORDED_PAPER_FIXTURE, PaperwatchHome, build_in_process_app
-from test_step7_evidence_reading import add_paper
-from test_model_contract import REVIEWER_ROLE_INPUT, VALID_REVIEWER_ANSWER, _load_app_with_one_queued_paper
 
 # --------------------------------------------------------------------------------------------------------------------
 # Citations
@@ -280,9 +279,9 @@ def test_a_stop_request_during_a_model_call_puts_the_job_back_without_using_an_a
         assert (job_row["status"], job_row["attempts"], job_row["lease_token"]) == ("queued", 0, None)
         assert app.connection.execute("SELECT status FROM papers").fetchone()[0] == "queued"
         assert app.connection.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0] == 0
-        with pytest.raises(WorkerStopRequested):  # later calls refuse to start until the worker exits
-            with interruptible_model_wait():
-                pass
+        # Later calls refuse to start until the worker exits.
+        with pytest.raises(WorkerStopRequested), interruptible_model_wait():
+            pass
     finally:
         reset_worker_stop_request()
         app.close()
@@ -433,7 +432,7 @@ def test_retry_failed_requeues_model_output_failures_only(tmp_path, capsys):
 
 
 def test_openalex_pdf_downloads_are_spaced_more_widely_than_metadata_requests():
-    from paperwatch.network.provider_rules import load_provider_access_rules  # noqa: PLC0415
+    from paperwatch.network.provider_rules import load_provider_access_rules
 
     rules = load_provider_access_rules()
     assert rules.operation_rule("openalex", "get_text").minimum_seconds_between_requests == 1.5

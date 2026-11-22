@@ -78,7 +78,8 @@ def select_failed_jobs(
     if job_ids:
         placeholders = ", ".join("?" for _job_id in job_ids)
         job_rows = connection.execute(
-            f"SELECT * FROM jobs WHERE job_id IN ({placeholders}) ORDER BY created_at", job_ids
+            f"SELECT * FROM jobs WHERE job_id IN ({placeholders}) ORDER BY created_at",  # noqa: S608  # only ? placeholders are interpolated
+            job_ids,
         ).fetchall()
         not_failed = sorted(set(job_ids) - {row["job_id"] for row in job_rows if row["status"] == "failed"})
         if not_failed:
@@ -90,7 +91,7 @@ def select_failed_jobs(
     placeholders = ", ".join("?" for _component in selected_components)
     return connection.execute(
         f"""SELECT * FROM jobs WHERE status = 'failed' AND last_error_component IN ({placeholders})
-            ORDER BY created_at, job_id""",
+            ORDER BY created_at, job_id""",  # noqa: S608  # only ? placeholders are interpolated
         selected_components,
     ).fetchall()
 

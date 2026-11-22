@@ -19,6 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from conftest import RECORDED_PAPER_FIXTURE, build_in_process_app, find_unused_local_port
 
 from paperwatch.commands.access_check_command import build_minimal_pdf_bytes
 from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_cycle
@@ -34,8 +35,6 @@ from paperwatch.network.egress_guard import (
 )
 from paperwatch.sandboxed_extractor import build_extractor_container_command, extract_text_in_sandbox
 from paperwatch.source_cache import store_source_bytes
-
-from conftest import RECORDED_PAPER_FIXTURE, build_in_process_app, find_unused_local_port
 
 REPOSITORY_DIR = Path(__file__).resolve().parents[1]
 EXTRACTOR_ENTRYPOINT = REPOSITORY_DIR / "deploy" / "extractor" / "extract_text.py"
@@ -92,9 +91,8 @@ def test_worker_policy_allows_only_the_local_model_port():
                 subprocess.run(["true"], check=False)
             with pytest.raises(EgressBlocked):
                 os.system("true")
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram_socket:
-                with pytest.raises(EgressBlocked):
-                    datagram_socket.sendto(b"x", ("8.8.8.8", 53))
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram_socket, pytest.raises(EgressBlocked):
+                datagram_socket.sendto(b"x", ("8.8.8.8", 53))
 
 
 def test_collector_policy_allows_public_https_to_listed_hosts_and_its_container_runtime_only():
@@ -114,9 +112,8 @@ def test_collector_policy_allows_public_https_to_listed_hosts_and_its_container_
 
 
 def test_no_network_policy_refuses_everything():
-    with temporarily_armed_egress_policy(build_no_network_policy()):
-        with pytest.raises(EgressBlocked):
-            socket.create_connection(("127.0.0.1", find_unused_local_port()), timeout=2)
+    with temporarily_armed_egress_policy(build_no_network_policy()), pytest.raises(EgressBlocked):
+        socket.create_connection(("127.0.0.1", find_unused_local_port()), timeout=2)
 
 
 def test_cli_arms_the_policy_of_each_command(initialized_home):
@@ -134,7 +131,7 @@ def test_cli_arms_the_policy_of_each_command(initialized_home):
     """)
     for command_name in ("work", "report", "collect"):
         completed = subprocess.run(
-            [sys.executable, "-c", probe_script, command_name], capture_output=True, text=True, timeout=60
+            [sys.executable, "-c", probe_script, command_name], capture_output=True, text=True, timeout=60, check=False
         )
         assert "BLOCKED" in completed.stdout, completed.stderr
 
@@ -249,7 +246,7 @@ def test_image_entrypoint_extracts_pdf_text_with_the_pinned_parser(tmp_path):
         f"module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
         f"module.INPUT_PATH = {str(input_path)!r}; sys.exit(module.main())"
     )
-    completed = subprocess.run([sys.executable, "-c", runner], capture_output=True, text=True, timeout=60)
+    completed = subprocess.run([sys.executable, "-c", runner], capture_output=True, text=True, timeout=60, check=False)
     assert completed.returncode == 0, completed.stderr
     assert "Exit corridor monitor" in completed.stdout
 

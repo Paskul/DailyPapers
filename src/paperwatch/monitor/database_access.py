@@ -53,7 +53,7 @@ def load_paper_titles(connection: sqlite3.Connection, paper_ids: Iterable[str | 
     for chunk_start in range(0, len(wanted_ids), 500):
         chunk = wanted_ids[chunk_start : chunk_start + 500]
         placeholders = ",".join("?" * len(chunk))
-        for row in connection.execute(f"SELECT paper_id, title FROM papers WHERE paper_id IN ({placeholders})", chunk):
+        for row in connection.execute(f"SELECT paper_id, title FROM papers WHERE paper_id IN ({placeholders})", chunk):  # noqa: S608  # only ? placeholders are interpolated
             titles[row["paper_id"]] = row["title"]
     return titles
 
@@ -66,7 +66,8 @@ def load_job_papers(connection: sqlite3.Connection, job_ids: Iterable[str | None
         chunk = wanted_ids[chunk_start : chunk_start + 500]
         placeholders = ",".join("?" * len(chunk))
         for row in connection.execute(
-            f"SELECT job_id, kind, paper_id, priority FROM jobs WHERE job_id IN ({placeholders})", chunk
+            f"SELECT job_id, kind, paper_id, priority FROM jobs WHERE job_id IN ({placeholders})",  # noqa: S608  # only ? placeholders are interpolated
+            chunk,
         ):
             rows[row["job_id"]] = row
     return rows

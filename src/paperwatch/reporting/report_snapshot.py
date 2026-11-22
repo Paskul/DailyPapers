@@ -342,7 +342,7 @@ def _comparisons_involving(connection: sqlite3.Connection, review_ids: list[str]
         for row in connection.execute(
             f"""SELECT comparison_id FROM comparisons WHERE completed_at <= ?
             AND (lower_review_id IN ({placeholders}) OR higher_review_id IN ({placeholders}))
-            ORDER BY completed_at, comparison_id""",
+            ORDER BY completed_at, comparison_id""",  # noqa: S608  # only ? placeholders are interpolated
             (cutoff_at, *review_ids, *review_ids),
         )
     )

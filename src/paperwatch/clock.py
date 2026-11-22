@@ -7,17 +7,17 @@ Tests can monkeypatch `utc_now` to control time.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 STORED_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def format_utc_timestamp(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).strftime(STORED_TIMESTAMP_FORMAT)
+    return moment.astimezone(UTC).strftime(STORED_TIMESTAMP_FORMAT)
 
 
 def utc_now_timestamp() -> str:
@@ -25,4 +25,4 @@ def utc_now_timestamp() -> str:
 
 
 def parse_utc_timestamp(stored_timestamp: str) -> datetime:
-    return datetime.strptime(stored_timestamp, STORED_TIMESTAMP_FORMAT).replace(tzinfo=timezone.utc)
+    return datetime.strptime(stored_timestamp, STORED_TIMESTAMP_FORMAT).replace(tzinfo=UTC)

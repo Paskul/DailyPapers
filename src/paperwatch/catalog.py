@@ -296,7 +296,7 @@ def _choose_paper_for_record(
         return primary_paper_id
     placeholders = ",".join("?" * len(matched_paper_ids))
     return connection.execute(
-        f"SELECT paper_id FROM papers WHERE paper_id IN ({placeholders}) ORDER BY discovered_at, rowid LIMIT 1",
+        f"SELECT paper_id FROM papers WHERE paper_id IN ({placeholders}) ORDER BY discovered_at, rowid LIMIT 1",  # noqa: S608  # only ? placeholders are interpolated
         matched_paper_ids,
     ).fetchone()["paper_id"]
 
@@ -401,7 +401,7 @@ def _advance_paper_from_new_sighting(
     if column_updates:
         assignments = ", ".join(f"{column_name} = ?" for column_name in column_updates)
         connection.execute(
-            f"UPDATE papers SET {assignments}, updated_at = ? WHERE paper_id = ?",
+            f"UPDATE papers SET {assignments}, updated_at = ? WHERE paper_id = ?",  # noqa: S608  # column names come from code; values are bound
             (*column_updates.values(), now_timestamp, paper_id),
         )
 

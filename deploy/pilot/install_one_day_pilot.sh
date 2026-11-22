@@ -30,8 +30,9 @@ run_as_worker() {  # cd / : the service account cannot read the caller's directo
         --home "$PAPERWATCH_HOME" "$@")
 }
 
-if ls "$UNIT_DIR"/paperwatch-pilot-* >/dev/null 2>&1; then
-    echo "a pilot is already installed ($(ls "$UNIT_DIR"/paperwatch-pilot-* | wc -l) unit files); stop it first:" >&2
+existing_pilot_units=("$UNIT_DIR"/paperwatch-pilot-*)  # without a match, the one literal pattern (no file)
+if [[ -e "${existing_pilot_units[0]}" ]]; then
+    echo "a pilot is already installed (${#existing_pilot_units[@]} unit files); stop it first:" >&2
     echo "  sudo $REPOSITORY_DIR/deploy/pilot/stop_one_day_pilot.sh" >&2
     exit 1
 fi

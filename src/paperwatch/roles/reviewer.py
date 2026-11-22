@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from paperwatch.reading.evidence_checks import check_numbers_occur_in_passages
 from paperwatch.roles.answer_salvage import AnswerSalvage, DroppableListField, salvage_evidence_answer
 from paperwatch.roles.base import RoleDefinition, RoleInput
 from paperwatch.roles.evidence_fields import (
@@ -47,7 +48,6 @@ from paperwatch.roles.evidence_fields import (
     check_statement,
 )
 from paperwatch.roles.output_guards import find_invented_web_addresses
-from paperwatch.reading.evidence_checks import check_numbers_occur_in_passages
 
 REVIEWER_ROLE_NAME = "reviewer"
 # v1 (part 7): passage ids, excerpts, separate topic assessment. v2 (2026-11-21): the evidence rules tell the model

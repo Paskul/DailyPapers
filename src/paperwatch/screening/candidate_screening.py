@@ -107,7 +107,7 @@ def load_screening_candidates(
             WHERE paper.paper_id NOT IN (SELECT paper_id FROM paper_promotions)
               AND paper.paper_id NOT IN (SELECT paper_id FROM jobs WHERE paper_id IS NOT NULL)
               AND paper.paper_id NOT IN (SELECT paper_id FROM paper_withdrawals)
-            ORDER BY paper.paper_id"""
+            ORDER BY paper.paper_id"""  # noqa: S608  # interpolates module constants only; values are bound
     ).fetchall()
     return {
         candidate_row["paper_id"]: ScreeningCandidate(
@@ -285,7 +285,7 @@ def _store_topic_scores(
         placeholders = ", ".join("?" * len(topic_ids)) or "''"
         connection.execute(
             f"""DELETE FROM candidate_topic_scores WHERE topic_id NOT IN ({placeholders})
-                AND paper_id NOT IN (SELECT paper_id FROM paper_promotions)""",
+                AND paper_id NOT IN (SELECT paper_id FROM paper_promotions)""",  # noqa: S608  # only ? placeholders are interpolated
             tuple(topic_ids),
         )
 
