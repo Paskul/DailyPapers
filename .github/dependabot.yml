@@ -1,0 +1,47 @@
+# Monthly, grouped update pull requests, each release at least a week old (cooldown). Security updates for
+# vulnerable dependencies are separate and come as soon as an advisory is published (enable them in the
+# repository settings). deploy/install_application.sh installs exactly uv.lock, so review every update to it:
+# a merged update is what the hardened deployment installs on its next ./setup.sh run.
+version: 2
+
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      runtime:
+        dependency-type: production
+      development:
+        dependency-type: development
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      pre-commit-hooks:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+      include: scope
