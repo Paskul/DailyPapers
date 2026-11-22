@@ -80,6 +80,10 @@ All state lives in one SQLite database (`state/`). Generated notes and reports g
   paging (without one, only the first page of each search is used)
 - Optional, for a hardened deployment: systemd, nftables, and sudo access
 
+How fast is it? On a 27B model with two workstation GPUs, one full-text reading took a median of 28 model-minutes;
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) has the measurements, the llama-server settings that matter, and how to
+measure your own setup (`paperwatch capacity`).
+
 ## Quick start
 
 Everything is set up from **one settings file**, `settings/paperwatch.toml`, by **one script**, `./setup.sh`:
@@ -203,7 +207,7 @@ With `[setup] monitor_service = true`, setup keeps it running as your user servi
 | `reread PAPER_ID` | Request a fresh reading of a paper. |
 | `retry-failed [--component C] [--job ID] [--dry-run]` | Put failed jobs back in the queue with fresh attempts, keeping their saved reading stages (default: failures of the model's answers). |
 | `status` | Overview of topics, seed sources, papers, queue, searches, provider budgets, and the last report. |
-| `capacity` | Measured model time per role and per paper, and an estimate of how many readings fit in a day. |
+| `capacity` | Measured model time per role and per paper (with llama.cpp's own prompt and generation speeds), and an estimate of how many readings fit in a day. |
 | `backup DIR` / `backup --check-restore DIR` | Write a consistent snapshot (no credentials, no raw PDFs) / verify that a copy restores. |
 | `label-sample OUT.csv` | A shuffled sample of screened candidates without scores, for checking ranking quality by hand. |
 | `monitor [--port P] [--json]` | Live, read-only web page: current step, timeline, plan, queue, events (see Monitor). |
