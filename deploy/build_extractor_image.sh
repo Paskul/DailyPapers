@@ -4,8 +4,10 @@
 # Usage: deploy/build_extractor_image.sh [collector account]      (run as your normal user, NOT with sudo)
 #        An empty account ("") keeps the image in your own store only (the `local` setup mode). ./setup.sh runs this.
 #
-# Needs the network once, for the Debian base image and packages. The collector itself never downloads images: it
-# runs `podman run --pull=never` with the image id printed at the end, which you put in config.toml:
+# Needs the network once, for the Debian base image and packages. PAPERWATCH_EXTRACTOR_BASE_IMAGE (name:tag) may
+# name another registry's copy of the same official image (CI uses public.ecr.aws/docker/library/debian:bookworm-slim).
+# The collector itself never downloads images: it runs `podman run --pull=never` with the image id printed at the end,
+# which you put in config.toml:
 #     [extractor]
 #     image = "<printed 64-hex image id>"
 # The image id is the sha256 of the image configuration, so it pins the exact parser build, and it survives the
@@ -14,17 +16,18 @@ set -euo pipefail
 
 COLLECTOR_ACCOUNT="${1-paperwatch-collector}"
 BUILD_TAG=localhost/paperwatch-extractor:build
-BASE_IMAGE_NAME=docker.io/library/debian:bookworm-slim
+BASE_IMAGE_NAME="${PAPERWATCH_EXTRACTOR_BASE_IMAGE:-docker.io/library/debian:bookworm-slim}"
+BASE_IMAGE_REPOSITORY="${BASE_IMAGE_NAME%:*}"  # without the tag: the build pins the pulled digest
 [[ $EUID -ne 0 ]] || { echo "run as your normal user; the script calls sudo only for the load step" >&2; exit 1; }
 command -v podman >/dev/null || { echo "podman is not installed: sudo apt install podman" >&2; exit 1; }
 
 cd "$(dirname "$0")/extractor"
 podman pull "$BASE_IMAGE_NAME"
 BASE_IMAGE_DIGEST="$(podman image inspect --format '{{.Digest}}' "$BASE_IMAGE_NAME")"
-podman build --pull=never --build-arg "BASE_IMAGE=docker.io/library/debian@${BASE_IMAGE_DIGEST}" \
+podman build --pull=never --build-arg "BASE_IMAGE=${BASE_IMAGE_REPOSITORY}@${BASE_IMAGE_DIGEST}" \
     --tag "$BUILD_TAG" .
 IMAGE_ID="$(podman image inspect --format '{{.Id}}' "$BUILD_TAG")"
-echo "built $BUILD_TAG = $IMAGE_ID (base debian@${BASE_IMAGE_DIGEST})"
+echo "built $BUILD_TAG = $IMAGE_ID (base ${BASE_IMAGE_REPOSITORY}@${BASE_IMAGE_DIGEST})"
 podman run --rm --pull=never --network=none --read-only --entrypoint cat "$IMAGE_ID" \
     /opt/paperwatch-extractor/PACKAGE_VERSIONS
 

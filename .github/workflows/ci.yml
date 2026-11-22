@@ -1,0 +1,107 @@
+# Every push to main and every pull request: the pre-commit checks (lint, format, types, workflow and secret
+# checks), the offline test suite on each supported Python, and the PDF extraction sandbox with real Podman.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: "1"
+  OPENBLAS_NUM_THREADS: "1"  # numpy's BLAS: one thread instead of one busy-waiting thread per core
+
+jobs:
+  checks:
+    name: Lint, format, and types
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Install the project and its development tools
+        run: uv sync --locked
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Run every pre-commit check on every file
+        run: uv run --locked pre-commit run --all-files --show-diff-on-failure
+
+  tests:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install poppler for the host-side extractor test
+        run: sudo apt-get update --quiet && sudo apt-get install --yes --quiet --no-install-recommends poppler-utils
+      - name: Install the project
+        run: uv sync --locked
+      - name: Run the tests, with coverage in the job summary
+        if: matrix.python-version == '3.12'
+        run: uv run --locked pytest --cov --cov-report=term --cov-report="markdown-append:$GITHUB_STEP_SUMMARY"
+      - name: Run the tests
+        if: matrix.python-version != '3.12'
+        run: uv run --locked pytest
+
+  extractor-sandbox:
+    name: PDF extraction sandbox (real Podman)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Install the project
+        run: uv sync --locked
+      - name: Give the runner the rootless Podman setup the collector account has
+        # Subordinate ids, and a lingering systemd user session through which Podman applies the sandbox's memory,
+        # process, and CPU limits (deploy/setup_service_accounts.sh does the same for the collector).
+        run: |
+          grep -q "^$USER:" /etc/subuid || sudo usermod --add-subuids 200000-265535 --add-subgids 200000-265535 "$USER"
+          sudo mkdir -p /etc/systemd/system/user@.service.d
+          printf '[Service]\nDelegate=cpu cpuset io memory pids\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf
+          sudo systemctl daemon-reload
+          sudo loginctl enable-linger "$USER"
+          runtime_dir="/run/user/$(id -u)"
+          for _ in $(seq 30); do [ -S "$runtime_dir/bus" ] && break; sleep 1; done
+          echo "XDG_RUNTIME_DIR=$runtime_dir" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_dir/bus" >> "$GITHUB_ENV"
+      - name: Show what Podman can enforce
+        run: podman info --format 'cgroup manager {{.Host.CgroupManager}}, cgroups {{.Host.CgroupsVersion}}, controllers {{.Host.CgroupControllers}}'
+      - name: Build the extractor image
+        env:
+          PAPERWATCH_EXTRACTOR_BASE_IMAGE: public.ecr.aws/docker/library/debian:bookworm-slim  # Docker Hub's official image, without its pull limits
+        run: |
+          deploy/build_extractor_image.sh "" | tee "$RUNNER_TEMP/extractor-build.log"
+          image_id="$(sed -n 's/^  image = "\([0-9a-f]\{64\}\)"$/\1/p' "$RUNNER_TEMP/extractor-build.log")"
+          test -n "$image_id"
+          echo "PAPERWATCH_TEST_EXTRACTOR_IMAGE=$image_id" >> "$GITHUB_ENV"
+      - name: Extract a PDF inside the real sandbox
+        run: uv run --locked pytest -k real_podman -v
