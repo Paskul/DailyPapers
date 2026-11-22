@@ -39,6 +39,7 @@ from paperwatch.roles.evidence_fields import (
     INFERENCE_SCHEMA,
     LIMITATION_SCHEMA,
     MAXIMUM_PASSAGES_PER_SINGLE_STATEMENT,
+    MAXIMUM_SINGLE_STATEMENT_CHARACTERS,
     PARSER_PROBLEM_SCHEMA,
     SINGLE_STATEMENT_SCHEMA,
     STATEMENT_SCHEMA,
@@ -59,7 +60,7 @@ REVIEWER_ROLE_NAME = "reviewer"
 # v1: passage ids, excerpts, separate topic assessment. v2 (2026-11-21): the evidence rules tell the model
 # to cite the passage that holds a quoted number. v3 (2026-11-22, after the second pilot): the three single
 # statements may cite 10 passages instead of 6, ids are written one per entry, section summaries carry no citations,
-# and the 1200-character limit is stated. v3 only loosens a schema bound, so v1 and v2 syntheses still validate and
+# and the length limits are stated (1600 characters for the single statements, 1200 for the rest). v3 only loosens a schema bound, so v1 and v2 syntheses still validate and
 # are reused after passing today's checks.
 REVIEWER_PROMPT_VERSION = "reviewer-evidence-v3"
 REVIEWER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("reviewer-evidence-v2", "reviewer-evidence-v1")
@@ -164,7 +165,9 @@ def _find_reviewer_problems(validated_output: dict[str, Any], role_input: RoleIn
     passage_text_by_id = role_input["citable_passages"]
     problems: list[str] = []
     for field_name in SINGLE_STATEMENT_FIELDS:
-        problems += check_statement(validated_output[field_name], passage_text_by_id, field_name)
+        problems += check_statement(
+            validated_output[field_name], passage_text_by_id, field_name, MAXIMUM_SINGLE_STATEMENT_CHARACTERS
+        )
     for assumption_index, assumption in enumerate(validated_output["assumptions"], start=1):
         problems += check_statement(assumption, passage_text_by_id, f"assumptions[{assumption_index}]")
     problems += check_finding_list(validated_output["results"], passage_text_by_id, "results")

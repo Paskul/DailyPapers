@@ -31,6 +31,9 @@ from paperwatch.reading.evidence_checks import (
 EVIDENCE_STATUS_INSUFFICIENT = "insufficient_evidence"
 EVIDENCE_STATUS_SUPPORTED = "supported"
 MAXIMUM_STATEMENT_CHARACTERS = 1200
+# The reviewer's research question, method and evaluation setting describe the whole paper. Trial of 2026-11-22: two
+# of four first answers had a method of 1352 and 1435 characters, and each cost a ~10-minute repair call.
+MAXIMUM_SINGLE_STATEMENT_CHARACTERS = 1600
 MAXIMUM_PASSAGES_PER_STATEMENT = 6
 MAXIMUM_PASSAGES_PER_SINGLE_STATEMENT = 10
 
@@ -121,7 +124,8 @@ evidence_status "insufficient_evidence".
 it as the authors' claim.
 - Flag passages that can be read more than one way in ambiguous_passages, and tables or equations the text \
 extraction garbled in parser_problems.
-- Keep every text field under {MAXIMUM_STATEMENT_CHARACTERS} characters."""
+- Keep every text field under {MAXIMUM_STATEMENT_CHARACTERS} characters (a review's research_question, method and \
+evaluation_setting: under {MAXIMUM_SINGLE_STATEMENT_CHARACTERS})."""
 
 
 # Item checks: each takes ONE list item and the label used in its problems ("findings[3]"). The list checks below
@@ -143,8 +147,13 @@ def check_finding(finding: Mapping[str, Any], passage_text_by_id: PassageTextByI
     )
 
 
-def check_statement(statement: Mapping[str, Any], passage_text_by_id: PassageTextById, where: str) -> list[str]:
-    problems = _check_length(statement["statement"], where)
+def check_statement(
+    statement: Mapping[str, Any],
+    passage_text_by_id: PassageTextById,
+    where: str,
+    maximum_characters: int = MAXIMUM_STATEMENT_CHARACTERS,
+) -> list[str]:
+    problems = _check_length(statement["statement"], where, maximum_characters)
     cited_passage_ids = list(statement["supporting_passage_ids"])
     if statement["evidence_status"] == EVIDENCE_STATUS_SUPPORTED and not cited_passage_ids:
         problems.append(f"{where}: a supported statement must cite at least one passage")
@@ -203,7 +212,7 @@ def check_flagged_passages(answer: Mapping[str, Any], passage_text_by_id: Passag
     ) + check_each_item(answer.get("parser_problems", []), check_flagged_passage, passage_text_by_id, "parser_problems")
 
 
-def _check_length(text: str, where: str) -> list[str]:
-    if len(text) > MAXIMUM_STATEMENT_CHARACTERS:
-        return [f"{where}: {len(text)} characters; keep each text field under {MAXIMUM_STATEMENT_CHARACTERS}"]
+def _check_length(text: str, where: str, maximum_characters: int = MAXIMUM_STATEMENT_CHARACTERS) -> list[str]:
+    if len(text) > maximum_characters:
+        return [f"{where}: {len(text)} characters; keep each text field under {maximum_characters}"]
     return []

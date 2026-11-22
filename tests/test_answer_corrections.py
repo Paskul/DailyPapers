@@ -124,6 +124,20 @@ def test_the_single_statements_may_cite_ten_passages_but_not_more():
     )
 
 
+def test_the_single_statements_may_be_longer_than_the_other_text_fields():
+    long_method = "LoRA on agent traces. " * 66  # about 1450 characters
+    validated = parse_and_validate_role_output(
+        REVIEWER_ROLE, json.dumps(reviewer_answer(long_method, ["P1"])), REVIEWER_INPUT
+    )
+    assert validated["method"]["statement"] == long_method
+    too_long = reviewer_answer("LoRA on agent traces. " * 80, ["P1"])
+    assert "keep each text field under 1600" in str(rejection_of(REVIEWER_ROLE, too_long, REVIEWER_INPUT))
+    long_assumption = {"statement": long_method, "evidence_status": "supported", "supporting_passage_ids": ["P1"]}
+    assert "under 1200" in str(
+        rejection_of(REVIEWER_ROLE, reviewer_answer("LoRA.", ["P1"], assumptions=[long_assumption]), REVIEWER_INPUT)
+    )
+
+
 # --------------------------------------------------------------------------------------------------------------------
 # Numbers from an uncited passage
 # --------------------------------------------------------------------------------------------------------------------
