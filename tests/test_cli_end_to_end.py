@@ -3,6 +3,10 @@ model endpoint unavailable. The CLI must report which component failed and prese
 
 from __future__ import annotations
 
+import argparse
+import subprocess
+import sys
+
 from conftest import RECORDED_PAPER_FIXTURE, PaperwatchHome
 
 from paperwatch.roles.reviewer import REVIEWER_PROMPT_VERSION
@@ -109,3 +113,33 @@ def test_missing_fixture_names_source_component(initialized_home: PaperwatchHome
     collect_result = initialized_home.run_cli("collect", "--fixture", "/nonexistent/recorded.json")
     assert collect_result.exit_code == 7
     assert "FAILED [source]" in collect_result.stderr
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# Start-up: each command's code is imported only when it runs
+# --------------------------------------------------------------------------------------------------------------------
+
+HEAVY_LIBRARIES = ("numpy", "jsonschema", "httpx", "onnxruntime", "tokenizers")
+
+
+def test_building_the_parser_imports_no_heavy_library():
+    """`paperwatch --help` (and any argument error) must not pay for numpy, jsonschema, httpx, and the rest."""
+    probe = (
+        "import sys, paperwatch.cli as cli; cli.build_argument_parser(); "
+        f"print(sorted(name for name in {HEAVY_LIBRARIES!r} if name in sys.modules))"
+    )
+    completed = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60, check=False)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "[]"
+
+
+def test_every_command_of_the_parser_has_a_runner_that_loads():
+    from paperwatch import cli
+
+    subcommand_actions = [
+        action for action in cli.build_argument_parser()._actions if isinstance(action, argparse._SubParsersAction)
+    ]
+    parser_commands = set(subcommand_actions[0].choices)
+    assert parser_commands == set(cli.COMMAND_RUNNER_LOCATIONS) | {"init", "monitor"}
+    for command_name in cli.COMMAND_RUNNER_LOCATIONS:
+        assert callable(cli.load_command_runner(command_name))

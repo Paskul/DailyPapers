@@ -32,7 +32,8 @@ from typing import Any
 
 from paperwatch.config import CONFIG_FILE_NAME, TOPICS_FILE_NAME, load_app_config
 from paperwatch.errors import ConfigurationError, PaperwatchError, describe_failure_for_operator
-from paperwatch.monitor.monitor_server import DEFAULT_LISTEN_ADDRESS, DEFAULT_PORT, validate_listen_address
+from paperwatch.monitor.monitor_defaults import DEFAULT_LISTEN_ADDRESS, DEFAULT_PORT
+from paperwatch.monitor.monitor_server import validate_listen_address
 from paperwatch.network.collector_credentials import load_collector_credentials
 
 SETTINGS_FILE_NAME = "paperwatch.toml"

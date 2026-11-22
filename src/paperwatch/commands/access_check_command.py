@@ -29,6 +29,7 @@ from pathlib import Path
 
 from paperwatch.app_context import AppContext
 from paperwatch.commands.check_results import FAIL, PASS, SKIP, WARN, CheckResult, print_check_results
+from paperwatch.commands.command_arguments import COMPONENT_COLLECTOR, COMPONENT_WORKER
 from paperwatch.errors import ConfigurationError, PaperwatchError
 from paperwatch.network.collector_credentials import describe_credentials_file_problem
 from paperwatch.network.egress_guard import is_public_internet_address
@@ -38,8 +39,6 @@ from paperwatch.screening.embedding_model_registry import look_up_pinned_embeddi
 from paperwatch.screening.text_embedders import EMBEDDING_BACKEND_ONNX
 from paperwatch.source_cache import store_source_bytes
 
-COMPONENT_COLLECTOR = "collector"
-COMPONENT_WORKER = "worker"
 NETWORK_PROBE_TIMEOUT_SECONDS = 4.0
 PUBLIC_HTTPS_PROBE_HOST = "export.arxiv.org"  # a host the collector is allowed to contact anyway
 EXTRACTOR_SMOKE_TEST_EDITION_ID = "e_0000000000000000"

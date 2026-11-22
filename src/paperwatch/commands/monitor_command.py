@@ -17,39 +17,7 @@ import json
 import sys
 
 from paperwatch.config import AppConfig
-from paperwatch.monitor.monitor_server import (
-    DEFAULT_LISTEN_ADDRESS,
-    DEFAULT_PORT,
-    SnapshotProvider,
-    create_monitor_server,
-)
-from paperwatch.monitor.snapshot import DEFAULT_HISTORY_HOURS
-
-
-def add_monitor_arguments(monitor_parser: argparse.ArgumentParser) -> None:
-    monitor_parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"default {DEFAULT_PORT}")
-    monitor_parser.add_argument(
-        "--listen-address",
-        default=DEFAULT_LISTEN_ADDRESS,
-        help="127.0.0.1 (default), ::1, or this machine's Tailscale address",
-    )
-    monitor_parser.add_argument(
-        "--allow-host",
-        dest="extra_host_names",
-        action="append",
-        default=[],
-        metavar="NAME",
-        help="another host name the page may be opened under, e.g. the machine's Tailscale MagicDNS name (repeatable)",
-    )
-    monitor_parser.add_argument(
-        "--history-hours",
-        type=float,
-        default=DEFAULT_HISTORY_HOURS,
-        help=f"default history window (default {DEFAULT_HISTORY_HOURS:g}; the page can change it)",
-    )
-    monitor_parser.add_argument(
-        "--json", dest="print_json", action="store_true", help="print one snapshot as JSON and exit (no server)"
-    )
+from paperwatch.monitor.monitor_server import SnapshotProvider, create_monitor_server
 
 
 def run_monitor_command(app_config: AppConfig, arguments: argparse.Namespace) -> int:

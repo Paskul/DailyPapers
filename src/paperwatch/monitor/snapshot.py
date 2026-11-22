@@ -21,7 +21,6 @@ from paperwatch.monitor.database_access import existing_table_names, schema_vers
 from paperwatch.monitor.recent_history import describe_history, latest_collect_run
 from paperwatch.monitor.schedule_state import ScheduleState
 
-DEFAULT_HISTORY_HOURS = 24.0
 MINIMUM_HORIZON_AHEAD = timedelta(hours=6)
 HORIZON_AFTER_CUTOFF = timedelta(hours=2)  # the report run, and the pilot's finish 100 minutes after the cutoff
 ACTIVITY_LOG_TABLE = "activity_log"

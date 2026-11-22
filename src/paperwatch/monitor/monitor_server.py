@@ -34,13 +34,12 @@ from paperwatch.clock import utc_now
 from paperwatch.config import AppConfig
 from paperwatch.errors import ConfigurationError, PaperwatchError
 from paperwatch.monitor.database_access import open_read_only_database
+from paperwatch.monitor.monitor_defaults import DEFAULT_LISTEN_ADDRESS, DEFAULT_PORT
 from paperwatch.monitor.schedule_state import ScheduleState, read_schedule_state
 from paperwatch.monitor.snapshot import build_monitor_snapshot
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_PORT = 8765
-DEFAULT_LISTEN_ADDRESS = "127.0.0.1"
 SNAPSHOT_CACHE_SECONDS = 3.0
 MINIMUM_HISTORY_HOURS, MAXIMUM_HISTORY_HOURS = 6.0, 168.0
 TAILSCALE_NETWORKS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))

@@ -19,32 +19,13 @@ import sqlite3
 from paperwatch.app_context import AppContext
 from paperwatch.catalog import set_paper_status
 from paperwatch.clock import utc_now_timestamp
+from paperwatch.commands.command_arguments import DEFAULT_RETRY_COMPONENT
 from paperwatch.db import write_transaction
-from paperwatch.errors import ConfigurationError, ModelOutputInvalid
+from paperwatch.errors import ConfigurationError
 from paperwatch.jobs import REVIEW_PAPER_JOB_KIND
 
-DEFAULT_COMPONENT = ModelOutputInvalid.failed_component  # "model-output"
 REQUEUE_NOTE_PREFIX = "requeued by the operator after: "
 MAXIMUM_STORED_ERROR_CHARACTERS = 2000
-
-
-def add_retry_failed_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--component",
-        dest="components",
-        action="append",
-        metavar="COMPONENT",
-        help=f"requeue failed jobs whose last failure came from this component (repeatable; "
-        f"default: {DEFAULT_COMPONENT})",
-    )
-    parser.add_argument(
-        "--job",
-        dest="job_ids",
-        action="append",
-        metavar="JOB_ID",
-        help="requeue this failed job, whatever its component (repeatable)",
-    )
-    parser.add_argument("--dry-run", action="store_true", help="list the jobs, change nothing")
 
 
 def run_retry_failed_command(app: AppContext, arguments: argparse.Namespace) -> int:
@@ -87,7 +68,7 @@ def select_failed_jobs(
                 f"not a failed job: {', '.join(not_failed)}", operator_hint="`paperwatch status` lists failed jobs"
             )
         return job_rows
-    selected_components = components or (DEFAULT_COMPONENT,)
+    selected_components = components or (DEFAULT_RETRY_COMPONENT,)
     placeholders = ", ".join("?" for _component in selected_components)
     return connection.execute(
         f"""SELECT * FROM jobs WHERE status = 'failed' AND last_error_component IN ({placeholders})

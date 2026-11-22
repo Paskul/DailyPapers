@@ -4,6 +4,10 @@ status, access-check, capacity, backup, label-sample, monitor}.
 Every failure is printed as `paperwatch: FAILED [<component>] <message>` with a component-specific exit code
 (see paperwatch.errors), so the operator and systemd logs show which part broke.
 
+Each command's module is imported only when that command runs (load_command_runner), so `paperwatch --help` and
+the light commands do not load numpy, jsonschema, and httpx. The module is imported before the egress policy is
+armed, as when every command was imported at start-up.
+
 Before a command runs, its process arms one egress policy (paperwatch.network.egress_guard): only `collect` may
 reach paper providers; every other command may reach only the local model server; `init`, `retry-failed`, `capacity`,
 `backup`, and `label-sample` may reach nothing; `monitor`
@@ -13,27 +17,21 @@ connects nowhere (it only serves its page) and may start only `systemctl` for re
 from __future__ import annotations
 
 import argparse
+import importlib
 import logging
 import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from paperwatch import __version__
-from paperwatch.app_context import AppContext
-from paperwatch.commands.access_check_command import COMPONENT_COLLECTOR, COMPONENT_WORKER, run_access_check_command
-from paperwatch.commands.backup_command import run_backup_command
-from paperwatch.commands.capacity_command import run_capacity_command
-from paperwatch.commands.collect_command import run_collect_command
-from paperwatch.commands.doctor_command import run_doctor_command
-from paperwatch.commands.init_command import run_init_command
-from paperwatch.commands.label_sample_command import run_label_sample_command
-from paperwatch.commands.monitor_command import add_monitor_arguments, run_monitor_command
-from paperwatch.commands.report_command import run_report_command
-from paperwatch.commands.reread_command import run_reread_command
-from paperwatch.commands.retry_failed_command import add_retry_failed_arguments, run_retry_failed_command
-from paperwatch.commands.status_command import run_status_command
-from paperwatch.commands.work_command import run_work_command
+from paperwatch.commands.command_arguments import (
+    COMPONENT_COLLECTOR,
+    COMPONENT_WORKER,
+    add_monitor_arguments,
+    add_retry_failed_arguments,
+)
 from paperwatch.config import AppConfig, load_app_config
 from paperwatch.errors import PaperwatchError, describe_failure_for_operator
 from paperwatch.network.egress_guard import (
@@ -47,20 +45,25 @@ from paperwatch.network.egress_guard import (
 from paperwatch.network.provider_rules import load_provider_access_rules
 from paperwatch.service_log_redaction import install_service_log_redaction
 
+if TYPE_CHECKING:
+    from paperwatch.app_context import AppContext
+
 HOME_ENVIRONMENT_VARIABLE = "PAPERWATCH_HOME"
 
-COMMAND_RUNNERS: dict[str, Callable[[AppContext, argparse.Namespace], int]] = {
-    "doctor": run_doctor_command,
-    "collect": run_collect_command,
-    "work": run_work_command,
-    "reread": run_reread_command,
-    "retry-failed": run_retry_failed_command,
-    "report": run_report_command,
-    "status": run_status_command,
-    "access-check": run_access_check_command,
-    "capacity": run_capacity_command,
-    "backup": run_backup_command,
-    "label-sample": run_label_sample_command,
+CommandRunner = Callable[["AppContext", argparse.Namespace], int]
+# Where each command's code lives: imported only when the command runs (`init` and `monitor` are handled apart).
+COMMAND_RUNNER_LOCATIONS: dict[str, tuple[str, str]] = {
+    "doctor": ("paperwatch.commands.doctor_command", "run_doctor_command"),
+    "collect": ("paperwatch.commands.collect_command", "run_collect_command"),
+    "work": ("paperwatch.commands.work_command", "run_work_command"),
+    "reread": ("paperwatch.commands.reread_command", "run_reread_command"),
+    "retry-failed": ("paperwatch.commands.retry_failed_command", "run_retry_failed_command"),
+    "report": ("paperwatch.commands.report_command", "run_report_command"),
+    "status": ("paperwatch.commands.status_command", "run_status_command"),
+    "access-check": ("paperwatch.commands.access_check_command", "run_access_check_command"),
+    "capacity": ("paperwatch.commands.capacity_command", "run_capacity_command"),
+    "backup": ("paperwatch.commands.backup_command", "run_backup_command"),
+    "label-sample": ("paperwatch.commands.label_sample_command", "run_label_sample_command"),
 }
 COLLECTOR_COMMAND_NAME = "collect"
 # Local files and the database only:
@@ -195,6 +198,13 @@ def select_egress_policy_for_command(command_name: str, app_config: AppConfig) -
     return build_local_model_policy(app_config.model.base_url, component_label=command_name)
 
 
+def load_command_runner(command_name: str) -> CommandRunner:
+    """Import the command's module now and return its runner (see COMMAND_RUNNER_LOCATIONS)."""
+    module_name, function_name = COMMAND_RUNNER_LOCATIONS[command_name]
+    command_runner: CommandRunner = getattr(importlib.import_module(module_name), function_name)
+    return command_runner
+
+
 def arm_egress_policy_for_command(command_name: str, app_config: AppConfig) -> None:
     """Defence in depth behind nftables: limit what this process may resolve, connect to, and launch."""
     selected_policy = select_egress_policy_for_command(command_name, app_config)
@@ -211,18 +221,25 @@ def main(argv: list[str] | None = None) -> int:
     install_service_log_redaction()  # No keys, signed URLs, or paper text in service logs
     try:
         if arguments.command_name == "init":
+            from paperwatch.commands.init_command import run_init_command
+
             arm_egress_policy(build_no_network_policy("init"))
             return run_init_command(arguments.home, arguments)
         if arguments.command_name == "monitor":
             # Read-only: it never opens the database for writing or insists on the current schema version, so it
             # also watches a deployment that runs an older version.
+            from paperwatch.commands.monitor_command import run_monitor_command
+
             app_config = load_app_config(arguments.home)
             arm_egress_policy(build_monitor_policy())
             return run_monitor_command(app_config, arguments)
+        from paperwatch.app_context import AppContext
+
+        command_runner = load_command_runner(arguments.command_name)
         app = AppContext.load(arguments.home)
         try:
             arm_egress_policy_for_command(arguments.command_name, app.config)
-            return COMMAND_RUNNERS[arguments.command_name](app, arguments)
+            return command_runner(app, arguments)
         finally:
             app.close()
     except PaperwatchError as failure:
