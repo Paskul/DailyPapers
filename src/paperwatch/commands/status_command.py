@@ -214,7 +214,8 @@ def _print_screening_summary(app: AppContext) -> None:
         f"  promoted today (UTC): {today_counts['regular_count'] + today_counts['near_cutoff_count']} of "
         f"{screening_settings.daily_promotion_limit} ({today_counts['near_cutoff_count']} of "
         f"{screening_settings.near_cutoff_promotions} near the cutoff); minimum score "
-        f"{screening_settings.minimum_screening_score:g}"
+        f"{screening_settings.minimum_screening_score:g} (pool percentile), raw-score floor "
+        f"{screening_settings.minimum_unnormalized_score:g}"
         + (
             "; by reason and topic: "
             + ", ".join(

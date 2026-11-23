@@ -13,6 +13,15 @@ are marked comparable, or at least one condition difference is stated with evide
 conditions_caveat. Example: a theorem for exact robot positions and a simulation with noisy positions may address the
 same failure, but their guarantees differ.
 
+"Fix, then drop" (roles/keyed_evidence.py, as for the writer). The first live comparison (trial of 2026-11-23,
+after three pilots in which no comparison ever ran) was rejected for three misquoted excerpts, an excerpt with
+"...", an unsupported number, and a conclusion of more than 1200 characters, and its repair ran out of tokens.
+Before an answer is rejected, the host moves a misquoted excerpt to the one passage of the same review that holds it,
+adds a quotation of the passage that states an uncited number, and drops evidence items, condition differences,
+agreements, differences, or a ranking that still fail. The reader's conclusion is never dropped: if it still fails,
+the answer needs the repair call. The prompt asks for TARGET_TEXT_CHARACTERS; the host accepts
+MAXIMUM_TEXT_CHARACTERS.
+
 Role input (plain data):
     question            {topic_id, question}
     reviews             [two × {review_id, title, year, coverage, summary, research_question, method,
@@ -22,23 +31,28 @@ Role input (plain data):
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
 
 from paperwatch.reading.evidence_checks import check_excerpt_matches_passage, check_numbers_occur_in_passages
+from paperwatch.roles.answer_salvage import AnswerSalvage
 from paperwatch.roles.base import RoleDefinition, RoleInput
+from paperwatch.roles.keyed_evidence import KeyedEvidenceCorrections, evidence_passage_key
 from paperwatch.roles.output_guards import find_invented_web_addresses
 
 COMPARISON_ROLE_NAME = "comparison"
-COMPARISON_PROMPT_VERSION = "comparison-v1"
+# v2 (2026-11-23): the prompt states the length limit; the host corrects citations before it rejects.
+COMPARISON_PROMPT_VERSION = "comparison-v2"
 COMPARABILITY_INCOMPATIBLE = "incompatible"
 COMPARABILITY_PARTIAL = "partially_comparable"
 COMPARABILITY_COMPARABLE = "comparable"
 CONDITION_DIMENSIONS = ("assumptions", "guarantee", "evaluation_setting", "method", "data")
-MAXIMUM_TEXT_CHARACTERS = 1200
+TARGET_TEXT_CHARACTERS = 1200  # what the prompt asks for
+MAXIMUM_TEXT_CHARACTERS = 1500  # what the host accepts
 MAXIMUM_EVIDENCE_PER_STATEMENT = 4
 
-COMPARISON_SYSTEM_PROMPT = """\
+COMPARISON_SYSTEM_PROMPT = f"""\
 You compare two evidence-checked reviews of different papers that address the same research question, for one \
 researcher. You do not see the papers, only the two reviews and the passages they cite.
 
@@ -61,9 +75,10 @@ ranking still holds and where it does not. Leave it empty when a ranking would b
 evidence" when the reviews do not support a conclusion, and set insufficient_evidence to true.
 
 Evidence rules:
-- Every evidence item is {review_id, passage_id, excerpt}: review_id is one of the two reviews, passage_id is one of \
-THAT review's passages, and excerpt is a short contiguous quotation (3 to 60 words, no "...") copied from it.
-- Every number in a statement must appear in a passage that statement cites.
+- Every evidence item is {{review_id, passage_id, excerpt}}: review_id is one of the two reviews, passage_id is one \
+of THAT review's passages, and excerpt is a short contiguous quotation (3 to 60 words, no "...") copied from it.
+- Every number in a statement must appear in a passage that statement cites; cite the passage that holds it.
+- Keep every statement under {TARGET_TEXT_CHARACTERS} characters.
 - Do not judge novelty for the whole field. Answer with the JSON object only."""
 
 EVIDENCE_ITEM_SCHEMA: dict[str, Any] = {
@@ -140,7 +155,16 @@ MINIMUM_CAVEAT_WORDS = 5
 
 
 def composite_passage_key(review_id: str, passage_id: str) -> str:
-    return f"{review_id}#{passage_id}"
+    return evidence_passage_key(review_id, passage_id)
+
+
+def comparison_passages(role_input: RoleInput) -> dict[str, str]:
+    """Passage key -> text of every passage either review cites (the full saved passages)."""
+    return {
+        composite_passage_key(review["review_id"], passage["passage_id"]): passage["text"]
+        for review in role_input["reviews"]
+        for passage in review["passages"]
+    }
 
 
 def _render_comparison_user_message(role_input: RoleInput) -> str:
@@ -154,11 +178,7 @@ def _render_comparison_user_message(role_input: RoleInput) -> str:
 
 def _find_comparison_problems(validated_output: dict[str, Any], role_input: RoleInput) -> list[str]:
     review_ids = [review["review_id"] for review in role_input["reviews"]]
-    passage_text_by_key = {
-        composite_passage_key(review["review_id"], passage["passage_id"]): passage["text"]
-        for review in role_input["reviews"]
-        for passage in review["passages"]
-    }
+    passage_text_by_key = comparison_passages(role_input)
     problems: list[str] = []
     cited_review_ids: set[str] = set()
 
@@ -233,6 +253,93 @@ def _find_comparison_problems(validated_output: dict[str, Any], role_input: Role
     return problems
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# "Fix, then drop" (see the module doc)
+# --------------------------------------------------------------------------------------------------------------------
+
+
+def _salvage_comparison_answer(answer: dict[str, Any], role_input: RoleInput) -> AnswerSalvage | None:
+    if find_invented_web_addresses(answer, role_input):
+        return None
+    review_ids = [review["review_id"] for review in role_input["reviews"]]
+    corrections = KeyedEvidenceCorrections(comparison_passages(role_input), review_ids, MAXIMUM_EVIDENCE_PER_STATEMENT)
+    corrected = copy.deepcopy(answer)
+
+    def corrected_evidence(statement_text: str, evidence: list[dict[str, Any]], where: str) -> list[dict[str, Any]]:
+        """Fixed evidence, plus a quotation for a number from either review: a comparison is about both."""
+        kept_evidence = corrections.fix_evidence(evidence, where)
+        return corrections.add_number_evidence(statement_text, kept_evidence, where, set(review_ids))
+
+    def cites_both_reviews(evidence: list[dict[str, Any]]) -> bool:
+        return {item["review_id"] for item in evidence} == set(review_ids)
+
+    kept_differences = []
+    for index, difference in enumerate(corrected["condition_differences"], start=1):
+        where = f"condition_differences[{index}]"
+        corrections.droppable_item_count += 1
+        difference["evidence"] = corrected_evidence(difference["statement"], difference["evidence"], where)
+        problem = corrections.claim_problem(
+            difference["statement"], difference["evidence"], where, MAXIMUM_TEXT_CHARACTERS
+        )
+        if problem:
+            corrections.dropped_items.append(problem)
+        else:
+            kept_differences.append(difference)
+    corrected["condition_differences"] = kept_differences
+
+    for list_name in ("agreements", "differences"):
+        kept_items = []
+        for index, item in enumerate(corrected[list_name], start=1):
+            where = f"{list_name}[{index}]"
+            corrections.droppable_item_count += 1
+            item["evidence"] = corrected_evidence(item["statement"], item["evidence"], where)
+            problem = corrections.claim_problem(item["statement"], item["evidence"], where, MAXIMUM_TEXT_CHARACTERS)
+            if not problem and not cites_both_reviews(item["evidence"]):
+                problem = f"{where}: no longer cites both reviews"
+            if problem:
+                corrections.dropped_items.append(problem)
+            else:
+                kept_items.append(item)
+        corrected[list_name] = kept_items
+
+    kept_rankings = []
+    for ranking in corrected["result_ranking"]:
+        corrections.droppable_item_count += 1
+        ranking_text = f"{ranking['criterion']} {ranking['justification']} {ranking['conditions_caveat']}"
+        ranking["evidence"] = corrected_evidence(ranking_text, ranking["evidence"], "result_ranking")
+        problem = corrections.claim_problem(
+            ranking_text, ranking["evidence"], "result_ranking", 3 * MAXIMUM_TEXT_CHARACTERS
+        )
+        if ranking["preferred_review_id"] not in review_ids:
+            problem = "result_ranking: the preferred review is not one of the two reviews"
+        if (
+            not problem
+            and corrected["conditions_comparability"] != COMPARABILITY_COMPARABLE
+            and (
+                not corrected["condition_differences"]
+                or len(ranking["conditions_caveat"].split()) < MINIMUM_CAVEAT_WORDS
+            )
+        ):
+            problem = "result_ranking: the conditions are not comparable and no supported difference or caveat is left"
+        if problem:
+            corrections.dropped_items.append(problem)
+        else:
+            kept_rankings.append(ranking)
+    corrected["result_ranking"] = kept_rankings
+
+    # The reader's conclusion is corrected but never dropped: the re-check decides whether it now passes.
+    conclusion = corrected["reader_conclusion"]
+    conclusion["evidence"] = corrected_evidence(conclusion["statement"], conclusion["evidence"], "reader_conclusion")
+
+    return AnswerSalvage(
+        salvaged_output=corrected,
+        relocated_citations=tuple(corrections.relocated_citations),
+        dropped_items=tuple(corrections.dropped_items),
+        droppable_item_count=corrections.droppable_item_count,
+        added_citations=tuple(corrections.added_citations),
+    )
+
+
 COMPARISON_ROLE = RoleDefinition(
     role_name=COMPARISON_ROLE_NAME,
     prompt_version=COMPARISON_PROMPT_VERSION,
@@ -240,4 +347,5 @@ COMPARISON_ROLE = RoleDefinition(
     output_schema=COMPARISON_OUTPUT_SCHEMA,
     render_user_message=_render_comparison_user_message,
     find_semantic_problems=_find_comparison_problems,
+    salvage_answer=_salvage_comparison_answer,
 )

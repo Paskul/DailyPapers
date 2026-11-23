@@ -33,6 +33,7 @@ from paperwatch.commands.work_command import WorkCycleOutcome, run_single_work_c
 from paperwatch.config import load_app_config
 from paperwatch.db import write_transaction
 from paperwatch.dispatch_order import (
+    COMPARISON_AGING_HOURS,
     JobDispatchOrder,
     JobPriorityClass,
     dispatch_order_for_comparison,
@@ -50,6 +51,11 @@ from paperwatch.jobs import (
     finish_job_with_writes,
     summarize_queued_jobs_by_class,
     upgrade_queued_job_dispatch_order_if_higher,
+)
+from paperwatch.measurement.screening_calibration import (
+    FloorEffect,
+    ReviewedPaperScores,
+    calibrate_screening_floor,
 )
 from paperwatch.publication_dates import ReleaseClass, classify_release
 from paperwatch.research_profile import load_active_seed_library_paper_ids
@@ -806,4 +812,82 @@ def test_real_onnx_embedder_ranks_a_related_abstract_first(tmp_path):
            JOIN paper_editions AS edition USING (edition_id) ORDER BY score.unnormalized_score DESC"""
     ).fetchall()
     assert ranked[0]["abstract"].startswith("Runtime monitors")
+    app.close()
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# Third pilot (2026-11-23): a raw-score floor, its calibration, and comparisons that no longer starve
+# --------------------------------------------------------------------------------------------------------------------
+
+
+def test_a_raw_score_floor_keeps_the_top_of_a_weak_pool_from_being_read():
+    """The pool-normalized score ranks a paper among TODAY's candidates, so a day without a relevant paper still
+    filled every slot (third pilot: 9 new releases read, none reached the report). The raw floor stops that; a
+    near-cutoff pick still explores below it, so the floor can be recalibrated."""
+    candidates = [
+        PromotionCandidate("strong", {"t": 0.80}, {"t": 0.60}),
+        PromotionCandidate("top-of-a-weak-pool", {"t": 0.95}, {"t": 0.50}),
+        PromotionCandidate("also-weak", {"t": 0.90}, {"t": 0.52}),
+    ]
+    slots = compute_slots_available(
+        active_topic_ids=("t",),
+        daily_promotion_limit=3,
+        near_cutoff_promotions=1,
+        regular_promotions_today=0,
+        near_cutoff_promotions_today=0,
+        topic_share_promotions_today_by_topic_id={},
+    )
+    with_floor = select_papers_for_promotion(candidates, slots, 0.0, minimum_unnormalized_score=0.55)
+    assert [(decision.paper_id, decision.promotion_reason) for decision in with_floor] == [
+        ("strong", PromotionReason.TOPIC_SHARE),
+        ("top-of-a-weak-pool", PromotionReason.NEAR_CUTOFF),
+    ]
+    without_floor = select_papers_for_promotion(candidates, slots, 0.0)
+    assert [decision.paper_id for decision in without_floor] == ["top-of-a-weak-pool", "also-weak", "strong"]
+
+
+def test_screening_calibration_recommends_the_highest_floor_that_loses_no_reported_paper():
+    rated_low = [ReviewedPaperScores("t", f"low{index}", 0.500 + 0.002 * index, 20) for index in range(30)]
+    reported = [ReviewedPaperScores("t", f"good{index}", 0.583 + 0.001 * index, 80) for index in range(6)]
+    [calibration] = calibrate_screening_floor(rated_low + reported, minimum_reading_priority=65)
+    assert calibration.recommended_floor == 0.57  # the lowest reported paper scored 0.583
+    effect_by_floor = {effect.floor: effect for effect in calibration.floor_effects}
+    assert effect_by_floor[0.57] == FloorEffect(0.57, reviews_avoided=30, avoided_rated_low=30, reported_papers_lost=0)
+    assert effect_by_floor[0.59].reported_papers_lost == 6
+    [too_little_evidence] = calibrate_screening_floor(reported, minimum_reading_priority=65)
+    assert too_little_evidence.recommended_floor is None
+
+
+def test_a_comparison_that_waited_half_a_day_is_claimed_before_older_papers(tmp_path, monkeypatch):
+    app = build_in_process_app(tmp_path / "home")
+    clock_moment = [SCREENING_MOMENT]
+    monkeypatch.setattr("paperwatch.jobs.utc_now", lambda: clock_moment[0])
+    monkeypatch.setattr("paperwatch.jobs.utc_now_timestamp", lambda: clock_moment[0].strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+    def enqueue(job_key: str, kind: str, dispatch_order: JobDispatchOrder) -> None:
+        with write_transaction(app.connection):
+            enqueue_job_if_absent(
+                app.connection,
+                job_key=job_key,
+                kind=kind,
+                paper_id=None,
+                input_version="v",
+                input_payload={},
+                dispatch_order=dispatch_order,
+                max_attempts=3,
+            )
+
+    def claim_and_finish() -> str:
+        claimed_job = claim_next_due_job(app.connection, lease_duration_seconds=60)
+        assert claimed_job is not None and finish_job_with_writes(app.connection, claimed_job, lambda connection: None)
+        return claimed_job.job_key
+
+    enqueue("comparison", COMPARE_REVIEWS_JOB_KIND, dispatch_order_for_comparison(1))
+    clock_moment[0] += timedelta(hours=COMPARISON_AGING_HOURS - 1)
+    enqueue("older-a", REVIEW_PAPER_JOB_KIND, dispatch_order_for_older_paper(0.9))
+    enqueue("older-b", REVIEW_PAPER_JOB_KIND, dispatch_order_for_older_paper(0.8))
+    assert claim_and_finish() == "older-a"  # the comparison has waited 11 hours: it is still class 4
+    clock_moment[0] += timedelta(hours=1, minutes=1)
+    assert claim_and_finish() == "comparison"  # after 12 hours it competes as class 2, ahead of older papers
+    assert claim_and_finish() == "older-b"
     app.close()

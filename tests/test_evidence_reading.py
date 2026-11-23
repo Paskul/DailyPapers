@@ -405,9 +405,9 @@ def test_an_earlier_review_on_the_same_question_becomes_a_comparison_anchor(read
 def test_a_reading_section_that_cannot_fit_the_context_budget_is_refused_at_config_load(tmp_path):
     with pytest.raises(ConfigurationError, match="exceeds model.required_context_tokens"):
         build_in_process_app(
-            tmp_path / "home", config_replacements={"section_max_characters = 24000": "section_max_characters = 90000"}
+            tmp_path / "home", config_replacements={"section_max_characters = 24000": "section_max_characters = 300000"}
         )
-    assert "section_max_characters = 90000" in (tmp_path / "home" / "config.toml").read_text()
+    assert "section_max_characters = 300000" in (tmp_path / "home" / "config.toml").read_text()
 
 
 # --------------------------------------------------------------------------------------------------------------------

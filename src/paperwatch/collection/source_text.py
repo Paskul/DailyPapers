@@ -7,9 +7,21 @@ queue order (priority class, then queue age), the first route that works wins:
   3. an OpenAlex content PDF (content.openalex.org), for an OpenAlex edition; needs an OpenAlex key.
 Downloads (2 and 3) are limited to `collection.daily_source_text_budget` per UTC day, and go through the gateway's
 fixed get_text(known_edition_id) operation, which re-checks the edition against its source records at dispatch.
+A paper known by an arXiv id but catalogued only from another source (typically a cited work found through
+OpenAlex) first gets its arXiv version looked up: one arXiv API call, used only when the arXiv title matches the
+paper's, so its PDF can come from arXiv (free, and not limited like the OpenAlex PDF host).
 When no route has the text, the outcome is recorded (`unavailable`, with the reasons) and the review uses the
-abstract. It is retried after RETRY_UNAVAILABLE_AFTER, at most MAXIMUM_ACQUISITION_ATTEMPTS times. A provider outage
-or a used-up request budget is temporary: nothing is recorded, and the next run tries again.
+abstract. It is retried after RETRY_UNAVAILABLE_AFTER, at most MAXIMUM_ACQUISITION_ATTEMPTS times.
+
+A provider outage, a used-up request budget, or the day's used-up download budget is temporary: nothing is
+recorded for the paper. Third pilot (2026-11-23): arXiv was paused for 5 minutes after a gap search got HTTP 429,
+and the OpenAlex PDF host answered 429 after exactly 10 downloads in every run; the papers skipped then were read
+from their abstracts minutes later, though their PDFs came in the next run. So the stage now
+  * waits out a short pause and tries those papers again (at most `collection.source_text_pause_wait_seconds` of
+    waiting per run), and
+  * returns the papers still waiting, whose readings `collect` keeps held for the next run instead of releasing them
+    to the worker (paperwatch.readings.settle_readings_held_for_source_text; at most
+    `collection.source_text_maximum_hold_hours` after they were queued, after which the abstract is read).
 
 Extraction runs the pinned extractor in rootless Podman (paperwatch.sandboxed_extractor) on the CACHED copy and
 stores the text next to it (state/cache/sources/<edition id>/<source hash>.txt). Without a configured image the row
@@ -22,11 +34,12 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from dataclasses import dataclass
-from datetime import timedelta
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
-from paperwatch.catalog import load_paper_aliases
-from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp
+from paperwatch.catalog import load_paper_aliases, load_paper_row
+from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp, utc_now
 from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.local_source_files import (
     LocalSourceFolder,
@@ -34,6 +47,7 @@ from paperwatch.collection.local_source_files import (
     file_stems_for_paper,
     read_local_source_bytes,
 )
+from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
 from paperwatch.collection.source_cache_limit import prune_replaceable_downloads
 from paperwatch.db import write_transaction
 from paperwatch.errors import (
@@ -45,18 +59,23 @@ from paperwatch.errors import (
     SourceRequestBudgetExhausted,
 )
 from paperwatch.jobs import REVIEW_PAPER_JOB_KIND
+from paperwatch.llm.service_guard import read_service_health_state
+from paperwatch.network.provider_gateway import provider_service_name
 from paperwatch.readings import FULL_TEXT_EDITION_ORDER_SQL
+from paperwatch.references.bibliography_identifiers import provider_title_matches_entry
 from paperwatch.review_inputs import fingerprint_extracted_reading_text
 from paperwatch.sandboxed_extractor import BYTES_PER_MEGABYTE, extract_text_in_sandbox
 from paperwatch.scholarly_identifiers import ARXIV_SCHEME, OPENALEX_SCHEME
 from paperwatch.screening.review_promotion import queue_new_reading_for_promoted_paper_in_transaction
 from paperwatch.source_cache import CachedSourceFile, cached_edition_directory, store_extracted_text, store_source_bytes
+from paperwatch.sources.arxiv_atom import parse_api_search_page
 
 TEXT_ROUTE_LOCAL_FILE = "local_file"
 TEXT_ROUTE_ARXIV_PDF = "arxiv_pdf"
 TEXT_ROUTE_OPENALEX_CONTENT = "openalex_content"
+ARXIV_PROVIDER_NAME = "arxiv"
 NETWORK_TEXT_ROUTE_BY_SCHEME = {
-    ARXIV_SCHEME: (TEXT_ROUTE_ARXIV_PDF, "arxiv"),
+    ARXIV_SCHEME: (TEXT_ROUTE_ARXIV_PDF, ARXIV_PROVIDER_NAME),
     OPENALEX_SCHEME: (TEXT_ROUTE_OPENALEX_CONTENT, "openalex"),
 }
 RETRY_UNAVAILABLE_AFTER = timedelta(days=1)
@@ -64,6 +83,8 @@ MAXIMUM_ACQUISITION_ATTEMPTS = 3
 MAXIMUM_PAPERS_CONSIDERED_PER_RUN = 200
 MAXIMUM_EXTRACTIONS_PER_RUN = 50
 MAXIMUM_STORED_ERROR_CHARACTERS = 300
+MAXIMUM_WAITING_ROUNDS_PER_RUN = 10  # a bound on retry rounds, whatever the providers answer
+ARXIV_VERSION_LOOKUP_ROUTE_PREFIX = "arxiv-version-lookup:"  # discovery route of an arXiv version found this way
 
 
 @dataclass
@@ -72,6 +93,9 @@ class SourceTextRunCounts:
     downloaded: int = 0
     unavailable: int = 0
     waiting_for_download_budget: int = 0
+    waiting_for_a_provider: int = 0
+    arxiv_versions_found: int = 0
+    seconds_waited_for_providers: float = 0.0
     extracted: int = 0
     extraction_failed: int = 0
     extraction_not_configured: int = 0
@@ -81,46 +105,177 @@ class SourceTextRunCounts:
         return (
             f"Source text: {self.from_local_files} from local files, {self.downloaded} downloaded "
             f"({downloads_remaining} download(s) left today), {self.unavailable} unavailable (abstract only), "
-            f"{self.waiting_for_download_budget} waiting for download budget; extraction: {self.extracted} "
-            f"extracted, {self.extraction_failed} failed, {self.extraction_not_configured} waiting for the "
-            f"extractor image (set extractor.image); {self.readings_switched_to_full_text} reading(s) switched "
-            "to full text"
+            f"{self.waiting_for_download_budget} waiting for download budget, {self.waiting_for_a_provider} "
+            f"waiting for a paused provider (waited {self.seconds_waited_for_providers:.0f} s), "
+            f"{self.arxiv_versions_found} arXiv version(s) found for papers known by an arXiv id; extraction: "
+            f"{self.extracted} extracted, {self.extraction_failed} failed, {self.extraction_not_configured} waiting "
+            f"for the extractor image (set extractor.image); {self.readings_switched_to_full_text} reading(s) "
+            "switched to full text"
         )
 
 
-def acquire_source_texts(context: CollectionContext, *, allow_network: bool) -> list[str]:
+@dataclass(frozen=True)
+class SourceTextRunResult:
+    report_lines: list[str]
+    # Papers whose text a provider (or the day's download budget) could not deliver in this run: `collect` keeps
+    # their readings held for a later run (paperwatch.readings.settle_readings_held_for_source_text).
+    papers_waiting_for_text: frozenset[str]
+
+
+def wait_for_provider_pause(seconds: float) -> None:
+    """Sleep through a provider's short pause (a module function, so tests can advance their clock instead)."""
+    time.sleep(seconds)
+
+
+def acquire_source_texts(context: CollectionContext, *, allow_network: bool) -> SourceTextRunResult:
     collection_settings = context.app_config.collection
-    local_folder = LocalSourceFolder(context.app_config.local_sources_dir)
-    downloads_remaining = max(
-        0, collection_settings.daily_source_text_budget - count_network_downloads_today(context.connection, context)
+    source_text_run = _SourceTextRun(
+        context,
+        LocalSourceFolder(context.app_config.local_sources_dir),
+        allow_network=allow_network,
+        downloads_remaining=max(
+            0,
+            collection_settings.daily_source_text_budget - count_network_downloads_today(context.connection, context),
+        ),
     )
-    unavailable_providers: set[str] = set()  # paused or out of request budget for the rest of this run
-    run_counts = SourceTextRunCounts()
-
     for paper_id in papers_waiting_for_source_text(context.connection, MAXIMUM_PAPERS_CONSIDERED_PER_RUN):
-        if not _is_due_for_another_attempt(context, paper_id):
-            continue
-        edition_rows = editions_in_text_preference_order(context.connection, paper_id)
-        if not edition_rows:
-            continue
-        if _try_local_file(context, local_folder, paper_id, edition_rows):
-            run_counts.from_local_files += 1
-            continue
-        if not allow_network:
-            continue
-        if downloads_remaining == 0:
-            run_counts.waiting_for_download_budget += 1
-            continue
-        download_outcome = _try_downloads(context, edition_rows, unavailable_providers)
-        if download_outcome == "downloaded":
-            downloads_remaining -= 1
-            run_counts.downloaded += 1
-        elif download_outcome == "unavailable":
-            run_counts.unavailable += 1
-
+        source_text_run.acquire_text_of_paper(paper_id)
+    source_text_run.wait_out_short_provider_pauses(
+        timedelta(seconds=collection_settings.source_text_pause_wait_seconds)
+    )
+    run_counts = source_text_run.counts
+    run_counts.waiting_for_a_provider = len(source_text_run.papers_waiting_for_a_provider)
     _extract_pending_texts(context, run_counts)
     cache_summary = prune_replaceable_downloads(context.connection, context.app_config)
-    return [run_counts.describe(downloads_remaining), cache_summary.describe()]
+    return SourceTextRunResult(
+        [run_counts.describe(source_text_run.downloads_remaining), cache_summary.describe()],
+        frozenset(source_text_run.papers_waiting_for_a_provider + source_text_run.papers_waiting_for_budget),
+    )
+
+
+@dataclass
+class _SourceTextRun:
+    """The state of one source-text stage: the download budget left, the providers that are paused or out of
+    request budget for now, and the papers waiting for one of them."""
+
+    context: CollectionContext
+    local_folder: LocalSourceFolder
+    allow_network: bool
+    downloads_remaining: int
+    counts: SourceTextRunCounts = field(default_factory=SourceTextRunCounts)
+    unavailable_providers: set[str] = field(default_factory=set)
+    papers_waiting_for_a_provider: list[str] = field(default_factory=list)  # in queue order
+    papers_waiting_for_budget: list[str] = field(default_factory=list)
+    arxiv_versions_looked_up: set[str] = field(default_factory=set)  # one lookup per paper and run
+
+    def acquire_text_of_paper(self, paper_id: str) -> None:
+        if not _is_due_for_another_attempt(self.context, paper_id):
+            return
+        edition_rows = editions_in_text_preference_order(self.context.connection, paper_id)
+        if not edition_rows:
+            return
+        if _try_local_file(self.context, self.local_folder, paper_id, edition_rows):
+            self.counts.from_local_files += 1
+            return
+        if not self.allow_network:
+            return
+        if self.downloads_remaining == 0:
+            self.counts.waiting_for_download_budget += 1
+            self.papers_waiting_for_budget.append(paper_id)
+            return
+        if not self._add_arxiv_version_if_known(paper_id, edition_rows):
+            self.papers_waiting_for_a_provider.append(paper_id)  # arXiv is paused: its free PDF is worth the wait
+            return
+        edition_rows = editions_in_text_preference_order(self.context.connection, paper_id)
+        download_outcome = _try_downloads(self.context, edition_rows, self.unavailable_providers)
+        if download_outcome == "downloaded":
+            self.downloads_remaining -= 1
+            self.counts.downloaded += 1
+        elif download_outcome == "unavailable":
+            self.counts.unavailable += 1
+        else:
+            self.papers_waiting_for_a_provider.append(paper_id)
+
+    def wait_out_short_provider_pauses(self, wait_budget: timedelta) -> None:
+        """While papers wait for a paused provider whose pause ends within what is left of `wait_budget`: sleep
+        until then and try those papers again."""
+        for _round in range(MAXIMUM_WAITING_ROUNDS_PER_RUN):
+            if not self.papers_waiting_for_a_provider or self.downloads_remaining == 0:
+                return
+            resume_at = self._earliest_end_of_a_provider_pause()
+            if resume_at is None:
+                return  # out of request budget rather than paused: nothing to wait for in this run
+            wait_seconds = max(0.0, (resume_at - utc_now()).total_seconds()) + 1.0
+            if wait_seconds > wait_budget.total_seconds():
+                return
+            wait_for_provider_pause(wait_seconds)
+            wait_budget -= timedelta(seconds=wait_seconds)
+            self.counts.seconds_waited_for_providers += wait_seconds
+            self.unavailable_providers.clear()
+            papers_to_retry, self.papers_waiting_for_a_provider = self.papers_waiting_for_a_provider, []
+            for paper_id in papers_to_retry:
+                self.acquire_text_of_paper(paper_id)
+
+    def _earliest_end_of_a_provider_pause(self) -> datetime | None:
+        pause_ends = []
+        for provider_name in self.unavailable_providers:
+            health_state = read_service_health_state(self.context.connection, provider_service_name(provider_name))
+            pause_end = health_state.pause_end_at(utc_now())
+            if pause_end is not None:
+                pause_ends.append(pause_end)
+        return min(pause_ends, default=None)
+
+    def _add_arxiv_version_if_known(self, paper_id: str, edition_rows: list[sqlite3.Row]) -> bool:
+        """For a paper known by an arXiv id but without an arXiv edition, look the arXiv version up (once per run)
+        and catalog it when its title matches. False only when arXiv is paused or out of budget right now."""
+        if any(row["edition_key"].startswith(f"{ARXIV_SCHEME}:") for row in edition_rows):
+            return True
+        arxiv_ids = [
+            value for scheme, value in load_paper_aliases(self.context.connection, paper_id) if scheme == ARXIV_SCHEME
+        ]
+        if not arxiv_ids or paper_id in self.arxiv_versions_looked_up:
+            return True
+        if ARXIV_PROVIDER_NAME in self.unavailable_providers:
+            return False
+        self.arxiv_versions_looked_up.add(paper_id)
+        try:
+            if catalog_arxiv_version_of_paper(self.context, paper_id, arxiv_ids[0]):
+                self.counts.arxiv_versions_found += 1
+        except (ProviderUnavailable, SourceRequestBudgetExhausted):
+            self.unavailable_providers.add(ARXIV_PROVIDER_NAME)
+            self.arxiv_versions_looked_up.discard(paper_id)  # try again after the pause
+            return False
+        return True
+
+
+def catalog_arxiv_version_of_paper(context: CollectionContext, paper_id: str, arxiv_id: str) -> bool:
+    """Look `arxiv_id` up on arXiv and catalog the record as an edition of `paper_id` when its title matches the
+    paper's (an arXiv id that another source linked to the paper may be wrong). True if an arXiv edition was added.
+    Provider-wide problems (a pause, a used-up request budget) propagate."""
+    try:
+        provider_response = context.gateway.get_work(f"{ARXIV_SCHEME}:{arxiv_id}")
+        parsed_page = parse_api_search_page(
+            provider_response.body_bytes, f"{ARXIV_VERSION_LOOKUP_ROUTE_PREFIX}{paper_id}", start_offset=0
+        )
+    except (SourceRecordNotFound, SourceAccessDenied, SourceInputError):
+        return False
+    paper_title = load_paper_row(context.connection, paper_id)["title"]
+    matching_records = [
+        record for record in parsed_page.records if provider_title_matches_entry(record.title, paper_title)
+    ]
+    if not matching_records:
+        return False
+    ingest_records_with_checkpoints(
+        context.connection,
+        matching_records[:1],
+        admission_limit=None,
+        active_seed_paper_ids=context.active_seed_paper_ids,
+        max_attempts_per_job=context.app_config.worker.max_attempts_per_job,
+    )
+    return any(
+        row["edition_key"].startswith(f"{ARXIV_SCHEME}:")
+        for row in editions_in_text_preference_order(context.connection, paper_id)
+    )
 
 
 # --------------------------------------------------------------------------------------------------------------------

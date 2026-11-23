@@ -178,11 +178,15 @@ def _render_statement(statement: dict[str, Any], selected_review: SelectedReview
 
 
 def _render_finding(finding: dict[str, Any], selected_review: SelectedReview) -> str:
+    """A result: the claim, its conditions, the quoted passage, the passages that state its numbers (when the quoted
+    passage does not, e.g. a results table), and the quotation."""
     conditions = escape_untrusted_inline_text(finding["conditions"])
+    number_passage_ids = [str(passage_id) for passage_id in finding.get("number_passage_ids", [])]
     return (
         f"- {escape_untrusted_inline_text(finding['claim'])}"
         + (f" *Conditions:* {conditions}." if conditions else "")
         + f"{_render_pointers([finding['passage_id']], selected_review)}"
+        + (f" · numbers from{_render_pointers(number_passage_ids, selected_review)}" if number_passage_ids else "")
         + f" Quote: “{escape_untrusted_inline_text(finding['excerpt'])}”"
     )
 

@@ -159,3 +159,12 @@ def initialized_home(tmp_path: Path) -> PaperwatchHome:
     init_result = paperwatch_home.run_cli("init")
     assert init_result.exit_code == 0, init_result.stderr
     return paperwatch_home
+
+
+@pytest.fixture(autouse=True)
+def no_real_waiting_for_paused_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The source-text stage sleeps through a short provider pause (collection.source_text_pause_wait_seconds). Tests
+    never sleep: a test that wants the wait to succeed replaces this with a function that advances its clock."""
+    from paperwatch.collection import source_text
+
+    monkeypatch.setattr(source_text, "wait_for_provider_pause", lambda seconds: None)

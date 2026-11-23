@@ -19,7 +19,11 @@ is read once, on the better text.
 Holding new readings for their source text: `collect` promotes papers and only then acquires their PDFs. A worker
 running at the same moment would otherwise read the abstract seconds before the full text lands. So readings queued
 by `collect` are held (due later) until its source-text stage releases them, at most
-`collection.source_text_hold_minutes` if that stage never finishes.
+`collection.source_text_hold_minutes` if that stage never finishes. A paper whose text a provider could not deliver
+in that run (paused, out of request budget, or the day's download budget used up) keeps its reading held for a later
+run instead (`settle_readings_held_for_source_text`; third pilot, 2026-11-23: 31 papers were read from their
+abstracts after a 5-minute arXiv pause), but never longer than `collection.source_text_maximum_hold_hours` after it
+was queued: then the abstract is read.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
-from paperwatch.clock import format_utc_timestamp, utc_now_timestamp
+from paperwatch.clock import format_utc_timestamp, utc_now, utc_now_timestamp
 from paperwatch.dispatch_order import JobDispatchOrder, JobPriorityClass
 from paperwatch.identifiers import READING_GENERATION_ID_PREFIX, new_internal_id
 from paperwatch.jobs import (
@@ -223,13 +227,50 @@ def compute_source_text_hold_until(moment: datetime, hold_minutes: int) -> datet
 def release_readings_held_for_source_text(connection: sqlite3.Connection) -> int:
     """Make every held reading due now. A held job is a queued review job that has never been attempted and whose due
     time is still in the future (retries always have attempts > 0). Returns how many were released."""
-    now_timestamp = utc_now_timestamp()
+    return settle_readings_held_for_source_text(connection).released
+
+
+@dataclass(frozen=True)
+class HeldReadingsOutcome:
+    released: int  # due now
+    kept_waiting_for_text: int  # still held: a provider could not deliver their text in this run
+
+
+def settle_readings_held_for_source_text(
+    connection: sqlite3.Connection,
+    *,
+    papers_waiting_for_text: frozenset[str] = frozenset(),
+    keep_held_until: datetime | None = None,
+    maximum_hold: timedelta | None = None,
+) -> HeldReadingsOutcome:
+    """After the source-text stage: release every held reading, except the readings of `papers_waiting_for_text`
+    that were queued less than `maximum_hold` ago, which stay held until `keep_held_until` (a later run settles them
+    again). Call inside a write transaction."""
+    now = utc_now()
+    now_timestamp = format_utc_timestamp(now)
+    kept_job_ids: list[str] = []
+    if papers_waiting_for_text and keep_held_until is not None:
+        queued_after = format_utc_timestamp(now - maximum_hold) if maximum_hold is not None else ""
+        for paper_id in sorted(papers_waiting_for_text):
+            kept_job_ids += [
+                job_row["job_id"]
+                for job_row in connection.execute(
+                    """SELECT job_id FROM jobs WHERE kind = ? AND status = 'queued' AND attempts = 0 AND due_at > ?
+                         AND paper_id = ? AND created_at > ?""",
+                    (REVIEW_PAPER_JOB_KIND, now_timestamp, paper_id, queued_after),
+                )
+            ]
+        connection.executemany(
+            "UPDATE jobs SET due_at = ?, updated_at = ? WHERE job_id = ?",
+            [(format_utc_timestamp(keep_held_until), now_timestamp, job_id) for job_id in kept_job_ids],
+        )
+    exclusion = f"AND job_id NOT IN ({', '.join('?' for _ in kept_job_ids)})" if kept_job_ids else ""
     release_cursor = connection.execute(
-        """UPDATE jobs SET due_at = ?, updated_at = ?
-           WHERE kind = ? AND status = 'queued' AND attempts = 0 AND due_at > ?""",
-        (now_timestamp, now_timestamp, REVIEW_PAPER_JOB_KIND, now_timestamp),
+        f"""UPDATE jobs SET due_at = ?, updated_at = ?
+            WHERE kind = ? AND status = 'queued' AND attempts = 0 AND due_at > ? {exclusion}""",  # noqa: S608  # only ? placeholders are interpolated
+        (now_timestamp, now_timestamp, REVIEW_PAPER_JOB_KIND, now_timestamp, *kept_job_ids),
     )
-    return release_cursor.rowcount
+    return HeldReadingsOutcome(released=release_cursor.rowcount, kept_waiting_for_text=len(kept_job_ids))
 
 
 def dispatch_order_of_job_row(job_row: sqlite3.Row) -> JobDispatchOrder:

@@ -33,7 +33,7 @@ from paperwatch.config import ReportSettings
 from paperwatch.db import connect_database, write_transaction
 from paperwatch.dispatch_order import dispatch_order_for_operator_request
 from paperwatch.errors import ModelOutputInvalid, ModelServerUnavailable, ReportNotDueYet, ReportPublicationInProgress
-from paperwatch.llm.fake_answers import build_fake_topic_assessments
+from paperwatch.llm.fake_answers import build_fake_report_synthesis, build_fake_topic_assessments
 from paperwatch.llm.fake_client import FakeModelClient
 from paperwatch.llm.inference_lock import hold_inference_lock
 from paperwatch.llm.inference_reservation import (
@@ -50,6 +50,7 @@ from paperwatch.reporting.report_schedule import (
     scheduled_cutoff_for_report_date,
 )
 from paperwatch.reporting.report_selection import select_report_entries
+from paperwatch.reporting.report_synthesis import MAXIMUM_WRITER_PASSAGE_CHARACTERS, cut_passage_for_writer
 from paperwatch.reporting.revision_changes import ReviewedVersion, describe_material_revision_changes
 from paperwatch.roles.base import parse_and_validate_role_output, run_role_once
 from paperwatch.roles.healthcheck import HEALTHCHECK_ROLE
@@ -148,6 +149,7 @@ def test_zero_qualifying_papers_give_a_short_status_report_without_a_model_call(
     report_text = publish(app)
     assert "# Paper report for 2026-11-16" in report_text
     assert "Quiet day" in report_text and "selected today: **0**" in report_text
+    assert "- New releases: 2 reviewed since then, 0 selected (best reading priority " in report_text
     assert "07:00 America/New_York (12:00 UTC)" in report_text
     assert writer_calls(app) == 0
     assert app.connection.execute("SELECT synthesis_status FROM reports").fetchone()[0] == "not_needed"
@@ -175,6 +177,8 @@ def test_six_qualifying_papers_are_published_with_a_grounded_overview(app, test_
     )
     assert "— 82/100 · new release · abstract only" in report_text
     assert "Comparison `" in report_text  # some of these reviews were compared; the report links those notes
+    # Third pilot (2026-11-23): the report now says how the window's new releases fared.
+    assert "- New releases: 9 reviewed since then, 6 selected (best reading priority 85/100)" in report_text
 
 
 def test_twenty_qualifying_papers_publish_fifteen_and_keep_five_for_the_next_day(app, test_clock):  # noqa: F811
@@ -560,6 +564,39 @@ def test_writer_answer_with_ungrounded_claims_is_rejected(bad_part, expected_pro
     with pytest.raises(ModelOutputInvalid) as rejection:
         validate_writer_answer(writer_answer(**bad_part))
     assert expected_problem in str(rejection.value)
+
+
+def writer_with_an_unsupported_overview(request) -> str:
+    """Writer: a valid answer, except that its overview states a number no passage states (both calls)."""
+    answer = build_fake_report_synthesis(request.role_input)
+    answer["overview"]["statement"] = "Offline fake overview: 9999 plans were rejected."
+    return json.dumps(answer)
+
+
+def test_a_writer_overview_that_fails_every_fix_is_left_out_but_the_rest_is_kept(tmp_path, test_clock):  # noqa: F811
+    """Third pilot (2026-11-23): one failing overview cost the whole synthesis. Now the corrected first answer, without
+    its overview, is used after the repair fails too; the report keeps the model's findings and reasons."""
+    model_client = FakeModelClient(
+        {"topic_assessor": rate_strong_papers_high, "writer": writer_with_an_unsupported_overview}
+    )
+    app = open_app(tmp_path, model_client=model_client)
+    add_reviewed_papers(app, 2, strong=True)
+    test_clock.advance(hours=HOURS_TO_PASS_THE_FIRST_CUTOFF)
+    report_text = publish(app, FIRST_REPORT_DATE)
+    assert writer_calls(app) == 2  # the repair was tried before the overview was given up
+    assert app.connection.execute("SELECT synthesis_status FROM reports").fetchone()[0] == "model"
+    assert "No overview today: the model's overview did not pass the evidence checks" in report_text
+    assert "9999" not in report_text
+    assert "Offline fake finding that connects the first papers." in report_text
+    assert "**Why read it.** Offline fake reason to read this paper." in report_text
+    app.close()
+
+
+def test_the_writer_sees_the_passages_that_state_its_summary_numbers_first():
+    long_passage = "Background sentence about agents. " * 40 + "Across the 38 included studies, monitors dominate."
+    assert cut_passage_for_writer(long_passage, ["38"]).startswith("Across the 38 included studies")
+    cut = cut_passage_for_writer("word " * 400, [])
+    assert len(cut) <= MAXIMUM_WRITER_PASSAGE_CHARACTERS and cut.endswith("word")  # never half a word
 
 
 def test_an_invalid_writer_answer_after_repair_gives_the_fallback(tmp_path, test_clock):  # noqa: F811

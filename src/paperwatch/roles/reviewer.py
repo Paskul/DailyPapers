@@ -60,10 +60,12 @@ REVIEWER_ROLE_NAME = "reviewer"
 # v1: passage ids, excerpts, separate topic assessment. v2 (2026-11-21): the evidence rules tell the model
 # to cite the passage that holds a quoted number. v3 (2026-11-22, after the second pilot): the three single
 # statements may cite 10 passages instead of 6, ids are written one per entry, section summaries carry no citations,
-# and the length limits are stated (1600 characters for the single statements, 1200 for the rest). v3 only loosens a schema bound, so v1 and v2 syntheses still validate and
-# are reused after passing today's checks.
-REVIEWER_PROMPT_VERSION = "reviewer-evidence-v3"
-REVIEWER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("reviewer-evidence-v2", "reviewer-evidence-v1")
+# and the length limits are stated (1600 characters for the single statements, 1200 for the rest). v3 only loosens a
+# schema bound, so v1 and v2 syntheses still validate and are reused after passing today's checks. v4 (2026-11-23,
+# after the third pilot): a result may name the passages that state its numbers (number_passage_ids, an optional
+# field), so earlier syntheses still validate and are reused the same way.
+REVIEWER_PROMPT_VERSION = "reviewer-evidence-v4"
+REVIEWER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("reviewer-evidence-v3", "reviewer-evidence-v2", "reviewer-evidence-v1")
 READING_MODE_PASSAGES = "passages"
 READING_MODE_SECTION_NOTES = "section_notes"
 MAXIMUM_RESULTS = 8
@@ -135,7 +137,8 @@ def collect_cited_passage_ids(review_content: dict[str, Any]) -> list[str]:
         cited_passage_ids += review_content[field_name]["supporting_passage_ids"]
     for statement in review_content["assumptions"]:
         cited_passage_ids += statement["supporting_passage_ids"]
-    cited_passage_ids += [finding["passage_id"] for finding in review_content["results"]]
+    for finding in review_content["results"]:
+        cited_passage_ids += [finding["passage_id"], *finding.get("number_passage_ids", [])]
     for list_field in ("limitations", "reviewer_inferences"):
         for item in review_content[list_field]:
             cited_passage_ids += item["supporting_passage_ids"]

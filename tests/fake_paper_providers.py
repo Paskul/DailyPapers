@@ -73,6 +73,8 @@ class FakePaperProviders:
     feeds: dict[str, tuple[date, list[FeedItem]]] = field(default_factory=dict)  # category -> (announced, items)
     openalex_works: list[FakeOpenAlexWork] = field(default_factory=list)
     failures_remaining: dict[tuple[str, str], int] = field(default_factory=dict)  # (host, start or cursor) -> count
+    # (host, path prefix) -> HTTP statuses answered, one per request, before the normal answer (e.g. [429] for a pause)
+    statuses_before_success: dict[tuple[str, str], list[int]] = field(default_factory=dict)
     sent_requests: list[httpx.Request] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -85,6 +87,9 @@ class FakePaperProviders:
         if self.failures_remaining.get((request.url.host, paging_value), 0) > 0:
             self.failures_remaining[(request.url.host, paging_value)] -= 1
             return _streamed(503, {"content-type": "text/plain"}, b"temporarily unavailable")
+        for (host, path_prefix), statuses in self.statuses_before_success.items():
+            if request.url.host == host and request.url.path.startswith(path_prefix) and statuses:
+                return _streamed(statuses.pop(0), {"content-type": "text/plain"}, b"rate limited")
         if request.url.host == "rss.arxiv.org":
             return self._feed(request)
         if request.url.host == "export.arxiv.org" and request.url.path == "/api/query":
@@ -109,6 +114,14 @@ class FakePaperProviders:
 
     # ---- arXiv legacy API -----------------------------------------------------------------------------------------
     def _arxiv_api(self, request: httpx.Request) -> httpx.Response:
+        if "id_list" in request.url.params:  # get_work: one paper by its (optionally versioned) id
+            wanted_id = re.sub(r"v\d+$", "", request.url.params["id_list"])
+            found_papers = [paper for paper in self.arxiv_papers if paper.arxiv_id == wanted_id]
+            return _streamed(
+                200,
+                {"content-type": "application/atom+xml; charset=utf-8"},
+                build_api_page_xml(found_papers, len(found_papers), 0),
+            )
         query_match = ARXIV_API_QUERY_PATTERN.match(request.url.params["search_query"])
         assert query_match, request.url.params["search_query"]
         matching_papers = [paper for paper in self.arxiv_papers if _arxiv_paper_matches(paper, query_match)]

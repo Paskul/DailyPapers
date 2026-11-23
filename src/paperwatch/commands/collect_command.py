@@ -24,7 +24,8 @@ Stages of one run:
      capped download; then text extraction in the sandbox when the extractor image is configured. A paper whose full
      text was extracted gets its reading switched to the full text. The readings promoted in step 3,
      and the reference readings chosen since the last run, are held until this stage ends, so the worker does not
-     read an abstract seconds before the PDF arrives.
+     read an abstract seconds before the PDF arrives. A paper whose text a provider could not deliver yet (paused,
+     out of budget) keeps its reading held for the next run, for at most collection.source_text_maximum_hold_hours.
   5. Research profile: print each topic's input mode (keywords, seeds, or both) and anything missing.
 
 Re-collecting is always safe: the catalog resolves each record to its canonical paper, every page commits with its
@@ -39,6 +40,7 @@ import argparse
 import sys
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from datetime import timedelta
 from pathlib import Path
 
 from paperwatch.activity_log import COMPONENT_COLLECT, ActivityHandle, prune_old_activity, recorded_activity
@@ -48,12 +50,12 @@ from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.current_releases import collect_current_releases
 from paperwatch.collection.historical_search import historical_search_has_work, run_historical_searches
 from paperwatch.collection.page_ingestion import ingest_records_with_checkpoints
-from paperwatch.collection.source_text import acquire_source_texts
+from paperwatch.collection.source_text import SourceTextRunResult, acquire_source_texts
 from paperwatch.comparisons.comparison_queue import queue_comparisons_for_recent_reviews
 from paperwatch.db import write_transaction
 from paperwatch.errors import describe_failure_for_operator
 from paperwatch.network.provider_gateway import ProviderGateway
-from paperwatch.readings import compute_source_text_hold_until, release_readings_held_for_source_text
+from paperwatch.readings import compute_source_text_hold_until, settle_readings_held_for_source_text
 from paperwatch.references.reference_fetch import fetch_references_of_reviewed_papers
 from paperwatch.references.reference_selection import admit_waiting_reference_selections, queue_reference_selection_jobs
 from paperwatch.references.research_branches import run_requested_research_branches
@@ -145,14 +147,27 @@ def _run_collect_stages(
     _print_lines(screening_result.report_lines)
     with stage("follow_up"):
         _print_lines(_queue_follow_up_work(app, collection_context))
+    source_text_result: SourceTextRunResult | None = None
     try:
         with stage("source_text"):
-            _print_lines(acquire_source_texts(collection_context, allow_network=run_live_searches))
-    finally:  # the held readings become due now, whatever the source-text stage achieved
+            source_text_result = acquire_source_texts(collection_context, allow_network=run_live_searches)
+        _print_lines(source_text_result.report_lines)
+    finally:  # the held readings become due now, except those whose text a provider still owes
+        collection_settings = app.config.collection
         with write_transaction(app.connection):
-            released_count = release_readings_held_for_source_text(app.connection)
-        if released_count:
-            print(f"Readings: {released_count} held reading(s) released to the worker")
+            held_readings = settle_readings_held_for_source_text(
+                app.connection,
+                papers_waiting_for_text=source_text_result.papers_waiting_for_text
+                if source_text_result is not None
+                else frozenset(),
+                keep_held_until=utc_now() + timedelta(minutes=collection_settings.source_text_retry_hold_minutes),
+                maximum_hold=timedelta(hours=collection_settings.source_text_maximum_hold_hours),
+            )
+        if held_readings.released or held_readings.kept_waiting_for_text:
+            print(
+                f"Readings: {held_readings.released} held reading(s) released to the worker, "
+                f"{held_readings.kept_waiting_for_text} kept for the next run (their text is still on its way)"
+            )
     _print_research_profile_summary(app)
     if screening_result.embedder_failure is not None:
         print(describe_failure_for_operator(screening_result.embedder_failure), file=sys.stderr)

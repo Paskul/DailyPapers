@@ -8,6 +8,11 @@
 | 3     | Important reference from a completed review      | importance to the parent's argument, then topic score  |
 | 4     | Comparison on the same question                  | shared evidence dimensions                             |
 
+A comparison that has waited COMPARISON_AGING_HOURS is claimed as class 2, ahead of the older papers in it (its order
+value, the shared dimension count, is at least 1; a paper's is its screening score, at most 1). At most
+comparisons.daily_comparison_jobs are queued per day, so this costs a few short calls a day; without it, comparisons
+never ran in the first three pilots, because the reading queue was never empty.
+
 A job stores its class plus two descending order values (`within_class_order_primary`, `..._secondary`) in indexed
 columns, so one SQL ORDER BY gives the claim order. A new release also stores when its fresh window ends: after that
 moment the claim query treats it as class 2 (older literature) with the same score, so a release that waited a week
@@ -34,6 +39,9 @@ from paperwatch.publication_dates import (
     earliest_calendar_day,
     normalize_partial_date,
 )
+
+# A comparison waits at most this long behind the reading queue before it is claimed as class 2 (see the module doc).
+COMPARISON_AGING_HOURS = 12
 
 
 class JobPriorityClass(IntEnum):

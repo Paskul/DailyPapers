@@ -32,6 +32,7 @@ from fake_paper_providers import (
 
 from paperwatch import clock
 from paperwatch.catalog import load_paper_row
+from paperwatch.collection import source_text
 from paperwatch.collection.collection_context import CollectionContext
 from paperwatch.collection.historical_search import (
     historical_queries_for_topic,
@@ -601,6 +602,98 @@ def test_source_text_uses_a_local_file_first_then_a_capped_download_then_extract
             assert text_path.read_text() == "extracted page one\fpage two"
     finally:
         app.close()
+
+
+def _reading_job_of(app, arxiv_id: str):
+    paper_id = paper_by_arxiv_id(app, arxiv_id)["paper_id"]
+    return app.connection.execute(
+        "SELECT * FROM jobs WHERE paper_id = ? AND kind = 'review_paper'", (paper_id,)
+    ).fetchone()
+
+
+def test_a_paused_provider_keeps_the_reading_held_until_a_later_run_brings_the_pdf(app, providers, test_clock):
+    """Third pilot (2026-11-23): 31 papers were read from their abstracts because arXiv and the OpenAlex PDF host were
+    paused for a few minutes during the source-text stage; their PDFs came in the next run."""
+    providers.feeds["cs.RO"] = (
+        date(2026, 11, 16),
+        [FeedItem(synthetic_paper("2611.06000", date(2026, 11, 13)), "new")],
+    )
+    providers.statuses_before_success[("export.arxiv.org", "/pdf/")] = [429]
+    collect(app, providers)
+    held_job = _reading_job_of(app, "2611.06000")
+    assert held_job["status"] == "queued" and held_job["due_at"] > clock.utc_now_timestamp()  # not read yet
+    assert app.connection.execute("SELECT COUNT(*) FROM edition_source_texts").fetchone()[0] == 0  # nothing recorded
+
+    test_clock.advance(hours=6)
+    collect(app, providers)  # the next run fetches the PDF and lets the worker read the paper
+    [text_row] = app.connection.execute("SELECT * FROM edition_source_texts").fetchall()
+    assert text_row["acquisition_status"] == "acquired" and text_row["text_route"] == "arxiv_pdf"
+    assert _reading_job_of(app, "2611.06000")["due_at"] <= clock.utc_now_timestamp()
+
+
+def test_the_source_text_stage_waits_out_a_short_provider_pause(app, providers, test_clock, monkeypatch):
+    monkeypatch.setattr(source_text, "wait_for_provider_pause", lambda seconds: test_clock.advance(seconds=seconds))
+    providers.feeds["cs.RO"] = (
+        date(2026, 11, 16),
+        [FeedItem(synthetic_paper("2611.06100", date(2026, 11, 13)), "new")],
+    )
+    providers.statuses_before_success[("export.arxiv.org", "/pdf/")] = [429]
+    collect(app, providers)
+    [text_row] = app.connection.execute("SELECT * FROM edition_source_texts").fetchall()
+    assert text_row["acquisition_status"] == "acquired"  # in the same run, after the 5-minute pause
+    assert _reading_job_of(app, "2611.06100")["due_at"] <= clock.utc_now_timestamp()
+
+
+def test_a_reading_waits_for_its_text_at_most_a_day(app, providers, test_clock):
+    providers.feeds["cs.RO"] = (
+        date(2026, 11, 16),
+        [FeedItem(synthetic_paper("2611.06200", date(2026, 11, 13)), "new")],
+    )
+    providers.statuses_before_success[("export.arxiv.org", "/pdf/")] = [429] * 20
+    collect(app, providers)
+    assert _reading_job_of(app, "2611.06200")["due_at"] > clock.utc_now_timestamp()
+    test_clock.advance(hours=25)
+    collect(app, providers)  # the PDF host is still refusing: the abstract is read rather than nothing
+    assert _reading_job_of(app, "2611.06200")["due_at"] <= clock.utc_now_timestamp()
+
+
+def test_a_paper_known_by_an_arxiv_id_gets_its_pdf_from_arxiv(app, providers):
+    """A work found through OpenAlex (e.g. a cited work) with an arXiv location: its arXiv version is looked up, and
+    the PDF comes from arXiv rather than from the rate-limited OpenAlex PDF host."""
+    title = "Synthetic guard study"  # only the OpenAlex abstract has the topic phrase: arXiv's own search misses it
+    providers.openalex_works.append(
+        FakeOpenAlexWork(
+            "W4400000777", title, f"SYNTHETIC abstract on {PHRASE}.", date(2026, 11, 10), arxiv_id="2611.07000"
+        )
+    )
+    providers.arxiv_papers.append(
+        FakeArxivPaper("2611.07000", title, "SYNTHETIC abstract.", date(2026, 11, 9), version_number=2)
+    )
+    collect(app, providers)
+    assert [
+        request.url.params["id_list"]
+        for request in providers.requests_to("export.arxiv.org", "/api/query")
+        if "id_list" in request.url.params
+    ] == ["2611.07000"]
+    [text_row] = app.connection.execute(
+        """SELECT text.*, edition.edition_key FROM edition_source_texts AS text
+           JOIN paper_editions AS edition ON edition.edition_id = text.edition_id"""
+    ).fetchall()
+    assert text_row["text_route"] == "arxiv_pdf" and text_row["edition_key"] == "arxiv:2611.07000@v2"
+    assert [request.url.path for request in providers.requests_to("export.arxiv.org", "/pdf/")] == ["/pdf/2611.07000v2"]
+
+
+def test_an_arxiv_version_with_another_title_is_not_taken_for_the_paper(app, providers):
+    providers.openalex_works.append(
+        FakeOpenAlexWork(
+            "W4400000778", "Synthetic guard study", f"SYNTHETIC on {PHRASE}.", date(2026, 11, 10), arxiv_id="2611.07100"
+        )
+    )
+    providers.arxiv_papers.append(FakeArxivPaper("2611.07100", "An unrelated paper", "SYNTHETIC.", date(2026, 11, 9)))
+    collect(app, providers)
+    edition_keys = [row[0] for row in app.connection.execute("SELECT edition_key FROM paper_editions")]
+    assert not any(key.startswith("arxiv:2611.07100") for key in edition_keys)
+    assert providers.requests_to("export.arxiv.org", "/pdf/") == []
 
 
 def test_source_text_without_an_extractor_image_waits_and_skip_searches_downloads_nothing(app, providers):

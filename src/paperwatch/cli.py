@@ -1,5 +1,5 @@
 """Command-line entry point: paperwatch [--home DIR] {init, doctor, collect, work, reread, retry-failed, report,
-status, access-check, capacity, backup, label-sample, monitor}.
+status, access-check, capacity, backup, label-sample, screening-calibration, monitor}.
 
 Every failure is printed as `paperwatch: FAILED [<component>] <message>` with a component-specific exit code
 (see paperwatch.errors), so the operator and systemd logs show which part broke.
@@ -10,7 +10,7 @@ armed, as when every command was imported at start-up.
 
 Before a command runs, its process arms one egress policy (paperwatch.network.egress_guard): only `collect` may
 reach paper providers; every other command may reach only the local model server; `init`, `retry-failed`, `capacity`,
-`backup`, and `label-sample` may reach nothing; `monitor`
+`backup`, `label-sample`, and `screening-calibration` may reach nothing; `monitor`
 connects nowhere (it only serves its page) and may start only `systemctl` for read-only state queries.
 """
 
@@ -64,10 +64,14 @@ COMMAND_RUNNER_LOCATIONS: dict[str, tuple[str, str]] = {
     "capacity": ("paperwatch.commands.capacity_command", "run_capacity_command"),
     "backup": ("paperwatch.commands.backup_command", "run_backup_command"),
     "label-sample": ("paperwatch.commands.label_sample_command", "run_label_sample_command"),
+    "screening-calibration": (
+        "paperwatch.commands.screening_calibration_command",
+        "run_screening_calibration_command",
+    ),
 }
 COLLECTOR_COMMAND_NAME = "collect"
 # Local files and the database only:
-NO_NETWORK_COMMAND_NAMES = frozenset({"retry-failed", "capacity", "backup", "label-sample"})
+NO_NETWORK_COMMAND_NAMES = frozenset({"retry-failed", "capacity", "backup", "label-sample", "screening-calibration"})
 UNGUARDED_COMMAND_NAMES = frozenset({"access-check"})  # must try forbidden connections to prove the OS blocks them
 
 
@@ -177,6 +181,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
     label_parser.add_argument("--size", dest="sample_size", type=int, default=40, help="at least 40 (default 40)")
     label_parser.add_argument(
         "--seed", dest="sample_seed", type=int, default=20261121, help="the draw is reproducible for a given seed"
+    )
+    subcommands.add_parser(
+        "screening-calibration",
+        help="how a raw screening-score floor would have changed which papers were read, and the floor it recommends",
     )
     monitor_parser = subcommands.add_parser(
         "monitor", help="serve a live, read-only web page of what paperwatch is doing, has done, and plans to do"

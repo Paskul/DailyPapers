@@ -35,7 +35,8 @@ backend = "llama_cpp"                    # "llama_cpp" (real local server) or "f
 base_url = "http://127.0.0.1:8080/v1"    # must be a loopback address; there is never a hosted fallback
 model_alias = "qwen-local"
 connect_timeout_seconds = 5.0
-required_context_tokens = 32768          # `doctor` fails if the per-slot context is smaller
+required_context_tokens = 81920          # `doctor` fails if the per-slot context is smaller; the report writer
+                                         #   needs about this much for 15 papers with its 24k-token output
 allow_non_loopback_host = false
 outage_backoff_initial_seconds = 30      # model jobs pause together on an outage; health checks back off
 outage_backoff_max_seconds = 1800
@@ -54,7 +55,7 @@ timeout_seconds = 1800
 reasoning_effort = "server-default"
 
 [roles.reviewer]                          # the evidence-backed review (from passages or section notes)
-max_output_tokens = 16384
+max_output_tokens = 24576
 timeout_seconds = 1800
 reasoning_effort = "server-default"
 
@@ -69,12 +70,12 @@ timeout_seconds = 1200
 reasoning_effort = "server-default"
 
 [roles.comparison]                        # compares two saved reviews on the same question
-max_output_tokens = 12288
-timeout_seconds = 1200
+max_output_tokens = 20480                 # 2026-11-23: the first live comparison's repair ran out at 12288
+timeout_seconds = 1500
 reasoning_effort = "server-default"
 
 [roles.writer]                            # writes the daily report's overview from the frozen reviews
-max_output_tokens = 16384                 # 2026-11-22: 8192 cut off a 15-paper answer (reasoning included)
+max_output_tokens = 24576                 # 2026-11-23: a 15-paper answer used 12.8k tokens, its repair hit 16384
 timeout_seconds = 1500
 reasoning_effort = "medium"               # also bounded by report.writer_deadline_minutes
 
@@ -127,6 +128,9 @@ daily_source_text_budget = 30             # full-text downloads per UTC day for 
 local_sources_dir = "local_sources"       # put PDFs here named by arXiv id or DOI (2401.01234v2.pdf,
                                           #   10.1109_xyz.pdf); used before any download
 source_text_hold_minutes = 60             # new readings wait until this run has fetched their PDFs (at most this long)
+source_text_pause_wait_seconds = 900      # per run: wait this long at most for a briefly paused provider (a 429)
+source_text_retry_hold_minutes = 400      # a reading whose PDF a provider still owes waits for the next collect
+source_text_maximum_hold_hours = 24       #   ... but no longer than this after it was queued (then the abstract is read)
 source_cache_limit_megabytes = 4096       # downloads above this are removed (oldest first) once their text is
                                           #   extracted; extracted text, reviews, and reports are always kept
 
@@ -151,6 +155,8 @@ closest_seed_count = 3
 daily_promotion_limit = 30      # readings promoted per UTC day; slots are divided across topics first
 near_cutoff_promotions = 3      # of those, the best candidates just below the cutoff (to see what it misses)
 minimum_screening_score = 0.0   # a pool percentile (0.8 = top fifth); 0 = promote by rank only
+minimum_unnormalized_score = 0.0  # an absolute floor on the raw score; 0 = off. `paperwatch screening-calibration`
+                                  #   recommends one from the topic assessor's verdicts on the papers already read
 
 # How a promoted paper is read. Its text becomes passages with stable ids (A1.. abstract, P1.. full
 # text) and page/section names; a long text is read in bounded sections (methods and results first), one model call

@@ -24,6 +24,7 @@ from paperwatch.config import AppConfig
 from paperwatch.db import write_transaction
 from paperwatch.llm.service_guard import MODEL_SERVICE_NAME, ServiceHealthState, read_service_health_state
 from paperwatch.network.provider_gateway import PROVIDER_SERVICE_NAME_PREFIX
+from paperwatch.publication_dates import ReleaseClass, classify_release
 from paperwatch.reporting.report_schedule import ReportTiming
 from paperwatch.reporting.report_selection import ReportEntry, select_report_entries
 from paperwatch.reporting.revision_changes import RevisionChange
@@ -65,6 +66,11 @@ class ReportStatistics:
     topics_configured: int
     source_outages: tuple[str, ...]  # host-written lines
     model_outage: str | None  # set when the model server was unavailable at the snapshot or failed in the window
+    # New releases (first published at most 7 days before they were found) among the reviews completed in the window,
+    # and the best reading priority among them: third pilot (2026-11-23), 9 were read and none reached the report,
+    # which the report did not say. Older snapshots lack these.
+    new_releases_reviewed_in_window: int = 0
+    best_new_release_reading_priority: int | None = None
 
 
 @dataclass(frozen=True)
@@ -260,6 +266,7 @@ def _collect_statistics(
     def count(sql: str, parameters: tuple[Any, ...] = ()) -> int:
         return int(connection.execute(sql, parameters).fetchone()[0])
 
+    new_release_priorities = _new_release_reading_priorities(connection, window)
     hours_since_previous = None
     if previous_report is not None:
         hours_since_previous = round(
@@ -288,7 +295,28 @@ def _collect_statistics(
         model_outage=_describe_service_outage(
             read_service_health_state(connection, MODEL_SERVICE_NAME), window, include_error=True
         ),
+        new_releases_reviewed_in_window=len(new_release_priorities),
+        best_new_release_reading_priority=max(new_release_priorities, default=None),
     )
+
+
+def _new_release_reading_priorities(connection: sqlite3.Connection, window: tuple[str, str]) -> list[int]:
+    """The best reading priority of each new release among the reviews completed in the window (0 if not rated)."""
+    priorities = []
+    for review_row in connection.execute(
+        """SELECT paper.first_published_date, paper.discovered_at,
+                  (SELECT MAX(assessment.topic_score) FROM review_topic_assessments AS assessment
+                   WHERE assessment.review_id = review.review_id) AS best_priority
+           FROM reviews AS review JOIN papers AS paper ON paper.paper_id = review.paper_id
+           WHERE review.completed_at > ? AND review.completed_at <= ?""",
+        window,
+    ):
+        release_class = classify_release(
+            review_row["first_published_date"], parse_utc_timestamp(review_row["discovered_at"])
+        )
+        if release_class == ReleaseClass.NEW_RELEASE:
+            priorities.append(int(review_row["best_priority"] or 0))
+    return priorities
 
 
 def _describe_service_outage(health: ServiceHealthState, window: tuple[str, str], *, include_error: bool) -> str | None:

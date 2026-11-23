@@ -1,7 +1,12 @@
 """Schema fragments and host checks shared by the evidence-reading roles (section reader and reviewer).
 
 Field shapes (every object rejects unknown fields):
-    finding     {claim, conditions, passage_id, excerpt}    an AUTHORS' claim, quoted from one passage
+    finding     {claim, conditions, passage_id, excerpt, number_passage_ids?}
+                an AUTHORS' claim, quoted from one passage. The optional number_passage_ids (at most 3) name the
+                passages that state the claim's numbers when the quoted passage does not: in the third pilot
+                (2026-11-23) the numbers of 117 results sat in a different passage from their quotation, usually a
+                results table next to the sentence that discusses it. The model may fill it; otherwise the host adds
+                the passage that states the numbers (roles/answer_salvage.py).
     statement   {statement, evidence_status, supporting_passage_ids}
                 evidence_status "insufficient_evidence" lets the reviewer say the text does not support an answer.
                 A statement cites at most 6 passages; the reviewer's three single statements (research question,
@@ -13,7 +18,9 @@ Field shapes (every object rejects unknown fields):
     parser      {passage_id, problem}                       text the extractor garbled (tables, equations)
 Enum values are ordered conservative-first ("insufficient_evidence" before "supported"), so the smallest valid
 answer claims nothing. String lengths are checked here, not in the schema: long maxLength bounds make llama.cpp's
-grammar large and slow.
+grammar large and slow. The prompt asks for the TARGET lengths; the host rejects only beyond the MAXIMUM lengths,
+because the model overshoots whatever limit it is given by a little (third pilot: methods of 1620 and 1643
+characters against a stated 1600), and a ~10-minute repair call is too high a price for a few sentences.
 """
 
 from __future__ import annotations
@@ -30,12 +37,15 @@ from paperwatch.reading.evidence_checks import (
 
 EVIDENCE_STATUS_INSUFFICIENT = "insufficient_evidence"
 EVIDENCE_STATUS_SUPPORTED = "supported"
-MAXIMUM_STATEMENT_CHARACTERS = 1200
+TARGET_STATEMENT_CHARACTERS = 1200  # what the prompt asks for
+MAXIMUM_STATEMENT_CHARACTERS = 1500  # what the host accepts
 # The reviewer's research question, method and evaluation setting describe the whole paper. Trial of 2026-11-22: two
 # of four first answers had a method of 1352 and 1435 characters, and each cost a ~10-minute repair call.
-MAXIMUM_SINGLE_STATEMENT_CHARACTERS = 1600
+TARGET_SINGLE_STATEMENT_CHARACTERS = 1600
+MAXIMUM_SINGLE_STATEMENT_CHARACTERS = 2000
 MAXIMUM_PASSAGES_PER_STATEMENT = 6
 MAXIMUM_PASSAGES_PER_SINGLE_STATEMENT = 10
+MAXIMUM_NUMBER_PASSAGES_PER_FINDING = 3
 
 
 def passage_id_list_schema(maximum_passages: int) -> dict[str, Any]:
@@ -50,6 +60,7 @@ FINDING_SCHEMA: dict[str, Any] = {
         "conditions": {"type": "string"},
         "passage_id": {"type": "string"},
         "excerpt": {"type": "string"},
+        "number_passage_ids": passage_id_list_schema(MAXIMUM_NUMBER_PASSAGES_PER_FINDING),  # optional
     },
     "required": ["claim", "conditions", "passage_id", "excerpt"],
     "additionalProperties": False,
@@ -112,10 +123,12 @@ Evidence rules:
 - Cite passages only by the passage_id values given in the input. Never invent an id. Write each id as its own \
 list entry exactly as given ("P18", "P19"), never joined ("P18P19"), as a range ("P18-P21"), or as a quoted list.
 - A finding is the AUTHORS' claim. Its excerpt is a short contiguous quotation (3 to 60 words, no "...") copied \
-from the one passage it cites. Every number in its claim and conditions must appear in that passage.
+from the one passage it cites. Every number in its claim and conditions must appear in that passage, or in a \
+passage listed in its number_passage_ids.
 - Before you cite, find the passage whose text actually contains the words you quote and the numbers you state. \
-Results tables and their captions are often separate passages from the sentence that discusses them: cite the \
-passage that holds the number. Leave out a number you cannot find in the passage you cite.
+Results tables and their captions are often separate passages from the sentence that discusses them: when a \
+finding's numbers come from such a passage, list it in number_passage_ids (at most 3). Leave out a number you \
+cannot find in a passage you cite.
 - Put the conditions a result holds under (setting, dataset, assumptions, sample size) in "conditions".
 - A statement with evidence_status "supported" cites the passages that support it; numbers in it must appear \
 in those passages. If the text does not answer the question, write "insufficient evidence" and use \
@@ -124,8 +137,8 @@ evidence_status "insufficient_evidence".
 it as the authors' claim.
 - Flag passages that can be read more than one way in ambiguous_passages, and tables or equations the text \
 extraction garbled in parser_problems.
-- Keep every text field under {MAXIMUM_STATEMENT_CHARACTERS} characters (a review's research_question, method and \
-evaluation_setting: under {MAXIMUM_SINGLE_STATEMENT_CHARACTERS})."""
+- Keep every text field under {TARGET_STATEMENT_CHARACTERS} characters (a review's research_question, method and \
+evaluation_setting: under {TARGET_SINGLE_STATEMENT_CHARACTERS})."""
 
 
 # Item checks: each takes ONE list item and the label used in its problems ("findings[3]"). The list checks below
@@ -141,6 +154,7 @@ def check_finding(finding: Mapping[str, Any], passage_text_by_id: PassageTextByI
             finding["excerpt"],
             passage_text_by_id,
             where,
+            finding.get("number_passage_ids", ()),
         )
         + _check_length(finding["claim"], where)
         + _check_length(finding["conditions"], where)

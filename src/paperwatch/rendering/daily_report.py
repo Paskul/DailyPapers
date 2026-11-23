@@ -26,9 +26,10 @@ from paperwatch.clock import parse_utc_timestamp
 from paperwatch.rendering.markdown_safety import escape_untrusted_inline_text
 from paperwatch.rendering.notes import SCORE_MEANING_NOTE, SelectedReview, render_code_span, render_source_links
 from paperwatch.reporting.report_comparisons import ComparisonSummary
-from paperwatch.reporting.report_selection import ENTRY_LABEL_TEXT, ReportEntry
+from paperwatch.reporting.report_selection import ENTRY_LABEL_TEXT, EntryLabel, ReportEntry
 from paperwatch.reporting.report_snapshot import ReportSnapshot
 from paperwatch.reporting.report_synthesis import SYNTHESIS_BY_MODEL, SYNTHESIS_FALLBACK, ReportSynthesis
+from paperwatch.roles.writer import is_given_up_overview, is_given_up_read_first
 
 COVERAGE_TEXT = {
     "full_text": "full text",
@@ -141,6 +142,7 @@ def _render_opening(context: _ReportContext) -> list[str]:
             f"screened, {statistics.reviews_completed_in_window} review(s) completed · selected today: "
             f"**{len(snapshot.entries)}** (reading priority at least {snapshot.minimum_reading_priority}/100)"
         ),
+        _describe_new_releases(snapshot),
         (
             f"- Backlog: {statistics.eligible_held_for_later} qualifying review(s) held for later reports · "
             f"{statistics.jobs_queued} queued job(s) · {statistics.jobs_failed} failed"
@@ -167,6 +169,18 @@ def _render_opening(context: _ReportContext) -> list[str]:
         )
     opening_lines += ["", f"> {SCORE_MEANING_NOTE}"]
     return opening_lines
+
+
+def _describe_new_releases(snapshot: ReportSnapshot) -> str:
+    """How the window's new releases fared, so a report without any says whether none was read or none was good."""
+    statistics = snapshot.statistics
+    if statistics.new_releases_reviewed_in_window == 0:
+        return "- New releases: none reviewed since then"
+    selected_count = sum(entry.entry_label == EntryLabel.NEW_RELEASE for entry in snapshot.entries)
+    return (
+        f"- New releases: {statistics.new_releases_reviewed_in_window} reviewed since then, {selected_count} selected "
+        f"(best reading priority {statistics.best_new_release_reading_priority}/100)"
+    )
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -199,10 +213,19 @@ def _render_what_matters_today(context: _ReportContext) -> list[str]:
 
     writer_output = context.writer_output
     overview = writer_output["overview"]
-    section_lines = [
-        escape_untrusted_inline_text(overview["statement"]) + context.render_citations(overview["evidence"]),
-        "",
-    ]
+    if is_given_up_overview(overview):
+        section_lines = [
+            (
+                "> No overview today: the model's overview did not pass the evidence checks. The findings and "
+                "reasons below did."
+            ),
+            "",
+        ]
+    else:
+        section_lines = [
+            escape_untrusted_inline_text(overview["statement"]) + context.render_citations(overview["evidence"]),
+            "",
+        ]
     comparison_ids = {comparison.comparison_id for comparison in context.comparisons}
     for finding in writer_output["connected_findings"]:
         comparison_links = [
@@ -220,6 +243,12 @@ def _render_what_matters_today(context: _ReportContext) -> list[str]:
     read_first = writer_output["read_first"]
     read_first_entry = context.entry_by_review_id[read_first["review_id"]]
     read_first_title = context.selected_review_by_id[read_first["review_id"]].paper_row["title"]
+    if is_given_up_read_first(read_first):
+        section_lines.append(
+            f"**Read first:** #{read_first_entry.rank} {escape_untrusted_inline_text(read_first_title)} "
+            "(the highest reading priority)."
+        )
+        return section_lines
     section_lines.append(
         f"**Read first:** #{read_first_entry.rank} {escape_untrusted_inline_text(read_first_title)}"
         f". {escape_untrusted_inline_text(read_first['explanation'])}"

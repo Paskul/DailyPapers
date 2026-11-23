@@ -39,8 +39,10 @@ SECTION_READER_ROLE_NAME = "section_reader"
 # separate passages). v1 notes passed the same checks, so they are still reused (stage_results.py re-checks them).
 # v3 (2026-11-22, after the second pilot): ids one per entry, the 1200-character limit, and numbers kept out of the
 # uncited section_summary (the reviewer copied them from there and could not cite them). Same schema and checks.
-SECTION_READER_PROMPT_VERSION = "section-reader-v3"
-SECTION_READER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("section-reader-v2", "section-reader-v1")
+# v4 (2026-11-23, after the third pilot): a finding may name the passages that state its numbers (number_passage_ids,
+# an optional field); earlier notes still validate and are reused after passing today's checks.
+SECTION_READER_PROMPT_VERSION = "section-reader-v4"
+SECTION_READER_REUSABLE_EARLIER_PROMPT_VERSIONS = ("section-reader-v3", "section-reader-v2", "section-reader-v1")
 FINDING_KINDS = ("other", "research_question", "method", "assumption", "evaluation_setting", "result", "limitation")
 MAXIMUM_SECTION_FINDINGS = 10
 

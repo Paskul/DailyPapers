@@ -9,13 +9,17 @@ Every topic is active and none is primary (owner decision), so slots are divided
      split) are filled by the best remaining candidates by their best-topic score, again above the minimum.
   3. Near the cutoff. Up to `near_cutoff_slots` more go to the best candidates that were NOT selected, whatever the
      minimum: they sit just below the cutoff and show what the filter misses (they calibrate the minimum).
+"Reaches the minimum" means both: the pool-normalized score reaches `minimum_screening_score` (a relative position)
+and the raw score reaches `minimum_unnormalized_score` (an absolute floor; 0 = off). The normalized score ranks a
+paper within today's candidates, so on a day without a relevant paper the best of the rest still fills the slots;
+the absolute floor stops that (third pilot, 2026-11-23: 9 new releases were read and none reached the report).
 Ties are broken by paper id, so the same inputs always give the same selection.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -28,7 +32,8 @@ class PromotionReason(StrEnum):
 @dataclass(frozen=True)
 class PromotionCandidate:
     paper_id: str
-    score_by_topic_id: dict[str, float]
+    score_by_topic_id: dict[str, float]  # pool-normalized (paperwatch.screening.signal_normalization)
+    unnormalized_score_by_topic_id: dict[str, float] = field(default_factory=dict)  # raw, for the absolute floor
 
     @property
     def best_topic_id(self) -> str:
@@ -90,11 +95,20 @@ def compute_slots_available(
 
 
 def select_papers_for_promotion(
-    candidates: list[PromotionCandidate], slots: SlotsAvailable, minimum_screening_score: float
+    candidates: list[PromotionCandidate],
+    slots: SlotsAvailable,
+    minimum_screening_score: float,
+    minimum_unnormalized_score: float = 0.0,
 ) -> list[PromotionDecision]:
     scored_candidates = [candidate for candidate in candidates if candidate.score_by_topic_id]
     decisions: list[PromotionDecision] = []
     selected_paper_ids: set[str] = set()
+
+    def reaches_the_minimum(candidate: PromotionCandidate, topic_id: str) -> bool:
+        return candidate.score_by_topic_id.get(topic_id, -1.0) >= minimum_screening_score and (
+            minimum_unnormalized_score <= 0
+            or candidate.unnormalized_score_by_topic_id.get(topic_id, 0.0) >= minimum_unnormalized_score
+        )
 
     def select(candidate: PromotionCandidate, reason: PromotionReason, selecting_topic_id: str) -> None:
         decisions.append(
@@ -107,11 +121,7 @@ def select_papers_for_promotion(
     # 1. Topic shares, in turns.
     ranked_by_topic = {
         topic_id: sorted(
-            (
-                candidate
-                for candidate in scored_candidates
-                if candidate.score_by_topic_id.get(topic_id, -1.0) >= minimum_screening_score
-            ),
+            (candidate for candidate in scored_candidates if reaches_the_minimum(candidate, topic_id)),
             key=_ranking_order_for_topic(topic_id),
         )
         for topic_id in slots.remaining_share_by_topic_id
@@ -144,7 +154,7 @@ def select_papers_for_promotion(
     for candidate in ranked_by_best_score:
         if regular_slots_left == 0:
             break
-        if candidate.paper_id not in selected_paper_ids and candidate.best_score >= minimum_screening_score:
+        if candidate.paper_id not in selected_paper_ids and reaches_the_minimum(candidate, candidate.best_topic_id):
             select(candidate, PromotionReason.SPARE_SLOT, candidate.best_topic_id)
             regular_slots_left -= 1
 

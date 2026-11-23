@@ -9,8 +9,9 @@ Job life cycle: queued -> running -> done, with delayed retries (back to queued)
     worker's job is reclaimable within one lease period instead of after the slowest possible call.
   * A service outage releases the job without charging an attempt; a paper-specific failure charges one.
 Claim order (paperwatch.dispatch_order): the effective priority class first (a new release whose fresh
-window has ended counts as class 2), then the two within-class order values (higher first), then queue age. Each
-claim is one bounded job, so a higher-priority arrival runs right after the current job.
+window has ended counts as class 2, and so does a comparison that has waited COMPARISON_AGING_HOURS), then the two
+within-class order values (higher first), then queue age. Each claim is one bounded job, so a higher-priority arrival
+runs right after the current job.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from typing import Any
 
 from paperwatch.clock import format_utc_timestamp, parse_utc_timestamp, utc_now, utc_now_timestamp
 from paperwatch.db import write_transaction
-from paperwatch.dispatch_order import JobDispatchOrder, JobPriorityClass
+from paperwatch.dispatch_order import COMPARISON_AGING_HOURS, JobDispatchOrder, JobPriorityClass
 from paperwatch.errors import DatabaseError, PaperwatchError
 from paperwatch.identifiers import JOB_ID_PREFIX, new_internal_id
 
@@ -34,9 +35,14 @@ COMPARE_REVIEWS_JOB_KIND = "compare_reviews"  # class 4: a comparison of two com
 
 __all__ = ["JobDispatchOrder", "JobPriorityClass"]  # re-exported: callers import the classes from here
 
-# The class a job is claimed under right now: a new release past its fresh window drops to older literature.
+# The class a job is claimed under right now (:now is a stored UTC timestamp): a new release past its fresh window
+# drops to older literature, and a comparison that has waited COMPARISON_AGING_HOURS rises to it (comparisons never ran
+# in the first three pilots: the reading queue was never empty).
 EFFECTIVE_PRIORITY_CLASS_SQL = f"""CASE WHEN priority = {int(JobPriorityClass.NEW_RELEASE)}
                    AND new_release_fresh_until IS NOT NULL AND new_release_fresh_until <= :now
+              THEN {int(JobPriorityClass.HISTORICAL_SEARCH)}
+              WHEN priority = {int(JobPriorityClass.COMPARISON)}
+                   AND created_at <= strftime('%Y-%m-%dT%H:%M:%SZ', :now, '-{COMPARISON_AGING_HOURS} hours')
               THEN {int(JobPriorityClass.HISTORICAL_SEARCH)} ELSE priority END"""
 
 

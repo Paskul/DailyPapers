@@ -70,6 +70,7 @@ class PromotionRunOutcome:
     newly_screened_out: int = 0
     promoted_today_before_this_run: int = 0
     daily_promotion_limit: int = 0
+    below_unnormalized_floor: int = 0  # candidates whose raw score reaches screening.minimum_unnormalized_score nowhere
 
     def describe(self) -> str:
         reason_counts = {
@@ -82,6 +83,11 @@ class PromotionRunOutcome:
             f"{reason_counts[PromotionReason.SPARE_SLOT]} by spare slot, "
             f"{reason_counts[PromotionReason.NEAR_CUTOFF]} near the cutoff); {promoted_today} of "
             f"{self.daily_promotion_limit} promoted today (UTC); {self.newly_screened_out} newly screened out"
+            + (
+                f"; {self.below_unnormalized_floor} candidate(s) below the raw-score floor"
+                if self.below_unnormalized_floor
+                else ""
+            )
         )
 
 
@@ -134,8 +140,18 @@ def promote_screened_candidates(
             topic_id: sum(topic_id in signals_by_topic for signals_by_topic in pool_signals.values())
             for topic_id in active_topic_ids
         }
+        signal_weights = SignalWeights.from_settings(screening_settings)
         promotion_candidates = [
-            PromotionCandidate(paper_id, normalized_scores.get(paper_id, {})) for paper_id in sorted(pool_signals)
+            PromotionCandidate(
+                paper_id,
+                normalized_scores.get(paper_id, {}),
+                {
+                    topic_id: raw_score
+                    for topic_id, signals in pool_signals[paper_id].items()
+                    if (raw_score := combine_screening_signals(signals, signal_weights)) is not None
+                },
+            )
+            for paper_id in sorted(pool_signals)
         ]
 
         today_counts = count_screening_promotions_today(connection, moment)
@@ -156,7 +172,18 @@ def promote_screened_candidates(
             near_cutoff_promotions_today=today_counts["near_cutoff_count"],
             topic_share_promotions_today_by_topic_id=topic_share_counts,
         )
-        decisions = select_papers_for_promotion(promotion_candidates, slots, screening_settings.minimum_screening_score)
+        decisions = select_papers_for_promotion(
+            promotion_candidates,
+            slots,
+            screening_settings.minimum_screening_score,
+            screening_settings.minimum_unnormalized_score,
+        )
+        outcome.below_unnormalized_floor = sum(
+            screening_settings.minimum_unnormalized_score > 0
+            and max(candidate.unnormalized_score_by_topic_id.values(), default=0.0)
+            < screening_settings.minimum_unnormalized_score
+            for candidate in promotion_candidates
+        )
 
         for decision in decisions:
             candidate = screening_outcome.candidates[decision.paper_id]

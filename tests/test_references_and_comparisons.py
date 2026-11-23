@@ -382,6 +382,43 @@ def test_a_comparison_must_cite_both_reviews_with_real_passages_and_numbers(bad_
         parse_and_validate_role_output(COMPARISON_ROLE, bad_answer, comparison_input())
 
 
+def test_a_comparison_with_a_few_bad_citations_is_corrected_instead_of_rejected():
+    """First live comparison (trial of 2026-11-23): three misquoted excerpts and an uncited number rejected the whole
+    answer, and its repair ran out of tokens. The host now corrects citations and drops what still fails."""
+    misquoted = {**NOISY, "excerpt": "noisy positions rejected every plan"}  # not in P7
+    answer = comparison_answer(
+        agreements=[
+            {"statement": "Both reject plans that block an exit.", "evidence": [EXACT, NOISY]},
+            {"statement": "Both test noisy positions.", "evidence": [EXACT, misquoted]},
+        ],
+        reader_conclusion={
+            "statement": "The simulation rejected 37 of 37 blocking plans; the proof covers exact positions only.",
+            "evidence": [EXACT],
+        },
+    )
+    with pytest.raises(ModelOutputInvalid) as rejection:
+        parse_and_validate_role_output(COMPARISON_ROLE, answer, comparison_input())
+    salvage = rejection.value.salvage
+    assert salvage is not None and salvage.dropped_at_most_half
+    corrected = salvage.salvaged_output
+    assert [item["statement"] for item in corrected["agreements"]] == ["Both reject plans that block an exit."]
+    assert corrected["reader_conclusion"]["evidence"][1] == {
+        "review_id": "r_noisy",
+        "passage_id": "P7",
+        "excerpt": "In simulation with noisy positions 37 of 37 blocking plans were rejected.",
+    }
+    assert "reader_conclusion: + r_noisy#P7 (states 37)" in salvage.describe()
+
+
+def test_a_comparison_conclusion_that_still_fails_needs_the_repair():
+    answer = comparison_answer(
+        reader_conclusion={"statement": "The simulation rejected 99 of 99 plans.", "evidence": [EXACT, NOISY]}
+    )
+    with pytest.raises(ModelOutputInvalid) as rejection:
+        parse_and_validate_role_output(COMPARISON_ROLE, answer, comparison_input())
+    assert rejection.value.salvage is None  # 99 is nowhere: the conclusion is never dropped
+
+
 def test_shared_evidence_dimensions_ignore_statements_without_evidence():
     review_a = {
         "assumptions": [{"statement": "Robot positions are exact.", "evidence_status": "supported"}],

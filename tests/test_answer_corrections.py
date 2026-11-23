@@ -2,8 +2,12 @@
 
 joined ids     the reviewer joined passage ids into one entry ("P18P19", "'P19', 'P20'", "P35-P37") when its method
                statement wanted more than 6 passages: the entry is split, and the single statements may cite 10
-numbers        a statement stated a number from a passage it did not cite: the ONE passage that states it is added;
-               a model name such as "GPT-6" is not a stated number
+numbers        a statement stated a number from a passage it did not cite: the passage that states it is added (the
+               only one, or the one singled out by the answer, the words around the number, the section notes, or
+               its place next to a cited passage); a model name such as "GPT-6", a list marker "(1)" and a label
+               "Case 3" are not stated numbers
+results        third pilot (2026-11-23): a result's numbers often sit in a table passage next to its quotation; the
+               host names that passage in number_passage_ids
 writer         the writer's answer gets "fix, then drop": miscited excerpts move, failing reasons and findings drop
 saved answers  a rejected or corrected answer is kept in model_calls.answer_text for offline replay
 """
@@ -23,7 +27,7 @@ from paperwatch.llm.fake_client import FakeModelClient
 from paperwatch.reading.evidence_checks import find_numbers_needing_evidence
 from paperwatch.roles.answer_salvage import split_joined_passage_ids
 from paperwatch.roles.base import parse_and_validate_role_output, run_role_with_one_repair
-from paperwatch.roles.reviewer import REVIEWER_ROLE
+from paperwatch.roles.reviewer import REVIEWER_ROLE, collect_cited_passage_ids
 from paperwatch.roles.writer import WRITER_ROLE
 
 PASSAGE_TEXTS = {
@@ -130,12 +134,25 @@ def test_the_single_statements_may_be_longer_than_the_other_text_fields():
         REVIEWER_ROLE, json.dumps(reviewer_answer(long_method, ["P1"])), REVIEWER_INPUT
     )
     assert validated["method"]["statement"] == long_method
-    too_long = reviewer_answer("LoRA on agent traces. " * 80, ["P1"])
-    assert "keep each text field under 1600" in str(rejection_of(REVIEWER_ROLE, too_long, REVIEWER_INPUT))
-    long_assumption = {"statement": long_method, "evidence_status": "supported", "supporting_passage_ids": ["P1"]}
-    assert "under 1200" in str(
-        rejection_of(REVIEWER_ROLE, reviewer_answer("LoRA.", ["P1"], assumptions=[long_assumption]), REVIEWER_INPUT)
+    too_long = reviewer_answer("LoRA on agent traces. " * 100, ["P1"])  # 2200 characters
+    assert "keep each text field under 2000" in str(rejection_of(REVIEWER_ROLE, too_long, REVIEWER_INPUT))
+    longer_assumption = {
+        "statement": "LoRA on agent traces. " * 75,  # 1650 characters
+        "evidence_status": "supported",
+        "supporting_passage_ids": ["P1"],
+    }
+    assert "under 1500" in str(
+        rejection_of(REVIEWER_ROLE, reviewer_answer("LoRA.", ["P1"], assumptions=[longer_assumption]), REVIEWER_INPUT)
     )
+
+
+def test_the_prompt_asks_for_less_than_the_host_accepts():
+    """Third pilot: methods of 1620 and 1643 characters against a stated 1600 each cost a repair call. The prompt
+    keeps asking for 1600 (and 1200); the host accepts a little more before it rejects."""
+    assert "under 1200 characters" in REVIEWER_ROLE.system_prompt
+    assert "evaluation_setting: under 1600" in REVIEWER_ROLE.system_prompt
+    slightly_long_method = reviewer_answer("LoRA on agent traces. " * 74, ["P1"])  # 1628 characters
+    assert parse_and_validate_role_output(REVIEWER_ROLE, json.dumps(slightly_long_method), REVIEWER_INPUT)
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -152,13 +169,133 @@ def test_the_one_passage_that_states_an_uncited_number_is_added_to_the_statement
     assert salvage.salvaged_output["method"]["statement"] == answer["method"]["statement"]  # the text is never changed
 
 
-def test_a_number_stated_by_several_passages_or_by_none_is_not_given_a_citation():
+def test_numbers_from_two_passages_are_cited_with_both():
     in_two_passages = reviewer_answer("Each run used 3 seeds and 450 episodes.", ["P1"])  # 3: P4 only; 450: P3 only
-    assert rejection_of(REVIEWER_ROLE, in_two_passages, REVIEWER_INPUT).salvage is not None
-    ambiguous_input = {**REVIEWER_INPUT, "citable_passages": {**PASSAGE_TEXTS, "P7": "We repeat it 3 times."}}
-    assert rejection_of(REVIEWER_ROLE, in_two_passages, ambiguous_input).salvage is None  # 3 is in P4 and P7
+    salvage = rejection_of(REVIEWER_ROLE, in_two_passages, REVIEWER_INPUT).salvage
+    assert salvage is not None
+    assert salvage.salvaged_output["method"]["supporting_passage_ids"] == ["P1", "P3", "P4"]
+
+
+def test_a_number_in_several_passages_is_cited_where_the_words_around_it_agree():
+    with_repeat = {**REVIEWER_INPUT, "citable_passages": {**PASSAGE_TEXTS, "P9": "We repeat it 3 times."}}
+    answer = reviewer_answer("Each run used 3 random seeds.", ["P1"])  # 3: P4 ("3 random seeds") and P9
+    salvage = rejection_of(REVIEWER_ROLE, answer, with_repeat).salvage
+    assert salvage is not None
+    assert salvage.salvaged_output["method"]["supporting_passage_ids"] == ["P1", "P4"]
+
+
+def test_a_number_that_nothing_singles_out_or_that_is_nowhere_gets_no_citation():
+    with_repeat = {**REVIEWER_INPUT, "citable_passages": {**PASSAGE_TEXTS, "P9": "We repeat it 3 times."}}
+    unattributable = reviewer_answer("The guard has 3 components.", ["P1"])  # P4 and P9 say 3, about other things
+    assert rejection_of(REVIEWER_ROLE, unattributable, with_repeat).salvage is None
     invented = reviewer_answer("LoRA with rank 64 on agent traces.", ["P1"])
     assert rejection_of(REVIEWER_ROLE, invented, REVIEWER_INPUT).salvage is None  # 64 is nowhere: still a repair
+
+
+def test_the_first_of_several_passages_that_repeat_a_statement_is_cited():
+    repeated = {
+        "P1": "Abstract. The guard blocked 412 of 450 unsafe actions in held-out episodes.",
+        "P2": "We describe the guard and its training data.",
+        "P8": "In summary, the guard blocked 412 of 450 unsafe actions in held-out episodes.",
+    }
+    role_input = {**REVIEWER_INPUT, "citable_passages": repeated}
+    answer = reviewer_answer("The guard blocked 412 of 450 unsafe actions.", ["P2"], results=[])
+    salvage = rejection_of(REVIEWER_ROLE, answer, role_input).salvage
+    assert salvage is not None
+    assert salvage.salvaged_output["method"]["supporting_passage_ids"] == ["P2", "P1"]
+
+
+def test_the_section_notes_tell_where_the_reviewer_read_a_number():
+    citable = {
+        "P1": "We study a runtime guard for tool-using agents.",
+        "P2": "The library offers 12 tools to the agent.",
+        "P7": "Each session lasts 12 minutes on average.",
+    }
+    finding_in_notes = {
+        "claim": "The agent can call 12 tools.",
+        "conditions": "",
+        "passage_id": "P2",
+        "excerpt": "offers 12 tools to the agent",
+    }
+    role_input = {
+        "coverage": "full_text",
+        "paper": {"title": "A guard"},
+        "reading_mode": "section_notes",
+        "section_notes": [
+            {"section_number": 1, "section_titles": ["Method"], "notes": {"findings": [finding_in_notes]}}
+        ],
+        "citable_passages": citable,
+    }
+    answer = reviewer_answer("A guard for an agent with access to 12 utilities.", ["P1"], results=[])
+    salvage = rejection_of(REVIEWER_ROLE, answer, role_input).salvage
+    assert salvage is not None  # "12" is in P2 and P7; the notes read it in P2
+    assert salvage.salvaged_output["method"]["supporting_passage_ids"] == ["P1", "P2"]
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# A result whose numbers sit in another passage (third pilot, 2026-11-23: 117 results)
+# --------------------------------------------------------------------------------------------------------------------
+
+TABLE_PASSAGES = {
+    "P10": "Table 2 reports the blocking rate of every guard on the held-out tasks.",
+    "P11": "Guard | Blocked | Missed\nOurs | 96.4 | 3.6\nBaseline | 71.2 | 28.8",
+    "P12": "Our guard blocks clearly more unsafe actions than the baseline.",
+    "P20": "Conclusion: the guard is practical; the baseline blocked 71.2 percent in an older study.",
+}
+TABLE_INPUT = {**REVIEWER_INPUT, "citable_passages": TABLE_PASSAGES}
+TABLE_RESULT = {
+    "claim": "The guard blocks 96.4% of unsafe actions against 71.2% for the baseline.",
+    "conditions": "held-out tasks",
+    "passage_id": "P12",
+    "excerpt": "Our guard blocks clearly more unsafe actions than the baseline",
+}
+
+
+def test_a_result_gets_the_table_that_states_its_numbers():
+    answer = reviewer_answer("insufficient evidence", [], results=[TABLE_RESULT])
+    answer["method"] = INSUFFICIENT
+    salvage = rejection_of(REVIEWER_ROLE, answer, TABLE_INPUT).salvage
+    assert salvage is not None and salvage.dropped_items == ()
+    corrected = salvage.salvaged_output["results"][0]
+    assert corrected["passage_id"] == "P12" and corrected["number_passage_ids"] == ["P11"]
+    assert corrected["claim"] == TABLE_RESULT["claim"]  # the text is never changed
+    assert "results[1]: + P11 for its numbers (states 96.4, 71.2)" in salvage.describe()
+    assert parse_and_validate_role_output(REVIEWER_ROLE, json.dumps(salvage.salvaged_output), TABLE_INPUT)
+
+
+def test_a_result_may_name_its_number_passages_itself():
+    answer = reviewer_answer("insufficient evidence", [], results=[{**TABLE_RESULT, "number_passage_ids": ["P11"]}])
+    answer["method"] = INSUFFICIENT
+    validated = parse_and_validate_role_output(REVIEWER_ROLE, json.dumps(answer), TABLE_INPUT)
+    assert validated["results"][0]["number_passage_ids"] == ["P11"]
+    assert "P11" in collect_cited_passage_ids(validated)  # its text is saved with the review
+    unknown = reviewer_answer("insufficient evidence", [], results=[{**TABLE_RESULT, "number_passage_ids": ["P99"]}])
+    unknown["method"] = INSUFFICIENT
+    assert "passage id 'P99' is not in the input packet" in str(rejection_of(REVIEWER_ROLE, unknown, TABLE_INPUT))
+
+
+def test_a_joined_passage_id_of_a_result_keeps_the_part_that_holds_the_quote():
+    joined = {**TABLE_RESULT, "passage_id": "P12, P11"}
+    answer = reviewer_answer("insufficient evidence", [], results=[joined])
+    answer["method"] = INSUFFICIENT
+    salvage = rejection_of(REVIEWER_ROLE, answer, TABLE_INPUT).salvage
+    assert salvage is not None and salvage.dropped_items == ()
+    corrected = salvage.salvaged_output["results"][0]
+    assert corrected["passage_id"] == "P12" and corrected["number_passage_ids"] == ["P11"]
+
+
+@pytest.mark.parametrize(
+    "stated_text, expected_numbers",
+    [
+        ("Two parts: (1) an attack and (2) a trace.", []),  # an enumerated list
+        ("Steps: 1) collect, 2) filter, 3) rank 40 papers.", ["40"]),
+        ("failures: plan structure (81) and goal checks (34)", ["81", "34"]),  # counts in parentheses
+        ("Only (1) is shown.", ["1"]),  # a lone "(1)" is not a list
+        ("Cases 1 and 4 are easy; Level 7 is the strictest; Rule 5 applies.", ["4"]),
+    ],
+)
+def test_list_markers_and_labels_are_not_stated_numbers(stated_text, expected_numbers):
+    assert find_numbers_needing_evidence(stated_text) == expected_numbers
 
 
 def test_an_uncited_number_in_a_droppable_item_is_cited_instead_of_dropped():
@@ -235,9 +372,13 @@ def test_a_failing_connected_finding_and_an_unknown_comparison_id_are_dropped():
     assert kept_finding["statement"] == "Both address exits." and kept_finding["comparison_ids"] == []
 
 
-def test_a_writer_overview_that_still_fails_needs_the_repair():
+def test_a_writer_overview_that_still_fails_is_given_up_only_after_the_repair():
     answer = writer_answer(overview={"statement": "One rejected 97 of 99 plans.", "evidence": [EVIDENCE_A]})
-    assert rejection_of(WRITER_ROLE, answer, WRITER_INPUT).salvage is None
+    salvage = rejection_of(WRITER_ROLE, answer, WRITER_INPUT).salvage
+    assert salvage is not None and salvage.gave_up_a_required_part
+    assert not salvage.dropped_at_most_half  # the repair call is tried first
+    assert salvage.salvaged_output["overview"] == {"statement": "", "evidence": []}
+    assert salvage.salvaged_output["paper_reasons"] == answer["paper_reasons"]  # everything else is kept
     invented_address = writer_answer(
         paper_reasons=[
             {"review_id": "r_a", "reason_to_read": "See https://evil.example/x.", "evidence": [EVIDENCE_A]},
@@ -249,6 +390,65 @@ def test_a_writer_overview_that_still_fails_needs_the_repair():
 
 def test_a_valid_writer_answer_is_unchanged():
     assert validate_writer_answer(writer_answer()) == writer_answer()
+
+
+# Third pilot (2026-11-23): the writer restated "a systematic review of 38 studies" from a paper's summary, but the
+# passage that says 38 was not among those it was shown, so the whole overview (and the model synthesis) was lost.
+WRITER_INPUT_WITH_FULL_PASSAGES: dict[str, Any] = {
+    **WRITER_INPUT,
+    "citable_passages": {
+        "r_a#P1": "The monitor rejected 7 of 9 unsafe joint plans in simulation. A longer tail follows here.",
+        "r_a#P4": "Following a PRISMA protocol over six databases, we identified 38 studies on plan monitors.",
+        "r_b#P1": "A theorem guarantees exit clearance for exact robot positions.",
+    },
+}
+
+
+def test_a_writer_number_gets_a_host_quotation_of_the_passage_that_states_it():
+    overview = {
+        "statement": "A review of 38 studies finds the monitor rejected 7 of 9 plans.",
+        "evidence": [EVIDENCE_A],
+    }
+    salvage = rejection_of(WRITER_ROLE, writer_answer(overview=overview), WRITER_INPUT_WITH_FULL_PASSAGES).salvage
+    assert salvage is not None and salvage.dropped_at_most_half and not salvage.gave_up_a_required_part
+    corrected_overview = salvage.salvaged_output["overview"]
+    assert corrected_overview["statement"] == overview["statement"]  # the text is never changed
+    assert corrected_overview["evidence"][1] == {
+        "review_id": "r_a",
+        "passage_id": "P4",
+        "excerpt": "Following a PRISMA protocol over six databases, we identified 38 studies on plan monitors.",
+    }
+    assert "overview: + r_a#P4 (states 38)" in salvage.describe()
+
+
+def test_writer_quotations_are_checked_against_the_full_passage():
+    """The model sees passages cut to a length; a quotation that runs past the cut is still a real quotation."""
+    past_the_cut = {"review_id": "r_a", "passage_id": "P1", "excerpt": "A longer tail follows here"}
+    answer = writer_answer(
+        read_first={"review_id": "r_a", "explanation": "It tests the monitor.", "evidence": [past_the_cut]}
+    )
+    assert parse_and_validate_role_output(WRITER_ROLE, json.dumps(answer), WRITER_INPUT_WITH_FULL_PASSAGES)
+
+
+def test_the_writer_may_write_somewhat_more_than_the_prompt_asks():
+    assert "under 600 characters" in WRITER_ROLE.system_prompt
+    reason_of_800 = {
+        "review_id": "r_b",
+        "reason_to_read": "The exact-position assumption. " * 26,
+        "evidence": [EVIDENCE_B],
+    }
+    reasons = [writer_answer()["paper_reasons"][0], reason_of_800]
+    assert validate_writer_answer(writer_answer(paper_reasons=reasons))
+    reason_of_1100 = {**reason_of_800, "reason_to_read": "The exact-position assumption. " * 36}
+    rejection = rejection_of(WRITER_ROLE, writer_answer(paper_reasons=[reasons[0], reason_of_1100]), WRITER_INPUT)
+    assert "keep it under 1000 characters" in str(rejection)
+
+
+def test_a_failing_read_first_goes_back_to_the_top_paper():
+    read_first = {"review_id": "r_b", "explanation": "It proves 99 theorems.", "evidence": [EVIDENCE_B]}
+    salvage = rejection_of(WRITER_ROLE, writer_answer(read_first=read_first), WRITER_INPUT).salvage
+    assert salvage is not None and salvage.gave_up_a_required_part
+    assert salvage.salvaged_output["read_first"] == {"review_id": "r_a", "explanation": "", "evidence": []}
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -280,3 +480,24 @@ def test_rejected_and_corrected_answers_are_kept_for_replay(tmp_path):
         ]
     finally:
         app.close()
+
+
+def test_a_paper_note_shows_where_a_result_states_its_numbers():
+    from paperwatch.rendering.notes import SelectedReview, _render_finding
+    from paperwatch.review_store import EvidencePassage
+
+    selected_review = SelectedReview(
+        rank=1,
+        paper_row={},  # type: ignore[arg-type]  # only the evidence passages are read here
+        review_row={},  # type: ignore[arg-type]
+        review_content={},
+        paper_aliases=[],
+        topic_assessments=[],
+        evidence_passages={
+            "P12": EvidencePassage("P12", 6, "5 Results", TABLE_PASSAGES["P12"]),
+            "P11": EvidencePassage("P11", 6, "Table 2", TABLE_PASSAGES["P11"]),
+        },
+    )
+    line = _render_finding({**TABLE_RESULT, "number_passage_ids": ["P11"]}, selected_review)
+    assert "`P12` (p. 6, 5 Results) · numbers from `P11` (p. 6, Table 2)" in line
+    assert "numbers from" not in _render_finding(TABLE_RESULT, selected_review)

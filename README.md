@@ -29,9 +29,10 @@ tools, network access, or the ability to influence which requests are made.
   candidate on the CPU, and only the day's best (30 by default, shared fairly across topics) go to the LLM.
 - **Evidence-backed reading**: the model reads the full text in bounded sections, and every finding must quote the
   passage it comes from. Invented numbers, unknown passages, and unsupported claims are rejected. When only a few
-  items of an answer fail, the host fixes a quote cited from the wrong passage (only when exactly one passage holds
-  it) and drops the items that still fail, instead of discarding the whole answer. Whatever is kept passes every
-  check.
+  items of an answer fail, the host fixes the citation instead of discarding the whole answer: a quote cited from
+  the wrong passage moves to the one passage that holds it, and a number gets the passage that states it (a results
+  table next to the quoted sentence, say), but only when that passage can be singled out without guessing. Items
+  that still fail are dropped. The text is never changed, and whatever is kept passes every check.
 - **A transparent score**: each paper gets a 0-100 reading priority per topic, computed by code from the model's
   explained ratings (fit to the question, fit of method, strength of evidence, value relative to papers you already
   have).
@@ -72,8 +73,8 @@ All state lives in one SQLite database (`state/`). Generated notes and reports g
 
 - Linux and Python 3.12+, with [uv](https://docs.astral.sh/uv/)
 - A [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server` on `127.0.0.1` serving a model that supports
-  JSON-schema-constrained output and a context of at least 32k tokens per slot (a reasoning model such as Qwen works
-  well)
+  JSON-schema-constrained output and a context of at least 80k tokens per slot (`model.required_context_tokens`; the
+  daily report's writer reads 15 reviews at once). A reasoning model such as Qwen works well.
 - About 450 MB of disk for the screening model
 - Optional: **Podman** for PDF text extraction (without it, papers are reviewed from their abstracts)
 - Optional: a **Zotero** API key (read-only) for seed collections, and a free **OpenAlex** API key for full search
@@ -210,6 +211,7 @@ With `[setup] monitor_service = true`, setup keeps it running as your user servi
 | `capacity` | Measured model time per role and per paper (with llama.cpp's own prompt and generation speeds), and an estimate of how many readings fit in a day. |
 | `backup DIR` / `backup --check-restore DIR` | Write a consistent snapshot (no credentials, no raw PDFs) / verify that a copy restores. |
 | `label-sample OUT.csv` | A shuffled sample of screened candidates without scores, for checking ranking quality by hand. |
+| `screening-calibration` | How a floor on the raw screening score would have changed which papers were read, judged by the topic assessments of the papers already read, and the floor it recommends (`screening.minimum_unnormalized_score`). |
 | `monitor [--port P] [--json]` | Live, read-only web page: current step, timeline, plan, queue, events (see Monitor). |
 | `access-check --component collector\|worker` | Verify the hardened deployment from a service account. |
 

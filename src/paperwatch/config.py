@@ -72,7 +72,9 @@ class ModelSettings:
     base_url: str = "http://127.0.0.1:8080/v1"
     model_alias: str = "qwen-local"
     connect_timeout_seconds: float = 5.0
-    required_context_tokens: int = 32768  # doctor fails if the server's per-slot context is smaller
+    # doctor fails if the server's per-slot context is smaller. 2026-11-23: 81920, so the writer's 15-paper prompt
+    # (about 32k tokens before passages), its 24k-token output and its repair fit with several passages per paper.
+    required_context_tokens: int = 81920
     allow_non_loopback_host: bool = False  # the model must stay local; never a hosted fallback
     outage_backoff_initial_seconds: int = 30
     outage_backoff_max_seconds: int = 1800
@@ -92,15 +94,21 @@ DEFAULT_ROLE_LIMITS: dict[str, RoleLimits] = {
     "healthcheck": RoleLimits(max_output_tokens=2048, timeout_seconds=120, reasoning_effort="low"),
     # Reading roles. Without a reasoning_effort they use the server's default; [roles.<name>] can set one.
     "section_reader": RoleLimits(max_output_tokens=16384, timeout_seconds=1800),  # one bounded reading section
-    "reviewer": RoleLimits(max_output_tokens=16384, timeout_seconds=1800),  # the evidence-backed review
+    # The evidence-backed review. 2026-11-23 (third pilot): two answers hit 16384 tokens (one used 15.9k); 24576
+    # tokens take about 19 minutes at the measured ~22 tokens/s, inside the 30-minute limit.
+    "reviewer": RoleLimits(max_output_tokens=24576, timeout_seconds=1800),
     "topic_assessor": RoleLimits(max_output_tokens=12288, timeout_seconds=1200),  # rubric ratings per topic
     # Reference and comparison roles, also at the server's default reasoning unless configured.
     "research": RoleLimits(max_output_tokens=8192, timeout_seconds=1200),  # chooses references and gap searches
-    "comparison": RoleLimits(max_output_tokens=12288, timeout_seconds=1200),  # compares two saved reviews
+    # Compares two saved reviews. 2026-11-23: the first live comparison used 6.2k tokens and its repair ran out at
+    # 12288; 20480 tokens take about 15 minutes at ~22 tokens/s.
+    "comparison": RoleLimits(max_output_tokens=20480, timeout_seconds=1500),
     # The report writer runs once per day under report.writer_deadline_minutes. Owner decision
     # (2026-11-20): medium reasoning, so the report usually appears 15-30 minutes after the cutoff.
     # 2026-11-22 (second pilot): 8192 tokens cut off the answer for 15 papers, reasoning included, after 9 minutes.
-    "writer": RoleLimits(max_output_tokens=16384, timeout_seconds=1500, reasoning_effort="medium"),
+    # 2026-11-23 (third pilot): the first answer for 15 papers used 12.8k of 16k tokens and its repair hit the
+    # limit. report.writer_deadline_minutes still bounds the whole synthesis.
+    "writer": RoleLimits(max_output_tokens=24576, timeout_seconds=1500, reasoning_effort="medium"),
 }
 # Room the reading roles need besides the passages themselves: system prompt, orientation (title + abstract), JSON
 # keys. Used by the load-time check that a reading section fits the context budget.
@@ -187,6 +195,14 @@ class CollectionSettings:
     # Readings that `collect` queues wait until the same run has acquired their source text (so the worker does not
     # read an abstract seconds before the PDF arrives). If that stage never finishes, they become due after this.
     source_text_hold_minutes: int = 60
+    # Third pilot (2026-11-23): a 5-minute arXiv pause and the OpenAlex PDF host's limit of 10 downloads sent 31
+    # papers to the worker without their PDFs. The source-text stage now waits out short provider pauses (at most
+    # this long per run; a collect may take up to 2 hours) ...
+    source_text_pause_wait_seconds: int = 900
+    # ... and a reading whose text a provider still owes stays held this long (past the next collect of a six-hour
+    # schedule, which settles it again), but never longer than the maximum after it was queued.
+    source_text_retry_hold_minutes: int = 400
+    source_text_maximum_hold_hours: int = 24
     # Raw downloads (.pdf/.xml) above this total are removed oldest first once their text is extracted
     # and no reading of the paper is pending; the extracted text, the reviews, and the reports are always kept.
     source_cache_limit_megabytes: int = 4096
@@ -236,6 +252,11 @@ class ScreeningSettings:
     daily_promotion_limit: int = 30  # readings promoted per UTC day, across all topics, near-cutoff picks included
     near_cutoff_promotions: int = 3  # of those, the best candidates just below the cutoff (tests what it misses)
     minimum_screening_score: float = 0.0  # pool percentile, 0-1; 0 = rank only (calibrate from hand labels)
+    # An absolute floor on the RAW score (the weighted mean of the raw signals, candidate_topic_scores.
+    # unnormalized_score): a paper below it on every topic is not promoted, however it ranks in today's pool. 0 = off.
+    # Calibrate it from the topic assessor's verdicts with `paperwatch screening-calibration`; it depends on the
+    # embedding model and on how each topic is worded, so recalibrate after changing either.
+    minimum_unnormalized_score: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -754,6 +775,8 @@ def _validate_screening_settings(screening_settings: ScreeningSettings) -> None:
         )
     if not 0.0 <= screening_settings.minimum_screening_score <= 1.0:
         raise ConfigurationError("screening.minimum_screening_score must lie between 0 and 1")
+    if not 0.0 <= screening_settings.minimum_unnormalized_score <= 1.0:
+        raise ConfigurationError("screening.minimum_unnormalized_score must lie between 0 and 1")
 
 
 def _validate_reading_settings(app_config: AppConfig) -> None:
